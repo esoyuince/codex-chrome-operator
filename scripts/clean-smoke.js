@@ -630,6 +630,16 @@ async function runCleanSmoke(options = {}) {
         (element) => element.name === 'description',
         'description textarea'
       ),
+      locale: findElementHandle(
+        postReconnectObserve,
+        (element) => element.name === 'locale',
+        'locale select'
+      ),
+      enableBeta: findElementHandle(
+        postReconnectObserve,
+        (element) => element.name === 'enableBeta',
+        'enable beta checkbox'
+      ),
       saveDraft: findElementHandle(
         postReconnectObserve,
         (element) => element.id === 'saveDraft',
@@ -660,6 +670,47 @@ async function runCleanSmoke(options = {}) {
       activeTab.loadingState !== 'complete'
     ) {
       throw new Error(`Active tab status did not match fixture: ${JSON.stringify(activeTabStatus)}`);
+    }
+    const basicActionResults = {
+      focus: runCliJson(['focus', config.origin, basicHandles.appName], settings),
+      type: runCliJson(['type', config.origin, basicHandles.appName, 'Typed Smoke App'], settings),
+      typeBeforeClear: runCliJson(['type', config.origin, basicHandles.description, 'Temporary text'], settings),
+      clear: runCliJson(['clear', config.origin, basicHandles.description], settings),
+      select: runCliJson(['select', config.origin, basicHandles.locale, 'tr'], settings),
+      check: runCliJson(['check', config.origin, basicHandles.enableBeta], settings),
+      pressKey: runCliJson(['press-key', config.origin, basicHandles.appName, 'Enter'], settings),
+      scroll: runCliJson(['scroll', config.origin, basicHandles.saveDraft, '0', '240'], settings)
+    };
+    for (const [action, result] of Object.entries(basicActionResults)) {
+      if (!result.ok) {
+        throw new Error(`Basic DOM action failed (${action}): ${JSON.stringify(result)}`);
+      }
+    }
+    const basicDomActions = await withCdp(await pageTarget(config), async (send) => {
+      const result = await send('Runtime.evaluate', {
+        expression: `({
+          appName: document.querySelector('[name=appName]').value,
+          description: document.querySelector('[name=description]').value,
+          locale: document.querySelector('[name=locale]').value,
+          enableBeta: document.querySelector('[name=enableBeta]').checked,
+          focusedName: document.activeElement && document.activeElement.getAttribute('name'),
+          status: document.getElementById('status').textContent,
+          scrollY: window.scrollY
+        })`,
+        returnByValue: true
+      });
+      return result.result.result.value;
+    });
+    if (
+      basicDomActions.appName !== 'Typed Smoke App' ||
+      basicDomActions.description !== '' ||
+      basicDomActions.locale !== 'tr' ||
+      basicDomActions.enableBeta !== true ||
+      basicDomActions.focusedName !== 'appName' ||
+      basicDomActions.status !== 'Pressed Enter' ||
+      basicDomActions.scrollY <= 0
+    ) {
+      throw new Error(`Basic DOM action verification failed: ${JSON.stringify(basicDomActions)}`);
     }
     const boundedFullAutoContract = {
       mode: 'bounded-full-auto-v1',
@@ -798,6 +849,7 @@ async function runCleanSmoke(options = {}) {
       boundedFullAutoActions: boundedFullAutoAfterHighRisk.result.counters.browserActions,
       boundedFullAutoStopped: boundedFullAutoStop.result.active === false,
       boundedFullAutoAudited: auditedBoundedAction,
+      basicDomActions,
       highRiskBlocked: highRiskClick.error.code,
       highRiskApprovalReplay: replayedHighRisk.result.action,
       screenshotCleanupRemoved: screenshotRemoved,

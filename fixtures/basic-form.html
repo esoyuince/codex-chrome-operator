@@ -3,6 +3,11 @@
 <head>
   <meta charset="utf-8">
   <title>Codex Operator Basic Fixture</title>
+  <style>
+    body {
+      min-height: 1800px;
+    }
+  </style>
 </head>
 <body>
   <main>
@@ -15,11 +20,25 @@
       Description
       <textarea name="description"></textarea>
     </label>
+    <label>
+      Locale
+      <select name="locale" id="locale">
+        <option value="en">English</option>
+        <option value="tr">Turkish</option>
+      </select>
+    </label>
+    <label>
+      <input name="enableBeta" id="enableBeta" type="checkbox">
+      Enable beta
+    </label>
     <button id="saveDraft" type="button">Save Draft</button>
     <button id="publish" type="button" data-risk="publish">Publish</button>
     <p id="status" aria-live="polite"></p>
   </main>
   <script>
+    document.querySelector('[name=appName]').addEventListener('keydown', (event) => {
+      document.getElementById('status').textContent = `Pressed ${event.key}`;
+    });
     document.getElementById('saveDraft').addEventListener('click', () => {
       document.getElementById('status').textContent = 'Draft saved';
     });
