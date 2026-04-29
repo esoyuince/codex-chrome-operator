@@ -13,6 +13,7 @@
     "adapter:mcp": "node codex-adapter/mcpServer.js",
     "release:m1": "node scripts/m1-release-check.js",
     "smoke:clean": "node scripts/clean-smoke.js",
+    "smoke:mcp": "node scripts/mcp-smoke.js",
     "daemon": "node operator-daemon/daemon.js",
     "native-bridge": "node native-bridge/nativeMessagingShim.js",
     "doctor": "node operator-daemon/daemon.js --doctor"

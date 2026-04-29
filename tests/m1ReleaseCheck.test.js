@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('node:path');
 
 const {
   buildReleaseChecks,
@@ -13,12 +14,14 @@ test('buildReleaseChecks includes M1 release gates and keeps clean smoke opt-in'
   assert.deepEqual(checks.map((check) => check.name), [
     'unit-tests',
     'syntax-check',
+    'mcp-smoke',
     'daemon-doctor',
     'install-doctor-no-install-check'
   ]);
   assert.deepEqual(buildReleaseChecks({ includeSmoke: true }).map((check) => check.name), [
     'unit-tests',
     'syntax-check',
+    'mcp-smoke',
     'daemon-doctor',
     'install-doctor-no-install-check',
     'clean-smoke'
@@ -28,6 +31,7 @@ test('buildReleaseChecks includes M1 release gates and keeps clean smoke opt-in'
   assert.equal(checks[1].command, process.execPath);
   assert.equal(checks[2].command, process.execPath);
   assert.equal(checks[0].args[0], '--test');
+  assert.equal(checks[2].args[0], path.join('scripts', 'mcp-smoke.js'));
   assert.ok(!checks.some((check) => /npm(?:\.cmd)?$/i.test(check.command)));
 });
 
@@ -59,16 +63,17 @@ test('runReleaseCheck executes every gate and reports failures as JSON-safe data
   assert.deepEqual(calls, [
     'unit-tests',
     'syntax-check',
+    'mcp-smoke',
     'daemon-doctor',
     'install-doctor-no-install-check',
     'clean-smoke'
   ]);
   assert.equal(report.ok, false);
   assert.equal(report.failedChecks, 1);
-  assert.equal(report.checks.length, 5);
-  assert.equal(report.checks[2].name, 'daemon-doctor');
-  assert.equal(report.checks[2].ok, false);
-  assert.equal(report.checks[2].stderrTail, 'doctor failed');
+  assert.equal(report.checks.length, 6);
+  assert.equal(report.checks[3].name, 'daemon-doctor');
+  assert.equal(report.checks[3].ok, false);
+  assert.equal(report.checks[3].stderrTail, 'doctor failed');
 });
 
 test('extractCleanSmokeEvidence summarizes live browser proof without full daemon state', () => {

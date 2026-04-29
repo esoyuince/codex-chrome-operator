@@ -18,6 +18,7 @@ function buildReleaseChecks({ includeSmoke = false } = {}) {
   const checks = [
     nodeCheck('unit-tests', ['--test']),
     nodeCheck('syntax-check', [path.join('scripts', 'check-syntax.js')]),
+    nodeCheck('mcp-smoke', [path.join('scripts', 'mcp-smoke.js')]),
     nodeCheck('daemon-doctor', [path.join('operator-daemon', 'daemon.js'), '--doctor']),
     {
       name: 'install-doctor-no-install-check',
