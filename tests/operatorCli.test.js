@@ -45,6 +45,13 @@ test('buildRpcRequest maps approval and page commands', () => {
     method: 'operator.emergencyClear',
     params: {}
   });
+  assert.deepEqual(buildRpcRequest(['disconnect', 'reconnect please']), {
+    method: 'bridge.disconnected',
+    params: {
+      source: 'operator-cli',
+      reason: 'reconnect please'
+    }
+  });
   assert.deepEqual(buildRpcRequest(['fill', 'https://example.com', 'el_0', 'hello world']), {
     method: 'page.fill',
     params: {

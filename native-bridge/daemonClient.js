@@ -14,6 +14,27 @@ async function sendRpc({ baseUrl, token, request }) {
   return response.json();
 }
 
+function notifyDaemonDisconnect({
+  baseUrl,
+  token,
+  source = 'native-bridge',
+  reason = 'Native bridge disconnected.'
+}) {
+  return sendRpc({
+    baseUrl,
+    token,
+    request: {
+      id: `disconnect_${Date.now()}`,
+      method: 'bridge.disconnected',
+      params: {
+        source,
+        reason
+      }
+    }
+  });
+}
+
 module.exports = {
+  notifyDaemonDisconnect,
   sendRpc
 };

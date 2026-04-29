@@ -28,6 +28,7 @@ function usage() {
   node scripts/operator-cli.js screenshots-cleanup [olderThanMs]
   node scripts/operator-cli.js emergency-stop [reason]
   node scripts/operator-cli.js emergency-clear
+  node scripts/operator-cli.js disconnect [reason]
   node scripts/operator-cli.js observe <origin>
   node scripts/operator-cli.js visual-observe <origin>
   node scripts/operator-cli.js navigate <url>
@@ -136,6 +137,14 @@ function buildRpcRequest(argv) {
       };
     case 'emergency-clear':
       return { method: 'operator.emergencyClear', params: {} };
+    case 'disconnect':
+      return {
+        method: 'bridge.disconnected',
+        params: {
+          source: 'operator-cli',
+          reason: args.join(' ') || undefined
+        }
+      };
     case 'observe':
       requireArgs(args, 1);
       return { method: 'page.observe', params: { origin: args[0] } };

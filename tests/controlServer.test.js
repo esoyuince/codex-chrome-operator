@@ -431,6 +431,88 @@ test('operator.emergencyStop cancels pending page actions and blocks new ones un
   });
 });
 
+test('extension disconnect cancels pending commands and reconnect requires a fresh hello', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    const hello = await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+        profileBindingVersion: 3,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+    const firstConnectionId = hello.body.result.connectionId;
+    assert.match(firstConnectionId, /^conn_/);
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://example.com'
+    });
+
+    const observePromise = postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    const command = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(command.body.result.command.connectionId, firstConnectionId);
+
+    const disconnected = await postJson(baseUrl, 'extension.disconnected', {
+      source: 'native-port',
+      reason: 'unit disconnect'
+    });
+    assert.equal(disconnected.body.ok, true);
+    assert.equal(disconnected.body.result.connectionState, 'RECONNECTING');
+    assert.equal(disconnected.body.result.cancelledPendingCommands, 1);
+
+    const cancelled = await observePromise;
+    assert.equal(cancelled.body.ok, false);
+    assert.equal(cancelled.body.error.code, ERROR_CODES.EXTENSION_DISCONNECTED);
+
+    const blocked = await postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    assert.equal(blocked.body.ok, false);
+    assert.equal(blocked.body.error.code, ERROR_CODES.EXTENSION_DISCONNECTED);
+
+    const staleDeliver = await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      connectionId: firstConnectionId,
+      response: {
+        ok: true,
+        result: { title: 'too late' }
+      }
+    });
+    assert.equal(staleDeliver.body.ok, false);
+    assert.equal(staleDeliver.body.error.code, ERROR_CODES.EXTENSION_DISCONNECTED);
+
+    const reconnect = await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_def',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+        profileBindingVersion: 3,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+    assert.equal(reconnect.body.ok, true);
+    assert.notEqual(reconnect.body.result.connectionId, firstConnectionId);
+    assert.equal(reconnect.body.result.connectionState, 'EXTENSION_CONNECTED');
+  });
+});
+
 test('successful page command clears stale lastError', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {

@@ -485,6 +485,29 @@ async function runCleanSmoke(options = {}) {
     if (!postEmergencyObserve.ok) {
       throw new Error(`Observe failed after emergency clear: ${JSON.stringify(postEmergencyObserve)}`);
     }
+    const disconnect = runCliJson(['disconnect', 'clean smoke reconnect'], settings);
+    if (!disconnect.ok || disconnect.result.connectionState !== 'RECONNECTING') {
+      throw new Error(`Disconnect transition failed: ${JSON.stringify(disconnect)}`);
+    }
+    const disconnectedObserve = runCliJson(['observe', config.origin], settings);
+    if (disconnectedObserve.ok || disconnectedObserve.error.code !== 'EXTENSION_DISCONNECTED') {
+      throw new Error(`Expected EXTENSION_DISCONNECTED before reconnect: ${JSON.stringify(disconnectedObserve)}`);
+    }
+    await withCdp(await pageTarget(config), async (send) => {
+      await send('Page.navigate', {
+        url: `chrome-extension://${config.extensionId}/bootstrap.html`
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    });
+    await waitForStatus(settings, (status) => status.connectionState === 'EXTENSION_CONNECTED' && status.profileVerified === true);
+    await withCdp(await pageTarget(config), async (send) => {
+      await send('Page.navigate', { url: `${config.origin}/basic-form.html` });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    });
+    const postReconnectObserve = runCliJson(['observe', config.origin], settings);
+    if (!postReconnectObserve.ok) {
+      throw new Error(`Observe failed after reconnect: ${JSON.stringify(postReconnectObserve)}`);
+    }
     runCliJson(['fill', config.origin, 'el_0', 'Clean Smoke App'], settings);
     runCliJson(['fill', config.origin, 'el_1', 'Single command smoke test.'], settings);
     runCliJson(['click', config.origin, 'el_2'], settings);
@@ -560,6 +583,8 @@ async function runCleanSmoke(options = {}) {
       gatedVisualBlocked: gatedVisualObserve.error.code,
       emergencyBlocked: emergencyBlockedObserve.error.code,
       emergencyCleared: emergencyClear.result.active === false,
+      reconnectBlocked: disconnectedObserve.error.code,
+      reconnectRecoveredTitle: postReconnectObserve.result.title,
       gateHandoffBlocked: gatedClick.error.code,
       gateHandoffResume: gateDom.gateStatus,
       highRiskBlocked: highRiskClick.error.code,

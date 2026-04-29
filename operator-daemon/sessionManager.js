@@ -64,6 +64,10 @@ function isLocalMockOrigin(origin) {
   }
 }
 
+function makeConnectionId() {
+  return `conn_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
 class SessionManager {
   constructor(config = {}) {
     this.stateStore = config.stateStore || new OperatorStateStore({ statePath: config.statePath });
@@ -90,6 +94,9 @@ class SessionManager {
     this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
     this.profileVerified = false;
     this.profileBindingStatus = 'unverified';
+    this.connectionId = null;
+    this.lastDisconnect = null;
+    this.reconnectCount = 0;
     this.approvedOrigins = new Set(this.activeDomainApprovalOrigins());
     this.hostPermissions = new Set(this.activeHostPermissionOrigins());
     this.lastError = null;
@@ -110,6 +117,9 @@ class SessionManager {
   status() {
     return {
       connectionState: this.connectionState,
+      connectionId: this.connectionId,
+      lastDisconnect: this.lastDisconnect,
+      reconnectCount: this.reconnectCount,
       profileVerified: this.profileVerified,
       profileBindingStatus: this.profileBindingStatus,
       approvedOrigins: this.activeDomainApprovalOrigins(),
@@ -160,6 +170,13 @@ class SessionManager {
         break;
       case 'extension.hostPermissionsSynced':
         response = this.hostPermissionsSynced(id, params);
+        break;
+      case 'extension.disconnected':
+      case 'bridge.disconnected':
+        response = this.handleDisconnected(id, {
+          ...params,
+          source: params.source || (request.method === 'bridge.disconnected' ? 'native-bridge' : 'extension')
+        });
         break;
       case 'operator.profiles.discover':
         response = this.discoverProfiles(id, params);
@@ -271,13 +288,48 @@ class SessionManager {
     this.lastVersionMismatch = null;
     this.profileBindingStatus = result.profileBindingStatus;
     this.profileVerified = result.profileBindingStatus === 'verified';
+    const previousState = this.connectionState;
+    this.connectionId = makeConnectionId();
+    if (previousState === 'RECONNECTING') {
+      this.reconnectCount += 1;
+    }
     this.connectionState = this.profileVerified
       ? 'EXTENSION_CONNECTED'
       : 'EXTENSION_CONNECTED_SETUP_ONLY';
 
     return rpcOk(id, {
       connectionState: this.connectionState,
+      connectionId: this.connectionId,
       profileBindingStatus: this.profileBindingStatus
+    });
+  }
+
+  handleDisconnected(id, params = {}) {
+    const previousConnectionId = this.connectionId;
+    this.connectionState = 'RECONNECTING';
+    this.profileVerified = false;
+    this.connectionId = null;
+    this.lastDisconnect = {
+      source: params.source || 'unknown',
+      reason: params.reason || null,
+      previousConnectionId,
+      disconnectedAt: new Date().toISOString()
+    };
+
+    const cancelled = this.cancelPendingCommands({
+      code: ERROR_CODES.EXTENSION_DISCONNECTED,
+      message: params.reason
+        ? `Extension disconnected: ${params.reason}`
+        : 'Extension disconnected.',
+      reconnectRequired: true,
+      previousConnectionId
+    });
+
+    return rpcOk(id, {
+      connectionState: this.connectionState,
+      source: this.lastDisconnect.source,
+      previousConnectionId,
+      ...cancelled
     });
   }
 
@@ -469,6 +521,14 @@ class SessionManager {
   async routePageCommand(id, method, params) {
     if (this.emergencyStop.active) {
       return rpcError(id, this.emergencyStopError());
+    }
+    if (this.connectionState === 'RECONNECTING' || this.connectionState === 'DAEMON_RUNNING_EXTENSION_DISCONNECTED') {
+      return rpcError(id, {
+        code: ERROR_CODES.EXTENSION_DISCONNECTED,
+        message: 'Extension must reconnect with a fresh HELLO before browser actions can continue.',
+        reconnectRequired: true,
+        lastDisconnect: this.lastDisconnect
+      });
     }
 
     const origin = params.origin || (params.url ? new URL(params.url).origin : undefined);
@@ -733,6 +793,7 @@ class SessionManager {
     const command = {
       type: 'command',
       commandId,
+      connectionId: this.connectionId,
       method,
       params
     };
@@ -764,6 +825,16 @@ class SessionManager {
   }
 
   deliverBridgeResponse(id, params) {
+    if (params.connectionId && params.connectionId !== this.connectionId) {
+      return rpcError(id, {
+        code: ERROR_CODES.EXTENSION_DISCONNECTED,
+        message: 'Stale extension connection cannot deliver command responses.',
+        reconnectRequired: true,
+        currentConnectionId: this.connectionId,
+        deliveredConnectionId: params.connectionId
+      });
+    }
+
     const pending = this.pendingCommands.get(params.commandId);
     if (!pending) {
       return rpcError(id, {

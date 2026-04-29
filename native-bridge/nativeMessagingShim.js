@@ -1,7 +1,7 @@
 'use strict';
 
 const { NativeMessageDecoder, encodeNativeMessage } = require('../operator-daemon/framing');
-const { sendRpc } = require('./daemonClient');
+const { notifyDaemonDisconnect, sendRpc } = require('./daemonClient');
 
 function printHelp() {
   process.stderr.write(`Codex Chrome Operator Native Messaging bridge
@@ -93,7 +93,12 @@ async function runBridge(options = {}) {
 
   process.stdin.on('end', () => {
     clearInterval(pollInterval);
-    process.exit(0);
+    notifyDaemonDisconnect({
+      baseUrl: daemonUrl,
+      token,
+      source: 'native-bridge',
+      reason: 'stdin closed'
+    }).finally(() => process.exit(0));
   });
 }
 

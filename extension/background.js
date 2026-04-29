@@ -67,6 +67,14 @@ function postNativeRpc(method, params = {}) {
   });
 }
 
+function postNativeRpcNoThrow(method, params = {}) {
+  try {
+    postNativeRpc(method, params);
+  } catch {
+    // The native port may already be gone during disconnect handling.
+  }
+}
+
 async function sendHello() {
   postNativeRpc('extension.hello', {
     hello: await buildHello()
@@ -115,6 +123,10 @@ async function connectNative({ refreshHello = false } = {}) {
     });
     nativePort.onDisconnect.addListener(() => {
       lastNativeError = chrome.runtime.lastError ? chrome.runtime.lastError.message : null;
+      postNativeRpcNoThrow('extension.disconnected', {
+        source: 'native-port',
+        reason: lastNativeError || 'Native port disconnected.'
+      });
       connectionState = 'DISCONNECTED';
       nativePort = null;
       chrome.storage.local.set({ connectionState, lastNativeError });
@@ -141,6 +153,7 @@ async function handleNativeMessage(message) {
         method: 'bridge.deliver',
         params: {
           commandId: message.commandId,
+          connectionId: message.connectionId,
           response
         }
       });
