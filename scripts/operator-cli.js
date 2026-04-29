@@ -21,6 +21,7 @@ function usage() {
   node scripts/operator-cli.js status
   node scripts/operator-cli.js ensure-started [origin-or-url]
   node scripts/operator-cli.js prepare-origin <origin-or-url>
+  node scripts/operator-cli.js open-observe <url> [timeoutMs] [pollIntervalMs]
   node scripts/operator-cli.js profiles [userDataDir]
   node scripts/operator-cli.js profile-bind <userDataDir> <profileDirectory> [profileLabel]
   node scripts/operator-cli.js profile-verify
@@ -115,6 +116,18 @@ function buildRpcRequest(argv) {
           origin: new URL(args[0]).origin
         },
         cliAction: 'prepareOrigin'
+      };
+    case 'open-observe':
+      requireArgs(args, 1);
+      return {
+        method: 'page.observe',
+        params: {
+          url: args[0],
+          origin: new URL(args[0]).origin,
+          ...(args[1] === undefined ? {} : { timeoutMs: Number(args[1]) }),
+          ...(args[2] === undefined ? {} : { pollIntervalMs: Number(args[2]) })
+        },
+        cliAction: 'openObserve'
       };
     case 'profiles':
       return {
@@ -921,6 +934,231 @@ async function waitReady({
   };
 }
 
+function activeTabMatchesUrl(activeTab, url, origin) {
+  if (!activeTab || activeTab.url !== url) {
+    return false;
+  }
+  const activeOrigin = activeTab.origin || (() => {
+    try {
+      return new URL(activeTab.url).origin;
+    } catch {
+      return null;
+    }
+  })();
+  return activeOrigin === origin && activeTab.loadingState !== 'loading';
+}
+
+async function waitForActiveTabUrl({
+  settings,
+  requestId,
+  url,
+  origin,
+  sendRpcFn = sendRpc,
+  timeoutMs = 10000,
+  pollIntervalMs = 250,
+  delayFn = delay
+}) {
+  const started = Date.now();
+  let attempts = 0;
+  let lastActiveTab = null;
+  let lastError = null;
+
+  while (Date.now() - started < timeoutMs) {
+    attempts += 1;
+    try {
+      const response = await sendRpcFn({
+        baseUrl: settings.baseUrl,
+        token: settings.token,
+        request: {
+          id: `${requestId}_status_${attempts}`,
+          method: 'operator.status',
+          params: {}
+        }
+      });
+      lastActiveTab = response && response.result && response.result.activeTab
+        ? response.result.activeTab
+        : null;
+      if (response && response.ok && activeTabMatchesUrl(lastActiveTab, url, origin)) {
+        return {
+          ok: true,
+          result: {
+            activeTab: lastActiveTab,
+            attempted: true,
+            elapsedMs: Date.now() - started,
+            attempts
+          }
+        };
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await delayFn(pollIntervalMs);
+  }
+
+  return {
+    ok: false,
+    error: {
+      code: 'NAVIGATION_WAIT_TIMEOUT',
+      message: `Timed out waiting for active tab to reach ${url}.`,
+      origin,
+      url,
+      timeoutMs,
+      attempts,
+      lastActiveTab,
+      lastError: lastError ? lastError.message : null
+    }
+  };
+}
+
+async function openObserve({
+  settings,
+  request,
+  sendRpcFn = sendRpc,
+  prepareOriginFn = prepareOrigin,
+  waitReadyFn = waitReady,
+  waitForActiveTabUrlFn = waitForActiveTabUrl,
+  openBootstrap = true
+}) {
+  const url = request && request.params && request.params.url;
+  const origin = request && request.params && request.params.origin;
+  if (!url || !origin) {
+    return {
+      id: request && request.id,
+      ok: false,
+      error: {
+        code: 'INVALID_REQUEST',
+        message: 'open-observe requires an absolute URL.'
+      }
+    };
+  }
+
+  const prepareRequest = {
+    id: `${request.id}_prepare_origin`,
+    method: 'operator.ensureStarted',
+    params: { origin }
+  };
+  const prepared = await prepareOriginFn({
+    settings,
+    request: prepareRequest,
+    sendRpcFn,
+    openBootstrap
+  });
+  if (!prepared || !prepared.ok) {
+    return prepared;
+  }
+
+  if (prepared.result && prepared.result.requiresUserGesture) {
+    return {
+      id: request.id,
+      ok: false,
+      error: {
+        code: 'READINESS_INCOMPLETE',
+        message: `User permission is required before opening ${origin}.`,
+        origin,
+        blockedAt: 'prepare-origin',
+        permissionUrl: prepared.result.permissionUrl,
+        diagnostic: prepared.result.diagnostic,
+        nextActions: prepared.result.nextActions
+      }
+    };
+  }
+
+  const waitResponse = await waitReadyFn({
+    settings,
+    request: {
+      id: `${request.id}_wait_ready`,
+      method: 'operator.verifyReadiness',
+      params: {
+        origin,
+        timeoutMs: request.params.timeoutMs,
+        pollIntervalMs: request.params.pollIntervalMs
+      }
+    },
+    sendRpcFn
+  });
+  if (!waitResponse || !waitResponse.ok) {
+    return {
+      id: request.id,
+      ok: false,
+      error: {
+        ...(waitResponse && waitResponse.error ? waitResponse.error : {
+          code: 'READINESS_WAIT_FAILED',
+          message: `Failed waiting for ${origin} readiness.`
+        }),
+        blockedAt: 'wait-ready'
+      }
+    };
+  }
+
+  const navigation = await sendRpcFn({
+    baseUrl: settings.baseUrl,
+    token: settings.token,
+    request: {
+      id: `${request.id}_navigate`,
+      method: 'page.navigate',
+      params: {
+        url,
+        origin,
+        timeoutMs: request.params.timeoutMs,
+        pollIntervalMs: request.params.pollIntervalMs
+      }
+    }
+  });
+  if (!navigation || !navigation.ok) {
+    return navigation;
+  }
+
+  const navigationSettled = await waitForActiveTabUrlFn({
+    settings,
+    requestId: request.id,
+    url,
+    origin,
+    sendRpcFn,
+    timeoutMs: Number.isFinite(request.params.timeoutMs) ? request.params.timeoutMs : 10000,
+    pollIntervalMs: Number.isFinite(request.params.pollIntervalMs) ? request.params.pollIntervalMs : 250
+  });
+  if (!navigationSettled || !navigationSettled.ok) {
+    return {
+      id: request.id,
+      ok: false,
+      error: {
+        ...(navigationSettled && navigationSettled.error ? navigationSettled.error : {
+          code: 'NAVIGATION_WAIT_FAILED',
+          message: `Failed waiting for active tab to reach ${url}.`
+        }),
+        blockedAt: 'navigation-settle'
+      }
+    };
+  }
+
+  const observation = await sendRpcFn({
+    baseUrl: settings.baseUrl,
+    token: settings.token,
+    request: {
+      id: `${request.id}_observe`,
+      method: 'page.observe',
+      params: { origin }
+    }
+  });
+  if (!observation || !observation.ok) {
+    return observation;
+  }
+
+  return {
+    id: request.id,
+    ok: true,
+    result: {
+      origin,
+      url,
+      prepared: prepared.result,
+      readiness: waitResponse.result,
+      navigation: navigation.result,
+      navigationSettled: navigationSettled.result,
+      observation: observation.result
+    }
+  };
+}
+
 async function run(argv = process.argv.slice(2), output = process.stdout) {
   const { options } = splitOptions(argv);
   const builtRequest = buildRpcRequest(argv);
@@ -932,6 +1170,12 @@ async function run(argv = process.argv.slice(2), output = process.stdout) {
   const settings = resolveCliSettings(options);
   const response = cliAction === 'prepareOrigin'
     ? await prepareOrigin({
+      settings,
+      request,
+      openBootstrap: options.openBootstrap !== false
+    })
+    : cliAction === 'openObserve'
+    ? await openObserve({
       settings,
       request,
       openBootstrap: options.openBootstrap !== false
@@ -973,12 +1217,14 @@ module.exports = {
   ensureStarted,
   findChromeForBootstrap,
   launchBootstrapChrome,
+  openObserve,
   prepareOrigin,
   resolveCliSettings,
   run,
   startDaemonProcess,
   splitOptions,
   usage,
+  waitForActiveTabUrl,
   waitForExtensionConnection,
   waitReady
 };

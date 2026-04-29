@@ -224,8 +224,7 @@ async function ensureContentScript(tabId) {
   });
 }
 
-async function activeTabInfo() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+function tabInfo(tab) {
   if (!tab) {
     return null;
   }
@@ -246,6 +245,15 @@ async function activeTabInfo() {
     status: tab.status || null,
     loadingState: tab.status === 'loading' ? 'loading' : 'complete'
   };
+}
+
+async function activeTabInfo() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tabInfo(tab);
+}
+
+function isExtensionPageTab(tab) {
+  return Boolean(tab && typeof tab.url === 'string' && tab.url.startsWith(`chrome-extension://${chrome.runtime.id}/`));
 }
 
 async function reportActiveTab() {
@@ -288,8 +296,18 @@ async function handleOperatorCommand(command) {
       if (!tab || !tab.id) {
         return { ok: false, error: { code: 'NO_ACTIVE_TAB' } };
       }
-      await chrome.tabs.update(tab.id, { url: params.url });
-      return { ok: true, result: { action: 'navigate', url: params.url } };
+      const targetTab = isExtensionPageTab(tab)
+        ? await chrome.tabs.create({ active: true, url: params.url, windowId: tab.windowId })
+        : await chrome.tabs.update(tab.id, { active: true, url: params.url });
+      return {
+        ok: true,
+        result: {
+          action: 'navigate',
+          url: params.url,
+          tab: tabInfo(targetTab),
+          openedNewTab: isExtensionPageTab(tab)
+        }
+      };
     }
 
     const ready = await requireActiveTabForOrigin(params.origin);

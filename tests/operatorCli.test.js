@@ -7,6 +7,7 @@ const path = require('node:path');
 const {
   buildRpcRequest,
   ensureStarted,
+  openObserve,
   prepareOrigin,
   resolveCliSettings,
   waitReady
@@ -318,6 +319,19 @@ test('buildRpcRequest maps wait-ready to operator.verifyReadiness', () => {
   });
 });
 
+test('buildRpcRequest maps open-observe to page.observe cli action', () => {
+  assert.deepEqual(buildRpcRequest(['open-observe', 'https://example.com/path', '1500', '25']), {
+    method: 'page.observe',
+    params: {
+      url: 'https://example.com/path',
+      origin: 'https://example.com',
+      timeoutMs: 1500,
+      pollIntervalMs: 25
+    },
+    cliAction: 'openObserve'
+  });
+});
+
 test('prepareOrigin approves domain and returns permission URL when host permission is missing', async () => {
   const calls = [];
   const bootstrapUrl = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/bootstrap.html?session=boot';
@@ -396,6 +410,264 @@ test('prepareOrigin approves domain and returns permission URL when host permiss
   assert.equal(response.result.permissionUrl, 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html?origin=https%3A%2F%2Fexample.com');
   assert.equal(response.result.requiresUserGesture, true);
   assert.equal(response.result.nextAction.kind, 'hostPermission');
+});
+
+test('openObserve stops before navigation when readiness requires a user gesture', async () => {
+  const calls = [];
+  const response = await openObserve({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    request: {
+      id: 'open_1',
+      method: 'page.observe',
+      params: {
+        url: 'https://example.com/path',
+        origin: 'https://example.com',
+        timeoutMs: 1000,
+        pollIntervalMs: 1
+      }
+    },
+    prepareOriginFn: async () => {
+      calls.push('prepare');
+      return {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          ready: false,
+          requiresUserGesture: true,
+          permissionUrl: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html?origin=https%3A%2F%2Fexample.com',
+          diagnostic: {
+            code: 'READINESS_INCOMPLETE',
+            missing: ['hostPermission']
+          }
+        }
+      };
+    },
+    waitReadyFn: async () => {
+      calls.push('wait-ready');
+      return {
+        ok: false,
+        error: {
+          code: 'READINESS_WAIT_TIMEOUT'
+        }
+      };
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request.method);
+      return { ok: true, result: {} };
+    }
+  });
+
+  assert.deepEqual(calls, ['prepare']);
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, 'READINESS_INCOMPLETE');
+  assert.equal(response.error.blockedAt, 'prepare-origin');
+  assert.equal(response.error.permissionUrl, 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html?origin=https%3A%2F%2Fexample.com');
+});
+
+test('openObserve navigates and observes after readiness is confirmed', async () => {
+  const calls = [];
+  const response = await openObserve({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    request: {
+      id: 'open_2',
+      method: 'page.observe',
+      params: {
+        url: 'https://example.com/path',
+        origin: 'https://example.com',
+        timeoutMs: 1000,
+        pollIntervalMs: 1
+      }
+    },
+    prepareOriginFn: async () => {
+      calls.push('prepare');
+      return {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          ready: true,
+          requiresUserGesture: false
+        }
+      };
+    },
+    waitReadyFn: async () => {
+      calls.push('wait-ready');
+      return {
+        ok: true,
+        result: {
+          ready: true
+        }
+      };
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request.method === 'operator.status'
+        ? 'operator.status'
+        : `${request.method}:${request.params.url || request.params.origin}`);
+      if (request.method === 'page.navigate') {
+        return {
+          ok: true,
+          result: {
+            navigated: true,
+            url: request.params.url
+          }
+        };
+      }
+      if (request.method === 'operator.status') {
+        return {
+          ok: true,
+          result: {
+            activeTab: {
+              url: 'https://example.com/path',
+              origin: 'https://example.com',
+              loadingState: 'complete'
+            }
+          }
+        };
+      }
+      if (request.method === 'page.observe') {
+        return {
+          ok: true,
+          result: {
+            title: 'Example',
+            elements: []
+          }
+        };
+      }
+      throw new Error(`unexpected method ${request.method}`);
+    }
+  });
+
+  assert.deepEqual(calls, [
+    'prepare',
+    'wait-ready',
+    'page.navigate:https://example.com/path',
+    'operator.status',
+    'page.observe:https://example.com'
+  ]);
+  assert.equal(response.ok, true);
+  assert.equal(response.result.origin, 'https://example.com');
+  assert.equal(response.result.url, 'https://example.com/path');
+  assert.equal(response.result.navigation.navigated, true);
+  assert.equal(response.result.observation.title, 'Example');
+});
+
+test('openObserve waits for navigation to settle before observing', async () => {
+  const calls = [];
+  let statusChecks = 0;
+  let tabSettled = false;
+  const response = await openObserve({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    request: {
+      id: 'open_3',
+      method: 'page.observe',
+      params: {
+        url: 'https://example.com/path',
+        origin: 'https://example.com',
+        timeoutMs: 1000,
+        pollIntervalMs: 1
+      }
+    },
+    prepareOriginFn: async () => {
+      calls.push('prepare');
+      return {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          ready: true,
+          requiresUserGesture: false
+        }
+      };
+    },
+    waitReadyFn: async () => {
+      calls.push('wait-ready');
+      return {
+        ok: true,
+        result: {
+          ready: true
+        }
+      };
+    },
+    sendRpcFn: async ({ request }) => {
+      if (request.method === 'page.navigate') {
+        calls.push('page.navigate');
+        return {
+          ok: true,
+          result: {
+            action: 'navigate',
+            url: request.params.url
+          }
+        };
+      }
+      if (request.method === 'operator.status') {
+        statusChecks += 1;
+        calls.push(`operator.status:${statusChecks}`);
+        if (statusChecks === 1) {
+          return {
+            ok: true,
+            result: {
+              activeTab: {
+                url: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html',
+                origin: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop',
+                loadingState: 'complete'
+              }
+            }
+          };
+        }
+        tabSettled = true;
+        return {
+          ok: true,
+          result: {
+            activeTab: {
+              url: 'https://example.com/path',
+              origin: 'https://example.com',
+              loadingState: 'complete'
+            }
+          }
+        };
+      }
+      if (request.method === 'page.observe') {
+        calls.push(tabSettled ? 'page.observe:settled' : 'page.observe:early');
+        return tabSettled
+          ? {
+            ok: true,
+            result: {
+              title: 'Example',
+              elements: []
+            }
+          }
+          : {
+            ok: false,
+            error: {
+              code: 'DOMAIN_NOT_APPROVED'
+            }
+          };
+      }
+      throw new Error(`unexpected method ${request.method}`);
+    }
+  });
+
+  assert.deepEqual(calls, [
+    'prepare',
+    'wait-ready',
+    'page.navigate',
+    'operator.status:1',
+    'operator.status:2',
+    'page.observe:settled'
+  ]);
+  assert.equal(response.ok, true);
+  assert.equal(response.result.navigationSettled.activeTab.url, 'https://example.com/path');
+  assert.equal(response.result.observation.title, 'Example');
 });
 
 test('waitReady polls verifyReadiness until the origin is ready', async () => {

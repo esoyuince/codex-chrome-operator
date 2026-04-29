@@ -1269,6 +1269,9 @@ class SessionManager {
       params
     };
     this.commandQueue.push(command);
+    const commandTimeoutMs = Number.isFinite(params && params.timeoutMs)
+      ? Math.max(30000, params.timeoutMs + 5000)
+      : 30000;
 
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -1280,7 +1283,7 @@ class SessionManager {
             message: `Timed out waiting for extension response to ${method}.`
           }
         });
-      }, 30000);
+      }, commandTimeoutMs);
 
       this.pendingCommands.set(commandId, {
         resolve,

@@ -266,6 +266,44 @@ function runCliJson(args, settings) {
   return JSON.parse(output);
 }
 
+function runCliJsonAsync(args, settings) {
+  return new Promise((resolve, reject) => {
+    const child = childProcess.spawn(process.execPath, [
+      path.join(ROOT, 'scripts', 'operator-cli.js'),
+      '--base-url',
+      settings.baseUrl,
+      '--token',
+      settings.token,
+      ...args
+    ], {
+      cwd: ROOT,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.once('error', reject);
+    child.once('close', (status) => {
+      const output = stdout.trim();
+      if (!output) {
+        reject(new Error(stderr || `operator-cli exited with ${status}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(output));
+      } catch (error) {
+        reject(new Error(`operator-cli returned invalid JSON: ${error.message}\n${output}`));
+      }
+    });
+  });
+}
+
 function findElementHandle(observation, predicate, label) {
   const elements = observation && observation.result && Array.isArray(observation.result.elements)
     ? observation.result.elements
@@ -373,6 +411,10 @@ async function runCleanSmoke(options = {}) {
     });
     await waitForStatus(settings, (status) => status.profileVerified === true);
 
+    const preflightRevoke = runCliJson(['revoke', config.origin], settings);
+    if (!preflightRevoke.ok) {
+      throw new Error(`Preflight domain revoke failed: ${JSON.stringify(preflightRevoke)}`);
+    }
     const preparedOrigin = runCliJson(['prepare-origin', config.origin], settings);
     if (
       !preparedOrigin.ok ||
@@ -402,6 +444,19 @@ async function runCleanSmoke(options = {}) {
     const readyAfterPermission = runCliJson(['wait-ready', config.origin, '5000', '100'], settings);
     if (!readyAfterPermission.ok || readyAfterPermission.result.ready !== true) {
       throw new Error(`wait-ready did not confirm readiness after permission grant: ${JSON.stringify(readyAfterPermission)}`);
+    }
+
+    const openedObservation = await runCliJsonAsync(['open-observe', `${config.origin}/basic-form.html`, '45000', '1000'], settings);
+    if (
+      !openedObservation.ok ||
+      openedObservation.result.origin !== config.origin ||
+      openedObservation.result.url !== `${config.origin}/basic-form.html` ||
+      !openedObservation.result.navigation ||
+      openedObservation.result.navigation.url !== `${config.origin}/basic-form.html` ||
+      !openedObservation.result.observation ||
+      openedObservation.result.observation.title !== 'Codex Operator Basic Fixture'
+    ) {
+      throw new Error(`open-observe did not navigate and observe the fixture: ${JSON.stringify(openedObservation)}`);
     }
 
     await withCdp(await pageTarget(config), async (send) => {
@@ -720,6 +775,7 @@ async function runCleanSmoke(options = {}) {
       ensureStartedBootstrapUrl: ensureStartedBeforeChrome.result.bootstrapUrl,
       prepareOriginPermissionUrl: preparedOrigin.result.permissionUrl,
       waitReadyAfterPermission: readyAfterPermission.result.ready,
+      openObserveTitle: openedObservation.result.observation.title,
       origin: config.origin,
       blockedBeforeHostPermission: blockedObserve.error.code,
       observedTitle: observation.result.title,
