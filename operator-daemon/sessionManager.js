@@ -39,7 +39,8 @@ function clearsLastErrorOnSuccess(method) {
     'extension.hostPermissionGranted',
     'operator.profile.bind',
     'operator.profile.verify',
-    'operator.profiles.discover'
+    'operator.profiles.discover',
+    'extension.hostPermissionsSynced'
   ].includes(method) || method.startsWith('page.');
 }
 
@@ -108,6 +109,9 @@ class SessionManager {
         break;
       case 'extension.hostPermissionGranted':
         response = this.hostPermissionGranted(id, params);
+        break;
+      case 'extension.hostPermissionsSynced':
+        response = this.hostPermissionsSynced(id, params);
         break;
       case 'operator.profiles.discover':
         response = this.discoverProfiles(id, params);
@@ -229,6 +233,28 @@ class SessionManager {
     return rpcOk(id, { origin, hostPermissionGranted: true });
   }
 
+  hostPermissionsSynced(id, params) {
+    if (!Array.isArray(params.origins)) {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_SCHEMA,
+        message: 'origins array is required.'
+      });
+    }
+
+    const profileBindingId = params.profileBindingId || this.config.expectedProfileBindingId;
+    this.stateStore.syncHostPermissions({
+      profileBindingId,
+      origins: params.origins,
+      syncedAt: params.syncedAt
+    });
+    this.hostPermissions = new Set(this.activeHostPermissionOrigins());
+
+    return rpcOk(id, {
+      profileBindingId,
+      hostPermissionOrigins: [...this.hostPermissions]
+    });
+  }
+
   activeHostPermissionOrigins() {
     return Object.keys(this.stateStore.listHostPermissions())
       .filter((origin) => this.hasHostPermission(origin));
@@ -241,11 +267,11 @@ class SessionManager {
     }
 
     const configuredProfile = this.stateStore.getConfiguredProfile();
-    if (!configuredProfile) {
-      return true;
-    }
+    const expectedProfileBindingId = configuredProfile
+      ? configuredProfile.profileBindingId
+      : this.config.expectedProfileBindingId;
 
-    return permission.profileBindingId === configuredProfile.profileBindingId;
+    return permission.profileBindingId === expectedProfileBindingId;
   }
 
   discoverProfiles(id, params) {

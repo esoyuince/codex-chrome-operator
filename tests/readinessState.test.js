@@ -61,7 +61,7 @@ test('domain approval and host permission survive daemon session restart', async
 
     const permission = await postJson(baseUrl, 'extension.hostPermissionGranted', {
       origin: 'https://example.com',
-      profileBindingId: 'profbind_saved'
+      profileBindingId: 'profbind_developmentBinding01'
     });
     assert.equal(permission.ok, true);
   });
@@ -172,5 +172,97 @@ test('readiness ignores persisted host permission from a different profile bindi
     assert.equal(readiness.result.ready, false);
     assert.deepEqual(readiness.result.missing, ['hostPermission']);
     assert.equal(readiness.result.error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+  });
+});
+
+test('extension.hostPermissionsSynced replaces current profile permission set', async () => {
+  const paths = tempPaths();
+
+  await withServer(makeSession(paths), async (baseUrl) => {
+    await postJson(baseUrl, 'operator.profile.bind', {
+      userDataDir: 'C:/Chrome/User Data',
+      profileDirectory: 'Profile 1',
+      profileBindingId: 'profbind_syncProfile',
+      profileBindingVersion: 1
+    });
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_syncProfile',
+        profileBindingVersion: 1,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://keep.example'
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://remove.example'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://keep.example',
+      profileBindingId: 'profbind_syncProfile'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://remove.example',
+      profileBindingId: 'profbind_syncProfile'
+    });
+
+    const sync = await postJson(baseUrl, 'extension.hostPermissionsSynced', {
+      profileBindingId: 'profbind_syncProfile',
+      origins: ['https://keep.example']
+    });
+    assert.equal(sync.ok, true);
+    assert.deepEqual(sync.result.hostPermissionOrigins, ['https://keep.example']);
+
+    const readiness = await postJson(baseUrl, 'operator.verifyReadiness', {
+      origin: 'https://remove.example'
+    });
+    assert.equal(readiness.ok, true);
+    assert.equal(readiness.result.ready, false);
+    assert.deepEqual(readiness.result.missing, ['hostPermission']);
+  });
+});
+
+test('readiness ignores host permission that does not match expected binding before profile setup', async () => {
+  const paths = tempPaths();
+
+  await withServer(makeSession(paths), async (baseUrl) => {
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://example.com',
+      profileBindingId: 'profbind_otherBinding'
+    });
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_developmentBinding01',
+        profileBindingVersion: 1,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+
+    const readiness = await postJson(baseUrl, 'operator.verifyReadiness', {
+      origin: 'https://example.com'
+    });
+    assert.equal(readiness.ok, true);
+    assert.equal(readiness.result.ready, false);
+    assert.deepEqual(readiness.result.missing, ['hostPermission']);
   });
 });

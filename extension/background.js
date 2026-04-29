@@ -1,7 +1,10 @@
 'use strict';
 
+importScripts('permissionOrigins.js');
+
 const NATIVE_HOST = 'com.codex.chrome_operator';
 const PROFILE_BINDING_SOURCE = 'chrome.storage.local';
+const { permissionPatternsToOrigins } = globalThis.CodexPermissionOrigins;
 
 let nativePort = null;
 let lastNativeError = null;
@@ -67,10 +70,28 @@ async function sendHello() {
   });
 }
 
+async function grantedHostPermissionOrigins() {
+  const permissions = await chrome.permissions.getAll();
+  return permissionPatternsToOrigins(permissions.origins || []);
+}
+
+async function syncGrantedHostPermissions() {
+  const binding = await getProfileBinding();
+  if (binding.profileBindingState !== 'bound') {
+    return;
+  }
+
+  postNativeRpc('extension.hostPermissionsSynced', {
+    profileBindingId: binding.profileBindingId,
+    origins: await grantedHostPermissionOrigins()
+  });
+}
+
 async function connectNative({ refreshHello = false } = {}) {
   if (nativePort) {
     if (refreshHello) {
       await sendHello();
+      await syncGrantedHostPermissions();
     }
     return;
   }
@@ -88,6 +109,7 @@ async function connectNative({ refreshHello = false } = {}) {
     });
 
     await sendHello();
+    await syncGrantedHostPermissions();
     connectionState = 'CONNECTED';
     await chrome.storage.local.set({ connectionState, lastNativeError: null });
   } catch (error) {
@@ -126,6 +148,18 @@ async function hasHostPermission(origin) {
   return chrome.permissions.contains({
     origins: [originPatternFromOrigin(origin)]
   });
+}
+
+async function syncPermissionsAfterChange() {
+  try {
+    await connectNative();
+    if (nativePort) {
+      await syncGrantedHostPermissions();
+    }
+  } catch (error) {
+    lastNativeError = error.message;
+    await chrome.storage.local.set({ lastNativeError });
+  }
 }
 
 async function ensureContentScript(tabId) {
@@ -247,9 +281,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message && message.type === 'operator.hostPermissionGranted') {
       await connectNative();
+      const binding = await getProfileBinding();
       postNativeRpc('extension.hostPermissionGranted', {
-        origin: message.origin
+        origin: message.origin,
+        profileBindingId: binding.profileBindingId
       });
+      await syncGrantedHostPermissions();
       sendResponse({ ok: true, origin: message.origin });
       return;
     }
@@ -298,3 +335,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ connectionState: 'DISCONNECTED' });
 });
+
+chrome.permissions.onAdded.addListener(syncPermissionsAfterChange);
+chrome.permissions.onRemoved.addListener(syncPermissionsAfterChange);

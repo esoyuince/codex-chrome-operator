@@ -79,6 +79,32 @@ class OperatorStateStore {
     return permission;
   }
 
+  syncHostPermissions({ profileBindingId, origins, syncedAt = new Date().toISOString() }) {
+    const originSet = new Set(origins);
+    for (const [origin, permission] of Object.entries(this.state.hostPermissions)) {
+      if (permission.profileBindingId === profileBindingId && !originSet.has(origin)) {
+        delete this.state.hostPermissions[origin];
+      }
+    }
+
+    for (const origin of originSet) {
+      const existing = this.state.hostPermissions[origin];
+      this.state.hostPermissions[origin] = {
+        origin,
+        profileBindingId,
+        grantedAt: existing && existing.profileBindingId === profileBindingId
+          ? existing.grantedAt
+          : syncedAt
+      };
+    }
+
+    this.save();
+    return Object.fromEntries(
+      Object.entries(this.state.hostPermissions)
+        .filter(([, permission]) => permission.profileBindingId === profileBindingId)
+    );
+  }
+
   getHostPermission(origin) {
     return this.state.hostPermissions[origin] || null;
   }
