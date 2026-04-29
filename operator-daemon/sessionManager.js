@@ -26,6 +26,14 @@ function rpcError(id, error) {
   return { id, ok: false, error };
 }
 
+function clearsLastErrorOnSuccess(method) {
+  return [
+    'extension.hello',
+    'operator.approveDomain',
+    'extension.hostPermissionGranted'
+  ].includes(method) || method.startsWith('page.');
+}
+
 class SessionManager {
   constructor(config = {}) {
     this.config = {
@@ -124,6 +132,8 @@ class SessionManager {
 
     if (!response.ok) {
       this.lastError = response.error;
+    } else if (clearsLastErrorOnSuccess(request.method)) {
+      this.lastError = null;
     }
 
     return response;

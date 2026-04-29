@@ -173,3 +173,61 @@ test('page.observe queues extension command and resolves from bridge delivery', 
     assert.equal(result.body.result.title, 'Fixture');
   });
 });
+
+test('successful page command clears stale lastError', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+        profileBindingVersion: 3,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+
+    const failClosed = await postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    assert.equal(failClosed.body.ok, false);
+    assert.equal(failClosed.body.error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+
+    const statusAfterError = await postJson(baseUrl, 'operator.status');
+    assert.equal(statusAfterError.body.result.lastError.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://example.com'
+    });
+
+    const observePromise = postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    const command = await postJson(baseUrl, 'bridge.poll');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          title: 'Recovered',
+          elements: []
+        }
+      }
+    });
+
+    const recovered = await observePromise;
+    assert.equal(recovered.body.ok, true);
+
+    const statusAfterSuccess = await postJson(baseUrl, 'operator.status');
+    assert.equal(statusAfterSuccess.body.result.lastError, null);
+  });
+});
