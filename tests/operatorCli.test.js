@@ -9,6 +9,7 @@ const {
   ensureStarted,
   openObserve,
   prepareOrigin,
+  profileDoctor,
   resolveCliSettings,
   waitReady
 } = require('../scripts/operator-cli');
@@ -922,6 +923,18 @@ test('buildRpcRequest maps profile and readiness commands', () => {
     method: 'operator.profile.verify',
     params: {}
   });
+  assert.deepEqual(buildRpcRequest(['profile-doctor']), {
+    method: 'operator.status',
+    params: {},
+    cliAction: 'profileDoctor'
+  });
+  assert.deepEqual(buildRpcRequest(['profile-doctor', 'https://example.com/path']), {
+    method: 'operator.status',
+    params: {
+      origin: 'https://example.com'
+    },
+    cliAction: 'profileDoctor'
+  });
   assert.deepEqual(buildRpcRequest(['readiness', 'https://example.com/path']), {
     method: 'operator.verifyReadiness',
     params: {
@@ -983,6 +996,146 @@ test('buildRpcRequest rejects incomplete commands with usage error', () => {
   assert.throws(() => buildRpcRequest(['full-auto-start']), /Usage:/);
   assert.throws(() => buildRpcRequest(['audit-tail', 'nope']), /Usage:/);
   assert.throws(() => buildRpcRequest(['wat']), /Usage:/);
+});
+
+test('profileDoctor reports configured profile, active tab, and readiness in one JSON result', async () => {
+  const calls = [];
+  const response = await profileDoctor({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    request: {
+      id: 'profile_doctor_1',
+      method: 'operator.status',
+      params: {
+        origin: 'https://example.com'
+      }
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(`${request.id}:${request.method}:${request.params.origin || ''}`);
+      if (request.method === 'operator.status') {
+        return {
+          ok: true,
+          result: {
+            connectionState: 'EXTENSION_CONNECTED',
+            profileVerified: true,
+            profileBindingStatus: 'verified',
+            configuredProfile: {
+              userDataDir: 'C:/Chrome/User Data',
+              profileDirectory: 'Profile 1',
+              profileLabel: 'Play Console',
+              profileBindingId: 'profbind_profile01',
+              profileBindingVersion: 1
+            },
+            activeTab: {
+              url: 'https://example.com/app',
+              origin: 'https://example.com',
+              loadingState: 'complete'
+            },
+            version: {
+              lastMismatch: null
+            }
+          }
+        };
+      }
+      assert.equal(request.method, 'operator.verifyReadiness');
+      return {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          ready: true,
+          profileVerified: true,
+          domainApproved: true,
+          hostPermissionGranted: true
+        }
+      };
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.deepEqual(calls, [
+    'profile_doctor_1_status:operator.status:',
+    'profile_doctor_1_readiness:operator.verifyReadiness:https://example.com'
+  ]);
+  assert.equal(response.result.checks.daemon.ok, true);
+  assert.equal(response.result.checks.configuredProfile.ok, true);
+  assert.equal(response.result.checks.profileVerified.ok, true);
+  assert.equal(response.result.checks.activeTabOrigin.ok, true);
+  assert.equal(response.result.checks.readiness.ok, true);
+  assert.deepEqual(response.result.nextActions, []);
+});
+
+test('profileDoctor gives next actions when profile is not verified and origin is not ready', async () => {
+  const response = await profileDoctor({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    request: {
+      id: 'profile_doctor_2',
+      method: 'operator.status',
+      params: {
+        origin: 'https://example.com'
+      }
+    },
+    sendRpcFn: async ({ request }) => {
+      if (request.method === 'operator.status') {
+        return {
+          ok: true,
+          result: {
+            connectionState: 'EXTENSION_CONNECTED_SETUP_ONLY',
+            profileVerified: false,
+            profileBindingStatus: 'rejected',
+            configuredProfile: {
+              userDataDir: 'C:/Chrome/User Data',
+              profileDirectory: 'Profile 1',
+              profileLabel: 'Play Console',
+              profileBindingId: 'profbind_expected',
+              profileBindingVersion: 1
+            },
+            activeTab: {
+              url: 'https://other.example/app',
+              origin: 'https://other.example',
+              loadingState: 'complete'
+            },
+            version: {
+              lastMismatch: null
+            },
+            lastError: {
+              code: 'PROFILE_BINDING_MISMATCH',
+              message: 'Profile binding id does not match configured profile.'
+            }
+          }
+        };
+      }
+      return {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          ready: false,
+          profileVerified: false,
+          domainApproved: false,
+          hostPermissionGranted: false
+        }
+      };
+    }
+  });
+
+  assert.equal(response.ok, false);
+  assert.equal(response.result.checks.profileVerified.ok, false);
+  assert.equal(response.result.checks.activeTabOrigin.ok, false);
+  assert.equal(response.result.checks.readiness.ok, false);
+  assert.deepEqual(response.result.checks.readiness.details.missing, [
+    'profile',
+    'domainApproval',
+    'hostPermission'
+  ]);
+  assert.ok(response.result.nextActions.some((action) => action.kind === 'profile'));
+  assert.ok(response.result.nextActions.some((action) => action.kind === 'domainApproval'));
+  assert.ok(response.result.nextActions.some((action) => action.kind === 'hostPermission'));
 });
 
 test('resolveCliSettings reads install config and token defaults', () => {

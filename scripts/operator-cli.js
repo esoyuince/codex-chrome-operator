@@ -25,6 +25,7 @@ function usage() {
   node scripts/operator-cli.js profiles [userDataDir]
   node scripts/operator-cli.js profile-bind <userDataDir> <profileDirectory> [profileLabel]
   node scripts/operator-cli.js profile-verify
+  node scripts/operator-cli.js profile-doctor [origin-or-url]
   node scripts/operator-cli.js readiness <origin-or-url>
   node scripts/operator-cli.js wait-ready <origin-or-url> [timeoutMs] [pollIntervalMs]
   node scripts/operator-cli.js approvals
@@ -166,6 +167,12 @@ function buildRpcRequest(argv) {
       };
     case 'profile-verify':
       return { method: 'operator.profile.verify', params: {} };
+    case 'profile-doctor':
+      return {
+        method: 'operator.status',
+        params: args[0] ? { origin: new URL(args[0]).origin } : {},
+        cliAction: 'profileDoctor'
+      };
     case 'readiness':
       requireArgs(args, 1);
       return {
@@ -742,6 +749,172 @@ function readinessNextActions(readiness, status = {}, bootstrapUrl = null) {
   return actions;
 }
 
+function checkResult(ok, details = {}) {
+  return {
+    ok: Boolean(ok),
+    ...details
+  };
+}
+
+function uniqueActions(actions) {
+  const seen = new Set();
+  return actions.filter((action) => {
+    const key = `${action.kind}:${action.command || ''}:${action.url || ''}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+async function profileDoctor({
+  settings,
+  request,
+  sendRpcFn = sendRpc
+}) {
+  const origin = request && request.params && request.params.origin;
+  let statusResponse;
+  try {
+    statusResponse = await sendRpcFn({
+      baseUrl: settings.baseUrl,
+      token: settings.token,
+      request: {
+        id: `${request.id}_status`,
+        method: 'operator.status',
+        params: {}
+      }
+    });
+  } catch (error) {
+    return {
+      id: request && request.id,
+      ok: false,
+      error: {
+        code: 'PROFILE_DOCTOR_DAEMON_UNREACHABLE',
+        message: error.message,
+        nextActions: [
+          {
+            kind: 'daemon',
+            command: 'node scripts/operator-cli.js ensure-started --no-bootstrap',
+            description: 'Start the local daemon before checking the live Chrome profile.',
+            requiresUserGesture: false
+          }
+        ]
+      }
+    };
+  }
+
+  if (!statusResponse || !statusResponse.ok) {
+    return statusResponse;
+  }
+
+  const status = statusResponse.result || {};
+  let readiness = null;
+  let readinessResponse = null;
+  if (origin) {
+    readinessResponse = await sendRpcFn({
+      baseUrl: settings.baseUrl,
+      token: settings.token,
+      request: {
+        id: `${request.id}_readiness`,
+        method: 'operator.verifyReadiness',
+        params: { origin }
+      }
+    });
+    if (readinessResponse && readinessResponse.ok) {
+      readiness = normalizeReadiness(readinessResponse.result);
+    }
+  }
+
+  const configuredProfile = status.configuredProfile || null;
+  const activeTab = status.activeTab || null;
+  const activeTabOrigin = activeTab && activeTab.origin ? activeTab.origin : null;
+  const activeTabReady = !origin || (
+    activeTabOrigin === origin &&
+    activeTab.loadingState !== 'loading'
+  );
+  const readinessOk = !origin || Boolean(readiness && readiness.ready);
+  const checks = {
+    daemon: checkResult(true, {
+      connectionState: status.connectionState || null
+    }),
+    configuredProfile: checkResult(Boolean(configuredProfile), {
+      profile: configuredProfile
+    }),
+    profileVerified: checkResult(status.profileVerified === true, {
+      profileBindingStatus: status.profileBindingStatus || null,
+      lastError: status.lastError || null
+    }),
+    activeTabOrigin: origin
+      ? checkResult(activeTabReady, {
+        expected: origin,
+        actual: activeTabOrigin,
+        activeTab
+      })
+      : checkResult(true, { skipped: true, activeTab }),
+    readiness: origin
+      ? checkResult(readinessOk, {
+        details: readiness,
+        error: readinessResponse && !readinessResponse.ok ? readinessResponse.error : null
+      })
+      : checkResult(true, { skipped: true })
+  };
+
+  const profileAction = configuredProfile
+    ? {
+      kind: 'profile',
+      command: 'node scripts/operator-cli.js profile-verify',
+      description: 'Open the profile setup URL in the configured Chrome profile and refresh HELLO.',
+      requiresUserGesture: true
+    }
+    : {
+      kind: 'profile',
+      command: 'node scripts/operator-cli.js profiles',
+      description: 'Discover and bind the Chrome profile that should own this operator session.',
+      requiresUserGesture: false
+    };
+
+  const nextActions = [];
+  if (!checks.configuredProfile.ok || !checks.profileVerified.ok) {
+    nextActions.push(profileAction);
+  }
+  if (readiness && !readiness.ready) {
+    nextActions.push(...readinessNextActions(readiness, status));
+  }
+  if (origin && !activeTabReady) {
+    nextActions.push({
+      kind: 'activeTab',
+      command: `node scripts/operator-cli.js navigate ${origin}`,
+      description: `Make the active tab match ${origin} before observing or acting.`,
+      requiresUserGesture: false
+    });
+  }
+
+  const failedChecks = Object.entries(checks)
+    .filter(([, check]) => !check.ok)
+    .map(([name]) => name);
+
+  return {
+    id: request.id,
+    ok: failedChecks.length === 0,
+    result: {
+      origin: origin || null,
+      checks,
+      failedChecks,
+      nextActions: uniqueActions(nextActions),
+      status: {
+        connectionState: status.connectionState || null,
+        profileVerified: status.profileVerified === true,
+        profileBindingStatus: status.profileBindingStatus || null,
+        configuredProfile,
+        activeTab,
+        version: status.version || null,
+        lastError: status.lastError || null
+      }
+    }
+  };
+}
+
 async function ensureStarted({
   settings,
   request,
@@ -1263,6 +1436,11 @@ async function run(argv = process.argv.slice(2), output = process.stdout) {
       request,
       openBootstrap: options.openBootstrap !== false
     })
+    : cliAction === 'profileDoctor'
+    ? await profileDoctor({
+      settings,
+      request
+    })
     : cliAction === 'openObserve'
     ? await openObserve({
       settings,
@@ -1308,6 +1486,7 @@ module.exports = {
   launchBootstrapChrome,
   openObserve,
   prepareOrigin,
+  profileDoctor,
   resolveCliSettings,
   run,
   startDaemonProcess,
