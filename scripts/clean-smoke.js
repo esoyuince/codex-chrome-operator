@@ -384,6 +384,14 @@ async function runCleanSmoke(options = {}) {
     if (!gateTypes.includes('PASSWORD_REQUIRED')) {
       throw new Error(`Expected PASSWORD_REQUIRED gate: ${JSON.stringify(gateObservation)}`);
     }
+    const gatedVisualObserve = runCliJson(['visual-observe', config.origin], settings);
+    if (
+      gatedVisualObserve.ok ||
+      gatedVisualObserve.error.code !== 'VISUAL_PROVIDER_POLICY_BLOCKED' ||
+      gatedVisualObserve.error.gateType !== 'PASSWORD_REQUIRED'
+    ) {
+      throw new Error(`Expected visual capture policy block on gated page: ${JSON.stringify(gatedVisualObserve)}`);
+    }
     const gatedClick = runCliJson(['click', config.origin, 'el_1'], settings);
     if (
       gatedClick.ok ||
@@ -451,8 +459,15 @@ async function runCleanSmoke(options = {}) {
     if (!visualObservation.ok) {
       throw new Error(`Visual observe failed after permission grant: ${JSON.stringify(visualObservation)}`);
     }
-    if (!visualObservation.result.screenshot || !visualObservation.result.screenshot.dataUrl.startsWith('data:image/png;base64,')) {
-      throw new Error(`Visual observe did not return a PNG screenshot: ${JSON.stringify(visualObservation)}`);
+    if (
+      !visualObservation.result.screenshot ||
+      visualObservation.result.screenshot.dataUrl ||
+      !visualObservation.result.screenshot.artifactId ||
+      !visualObservation.result.screenshot.sha256 ||
+      !visualObservation.result.screenshot.path ||
+      !fs.existsSync(visualObservation.result.screenshot.path)
+    ) {
+      throw new Error(`Visual observe did not return a stored screenshot artifact: ${JSON.stringify(visualObservation)}`);
     }
     runCliJson(['fill', config.origin, 'el_0', 'Clean Smoke App'], settings);
     runCliJson(['fill', config.origin, 'el_1', 'Single command smoke test.'], settings);
@@ -499,6 +514,13 @@ async function runCleanSmoke(options = {}) {
     }
 
     const finalStatus = runCliJson(['status'], settings);
+    const screenshotArtifact = visualObservation.result.screenshot;
+    const screenshotCleanup = runCliJson(['screenshots-cleanup', '0'], settings);
+    const screenshotRemoved = screenshotCleanup.ok &&
+      screenshotCleanup.result.removed.some((artifact) => artifact.artifactId === screenshotArtifact.artifactId);
+    if (!screenshotRemoved || fs.existsSync(screenshotArtifact.path)) {
+      throw new Error(`Screenshot cleanup failed: ${JSON.stringify({ screenshotCleanup, screenshotArtifact })}`);
+    }
     const revoke = runCliJson(['revoke', config.origin], settings);
     if (!revoke.ok || revoke.result.revoked !== true) {
       throw new Error(`Domain approval revoke failed: ${JSON.stringify(revoke)}`);
@@ -516,11 +538,15 @@ async function runCleanSmoke(options = {}) {
       blockedBeforeHostPermission: blockedObserve.error.code,
       observedTitle: observation.result.title,
       visualObservedTitle: visualObservation.result.title,
-      visualScreenshotBytes: visualObservation.result.screenshot.bytesApprox,
+      visualScreenshotArtifactId: screenshotArtifact.artifactId,
+      visualScreenshotBytes: screenshotArtifact.bytes,
+      visualScreenshotSha256: screenshotArtifact.sha256,
+      gatedVisualBlocked: gatedVisualObserve.error.code,
       gateHandoffBlocked: gatedClick.error.code,
       gateHandoffResume: gateDom.gateStatus,
       highRiskBlocked: highRiskClick.error.code,
       highRiskApprovalReplay: replayedHighRisk.result.action,
+      screenshotCleanupRemoved: screenshotRemoved,
       postRevokeBlocked: postRevokeObserve.error.code,
       dom,
       finalStatus: finalStatus.result,

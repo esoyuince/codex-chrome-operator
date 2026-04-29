@@ -13,6 +13,10 @@ const {
   discoverChromeProfiles,
   generateProfileBindingId
 } = require('./profileManager');
+const {
+  ScreenshotStore,
+  defaultScreenshotDir
+} = require('./screenshotStore');
 const { OperatorStateStore } = require('./stateStore');
 
 function defaultAuditPath() {
@@ -42,6 +46,7 @@ function clearsLastErrorOnSuccess(method) {
     'operator.profile.verify',
     'operator.profiles.discover',
     'extension.hostPermissionsSynced',
+    'operator.screenshots.cleanup',
     'operator.approvals.approve',
     'operator.approvals.reject',
     'operator.approvals.run'
@@ -70,9 +75,13 @@ class SessionManager {
         || config.expectedProfileBindingVersion
         || 1,
       auditLogPath: config.auditLogPath || defaultAuditPath(),
+      screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       token: config.token || process.env.CODEX_CHROME_OPERATOR_TOKEN || 'dev-token'
     };
     this.audit = new AuditLog(this.config.auditLogPath);
+    this.screenshotStore = config.screenshotStore || new ScreenshotStore({
+      rootDir: this.config.screenshotDir
+    });
     this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
     this.profileVerified = false;
     this.profileBindingStatus = 'unverified';
@@ -97,6 +106,7 @@ class SessionManager {
       configuredProfile: this.stateStore.getConfiguredProfile(),
       pendingApprovals: this.listApprovalRecords({ status: 'pending' }),
       auditLogPath: this.config.auditLogPath,
+      screenshotDir: this.config.screenshotDir,
       lastError: this.lastError
     };
   }
@@ -155,6 +165,9 @@ class SessionManager {
         break;
       case 'operator.approvals.run':
         response = await this.runApproval(id, params);
+        break;
+      case 'operator.screenshots.cleanup':
+        response = this.cleanupScreenshots(id, params);
         break;
       case 'page.observe':
       case 'page.visualObserve':
@@ -436,7 +449,55 @@ class SessionManager {
     if (!extensionResponse.ok) {
       return rpcError(id, this.attachApprovalRequest(method, { ...params, origin }, extensionResponse.error));
     }
+    if (method === 'page.visualObserve') {
+      const materialized = this.materializeVisualObservation(extensionResponse.result, origin);
+      if (!materialized.ok) {
+        return rpcError(id, materialized.error);
+      }
+      return rpcOk(id, materialized.result);
+    }
     return rpcOk(id, extensionResponse.result);
+  }
+
+  materializeVisualObservation(result, origin) {
+    const screenshot = result && result.screenshot;
+    if (!screenshot || !screenshot.dataUrl) {
+      return rpcOk(null, result);
+    }
+
+    try {
+      const { dataUrl, ...screenshotSummary } = screenshot;
+      const artifact = this.screenshotStore.saveDataUrl({
+        dataUrl,
+        origin,
+        reason: 'visualObserve'
+      });
+      return rpcOk(null, {
+        ...result,
+        visual: {
+          ...(result.visual || {}),
+          artifactBacked: true
+        },
+        screenshot: {
+          ...screenshotSummary,
+          ...artifact
+        }
+      });
+    } catch (error) {
+      const code = error.message && error.message.startsWith('VISUAL_ARTIFACT_TOO_LARGE')
+        ? ERROR_CODES.VISUAL_ARTIFACT_TOO_LARGE
+        : ERROR_CODES.INVALID_SCHEMA;
+      return rpcError(null, {
+        code,
+        message: error.message
+      });
+    }
+  }
+
+  cleanupScreenshots(id, params = {}) {
+    return rpcOk(id, this.screenshotStore.cleanup({
+      olderThanMs: params.olderThanMs
+    }));
   }
 
   attachApprovalRequest(method, params, error) {

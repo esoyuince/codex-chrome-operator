@@ -14,6 +14,7 @@ function makeSession() {
     token: 'test-token',
     auditLogPath: path.join(dir, 'audit.jsonl'),
     statePath: path.join(dir, 'state.json'),
+    screenshotDir: path.join(dir, 'screenshots'),
     expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
     expectedProfileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
     expectedProfileBindingVersion: 3
@@ -257,6 +258,66 @@ test('page.visualObserve queues extension command and resolves from bridge deliv
     const result = await observePromise;
     assert.equal(result.body.ok, true);
     assert.equal(result.body.result.screenshot.mimeType, 'image/png');
+    assert.match(result.body.result.screenshot.artifactId, /^shot_/);
+    assert.match(result.body.result.screenshot.sha256, /^[a-f0-9]{64}$/);
+    assert.equal(Object.prototype.hasOwnProperty.call(result.body.result.screenshot, 'dataUrl'), false);
+    assert.equal(fs.existsSync(result.body.result.screenshot.path), true);
+  });
+});
+
+test('operator.screenshots.cleanup removes stored visual artifacts', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+        profileBindingVersion: 3,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1', 'visualObserve.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://example.com'
+    });
+
+    const observePromise = postJson(baseUrl, 'page.visualObserve', {
+      origin: 'https://example.com'
+    });
+    const command = await postJson(baseUrl, 'bridge.poll');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          screenshot: {
+            mimeType: 'image/png',
+            dataUrl: 'data:image/png;base64,abc'
+          },
+          elements: []
+        }
+      }
+    });
+    const result = await observePromise;
+    const artifactPath = result.body.result.screenshot.path;
+    assert.equal(fs.existsSync(artifactPath), true);
+
+    const cleanup = await postJson(baseUrl, 'operator.screenshots.cleanup', {
+      olderThanMs: 0
+    });
+
+    assert.equal(cleanup.body.ok, true);
+    assert.equal(cleanup.body.result.removed.length, 1);
+    assert.equal(fs.existsSync(artifactPath), false);
   });
 });
 

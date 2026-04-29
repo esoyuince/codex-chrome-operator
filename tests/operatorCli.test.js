@@ -33,6 +33,10 @@ test('buildRpcRequest maps approval and page commands', () => {
     method: 'page.visualObserve',
     params: { origin: 'https://example.com' }
   });
+  assert.deepEqual(buildRpcRequest(['screenshots-cleanup', '60000']), {
+    method: 'operator.screenshots.cleanup',
+    params: { olderThanMs: 60000 }
+  });
   assert.deepEqual(buildRpcRequest(['fill', 'https://example.com', 'el_0', 'hello world']), {
     method: 'page.fill',
     params: {

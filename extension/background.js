@@ -170,6 +170,23 @@ function estimateDataUrlBytes(dataUrl) {
   return Math.ceil((dataUrl.length - commaIndex - 1) * 3 / 4);
 }
 
+function visualPolicyErrorForObservation(observation) {
+  const gates = observation && Array.isArray(observation.detectedGates)
+    ? observation.detectedGates
+    : [];
+  if (gates.length === 0) {
+    return null;
+  }
+  const gate = gates[0];
+  return {
+    code: 'VISUAL_PROVIDER_POLICY_BLOCKED',
+    message: 'Screenshot capture is blocked while an authentication or anti-abuse gate is visible.',
+    gateType: gate.type || gate.code,
+    resumePolicy: 'wait-and-reobserve',
+    freshObservationRequired: true
+  };
+}
+
 async function syncPermissionsAfterChange() {
   try {
     await connectNative();
@@ -250,6 +267,10 @@ async function handleOperatorCommand(command) {
 
     if (command.method === 'page.visualObserve') {
       const observation = await chrome.tabs.sendMessage(ready.tab.id, { type: 'content.observe' });
+      const policyError = visualPolicyErrorForObservation(observation);
+      if (policyError) {
+        return { ok: false, error: policyError };
+      }
       const dataUrl = await chrome.tabs.captureVisibleTab(ready.tab.windowId, {
         format: 'png'
       });
