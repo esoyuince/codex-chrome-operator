@@ -1,6 +1,9 @@
 'use strict';
 
 const readline = require('node:readline');
+const { buildApprovalHints } = require('./approvalClient');
+const { buildGateHandoffHints } = require('./gateHandoffClient');
+const { buildPolicyHints } = require('./policyClient');
 const {
   ADAPTER_PROTOCOL_VERSION,
   CodexChromeToolAdapter,
@@ -63,7 +66,16 @@ function jsonRpcError(id, code, message, data) {
   };
 }
 
-function normalizeToolResult(toolResponse, adapterSession) {
+function buildAdapterHints(toolResponse) {
+  if (!toolResponse || toolResponse.ok !== false || !toolResponse.error) {
+    return null;
+  }
+  return buildApprovalHints(toolResponse.error) ||
+    buildGateHandoffHints(toolResponse.error) ||
+    buildPolicyHints(toolResponse.error);
+}
+
+function enrichToolResponse(toolResponse) {
   const payload = toolResponse || {
     ok: false,
     error: {
@@ -71,6 +83,12 @@ function normalizeToolResult(toolResponse, adapterSession) {
       message: 'Tool returned an empty response.'
     }
   };
+  const adapterHints = buildAdapterHints(payload);
+  return adapterHints ? { ...payload, adapterHints } : payload;
+}
+
+function normalizeToolResult(toolResponse, adapterSession) {
+  const payload = enrichToolResponse(toolResponse);
   return {
     content: [{
       type: 'text',
@@ -213,8 +231,10 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_MCP_PROTOCOL_VERSION,
+  buildAdapterHints,
   createTaskSession,
   createMcpMessageHandler,
+  enrichToolResponse,
   initializeResult,
   jsonRpcError,
   jsonRpcResult,

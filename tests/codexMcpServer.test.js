@@ -152,6 +152,96 @@ test('MCP handler exposes explicit task-level session state', async () => {
   assert.equal(second.result.adapterSession.lastErrorCode, 'UNKNOWN_TOOL');
 });
 
+test('MCP handler enriches approval, gate, and policy tool errors with adapter hints', async () => {
+  const responses = [
+    {
+      ok: false,
+      error: {
+        code: 'HIGH_RISK_BLOCKED',
+        message: 'High-risk action blocked.',
+        approvalId: 'approval_9',
+        approvalKind: 'publish',
+        targetSummary: 'button: Publish'
+      }
+    },
+    {
+      ok: false,
+      error: {
+        code: 'PASSWORD_REQUIRED',
+        message: 'A password gate is visible.',
+        gateType: 'PASSWORD_REQUIRED',
+        resumePolicy: 'wait-and-reobserve',
+        freshObservationRequired: true
+      }
+    },
+    {
+      ok: false,
+      error: {
+        code: 'HOST_PERMISSION_REQUIRED',
+        message: 'Chrome host permission is required before action.',
+        origin: 'https://example.com',
+        permissionUrl: 'chrome-extension://id/permissionRequest.html?origin=https%3A%2F%2Fexample.com'
+      }
+    }
+  ];
+  const handleMessage = createMcpMessageHandler({
+    adapter: {
+      async executeTool() {
+        return responses.shift();
+      }
+    }
+  });
+
+  const approval = await handleMessage({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_click',
+      arguments: {
+        origin: 'https://example.com',
+        handle: 'el_1'
+      }
+    }
+  });
+  assert.equal(approval.result.structuredContent.adapterHints.category, 'approval');
+  assert.equal(approval.result.structuredContent.adapterHints.approvalId, 'approval_9');
+  assert.deepEqual(approval.result.structuredContent.adapterHints.nextActions[1].operatorCli, [
+    'approval-approve',
+    'approval_9'
+  ]);
+
+  const gate = await handleMessage({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_click',
+      arguments: {
+        origin: 'https://example.com',
+        handle: 'el_1'
+      }
+    }
+  });
+  assert.equal(gate.result.structuredContent.adapterHints.category, 'gate-handoff');
+  assert.equal(gate.result.structuredContent.adapterHints.resumePolicy, 'wait-and-reobserve');
+  assert.equal(gate.result.structuredContent.adapterHints.nextActions[1].kind, 'reobserve');
+
+  const policy = await handleMessage({
+    jsonrpc: '2.0',
+    id: 3,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_observe',
+      arguments: {
+        origin: 'https://example.com'
+      }
+    }
+  });
+  assert.equal(policy.result.structuredContent.adapterHints.category, 'policy');
+  assert.equal(policy.result.structuredContent.adapterHints.permissionUrl, 'chrome-extension://id/permissionRequest.html?origin=https%3A%2F%2Fexample.com');
+});
+
 test('MCP handler returns deterministic JSON-RPC errors for malformed calls', async () => {
   const handleMessage = createMcpMessageHandler();
 
@@ -203,5 +293,8 @@ test('package exposes MCP adapter script and docs explain local usage', () => {
   assert.match(docs, /tools\/list/);
   assert.match(docs, /tools\/call/);
   assert.match(docs, /adapterSession/);
+  assert.match(docs, /adapterHints/);
+  assert.match(docs, /approval-approve/);
+  assert.match(docs, /wait-and-reobserve/);
   assert.match(docs, /untrusted/);
 });

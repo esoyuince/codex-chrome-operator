@@ -63,6 +63,28 @@ caller can track the current task-level adapter state:
 - `lastErrorCode`
 - `lastCalledAt`
 
+Failed `tools/call` responses may also include `adapterHints`. These hints are
+metadata for the caller; they do not bypass the daemon policy checks.
+
+Approval hints are returned for `HIGH_RISK_BLOCKED` and `APPROVAL_REQUIRED`.
+When the daemon created an approval request, the hint includes the `approvalId`,
+`approvalKind`, target summary, and next actions such as:
+
+- `approval-approve <approvalId>`
+- `approval-reject <approvalId>`
+- `approval-run <approvalId>`
+
+Gate handoff hints are returned for visible auth or anti-abuse gates such as
+password, OTP, WebAuthn, and CAPTCHA. The hint carries the daemon
+`resumePolicy`, for example `wait-and-reobserve`, and tells the caller to wait
+for the user to complete the gate in Chrome before retrying with a fresh
+observation.
+
+Policy hints are returned for blockers such as `HOST_PERMISSION_REQUIRED`,
+`DOMAIN_NOT_APPROVED`, profile binding errors, extension disconnects, and
+emergency stop. Host permission hints include the permission page URL when the
+daemon provides it and mark the step as requiring a user gesture.
+
 Visual tools return screenshot artifact references and metadata. Raw screenshot
 bytes and `dataUrl` fields are redacted before the result reaches Codex unless a
 future policy explicitly allows a different handoff.
