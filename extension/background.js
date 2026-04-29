@@ -50,8 +50,28 @@ async function buildHello() {
   };
 }
 
-async function connectNative() {
+function postNativeRpc(method, params = {}) {
+  if (!nativePort) {
+    throw new Error('Native bridge is not connected.');
+  }
+  nativePort.postMessage({
+    id: requestId('rpc'),
+    method,
+    params
+  });
+}
+
+async function sendHello() {
+  postNativeRpc('extension.hello', {
+    hello: await buildHello()
+  });
+}
+
+async function connectNative({ refreshHello = false } = {}) {
   if (nativePort) {
+    if (refreshHello) {
+      await sendHello();
+    }
     return;
   }
   try {
@@ -67,12 +87,7 @@ async function connectNative() {
       chrome.storage.local.set({ connectionState, lastNativeError });
     });
 
-    const hello = await buildHello();
-    nativePort.postMessage({
-      id: requestId('hello'),
-      method: 'extension.hello',
-      params: { hello }
-    });
+    await sendHello();
     connectionState = 'CONNECTED';
     await chrome.storage.local.set({ connectionState, lastNativeError: null });
   } catch (error) {
@@ -221,6 +236,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message && message.type === 'operator.connectNative') {
       await connectNative();
       sendResponse({ ok: true, connectionState, lastNativeError });
+      return;
+    }
+
+    if (message && message.type === 'operator.refreshHello') {
+      await connectNative({ refreshHello: true });
+      sendResponse({ ok: true, connectionState, lastNativeError });
+      return;
+    }
+
+    if (message && message.type === 'operator.hostPermissionGranted') {
+      await connectNative();
+      postNativeRpc('extension.hostPermissionGranted', {
+        origin: message.origin
+      });
+      sendResponse({ ok: true, origin: message.origin });
       return;
     }
 

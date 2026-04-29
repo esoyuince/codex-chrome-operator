@@ -16,5 +16,11 @@ document.getElementById('grant').addEventListener('click', async () => {
     return;
   }
   const granted = await chrome.permissions.request({ origins: [originPattern(origin)] });
+  if (granted) {
+    await chrome.runtime.sendMessage({
+      type: 'operator.hostPermissionGranted',
+      origin
+    });
+  }
   status.textContent = granted ? 'Permission granted.' : 'Permission denied.';
 });

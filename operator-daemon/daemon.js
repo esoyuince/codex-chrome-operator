@@ -14,11 +14,27 @@ function defaultConfigPath() {
   );
 }
 
+function defaultTokenPath() {
+  return path.join(
+    process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+    'CodexChromeOperator',
+    'token.txt'
+  );
+}
+
 function loadConfig(configPath = defaultConfigPath()) {
   if (!fs.existsSync(configPath)) {
     return {};
   }
   return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+}
+
+function loadInstalledToken(tokenPath = defaultTokenPath()) {
+  if (!fs.existsSync(tokenPath)) {
+    return null;
+  }
+  const token = fs.readFileSync(tokenPath, 'utf8').trim();
+  return token || null;
 }
 
 function printHelp() {
@@ -57,7 +73,7 @@ async function main() {
   }
 
   const config = loadConfig();
-  const token = process.env.CODEX_CHROME_OPERATOR_TOKEN || config.token || 'dev-token';
+  const token = process.env.CODEX_CHROME_OPERATOR_TOKEN || config.token || loadInstalledToken() || 'dev-token';
   const port = Number(parseArgValue('--port', config.port || 17391));
   const session = new SessionManager({
     ...config,
@@ -76,5 +92,7 @@ if (require.main === module) {
 
 module.exports = {
   defaultConfigPath,
-  loadConfig
+  defaultTokenPath,
+  loadConfig,
+  loadInstalledToken
 };

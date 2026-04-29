@@ -14,5 +14,6 @@ document.getElementById('bind').addEventListener('click', async () => {
   }
 
   await chrome.storage.local.set({ profileBindingId, profileBindingVersion });
-  status.textContent = 'Profile binding saved.';
+  const response = await chrome.runtime.sendMessage({ type: 'operator.refreshHello' });
+  status.textContent = response.ok ? 'Profile binding saved.' : 'Profile binding saved; reconnect failed.';
 });

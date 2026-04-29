@@ -32,7 +32,10 @@
         "permissionRequest.html",
         "profileSetup.html"
       ],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "<all_urls>"
+      ]
     }
-  ]
+  ],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAknDsPNdqXhoe4RKJKuU3Ff25AYAGndM7loJIifypFScbWKUn5MVxJhfdmjhNo3dHvEu4bWMpIZp9rxNbgPEdzFpvKAtxf8rrN/xo2r9sNEfzidAP/MzneqtOVfIZixN8vDUpFwt+X+k0I0GP5rgM8ojMptLrRsGMOJG1yYgYsxBZB5pyO6TM3e/Jm/9Yg3YPBPqFdVtMmtxrR9+cvLW4xMXaDWyH7WaHPfy/0VoP641kyrVXKbsjsqePVjsASGpCQQVAISHZXzPB/X6KWUPTEAQtaMCyJgKkOEDorfduVgZIaVHhWG6TTQfuQU6VyFGtJXgEOVnFUVbV4Cn8PDx1wwIDAQAB"
 }
