@@ -554,6 +554,48 @@ test('page.observe queues extension command and resolves from bridge delivery', 
   });
 });
 
+test('page.waitFor queues extension command and resolves condition result', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const waitPromise = postJson(baseUrl, 'page.waitFor', {
+      origin: 'https://example.com',
+      condition: {
+        type: 'textVisible',
+        text: 'Draft saved'
+      },
+      timeoutMs: 750,
+      pollIntervalMs: 50
+    });
+
+    const command = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(command.body.ok, true);
+    assert.equal(command.body.result.command.method, 'page.waitFor');
+    assert.equal(command.body.result.command.params.origin, 'https://example.com');
+    assert.equal(command.body.result.command.params.condition.type, 'textVisible');
+    assert.equal(command.body.result.command.params.timeoutMs, 750);
+
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          action: 'waited',
+          condition: { type: 'textVisible', text: 'Draft saved' },
+          elapsedMs: 50,
+          finalState: { satisfied: true }
+        }
+      }
+    });
+
+    const result = await waitPromise;
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.action, 'waited');
+    assert.equal(result.body.result.condition.type, 'textVisible');
+    assert.equal(result.body.result.elapsedMs, 50);
+  });
+});
+
 test('page.visualObserve queues extension command and resolves from bridge delivery', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {

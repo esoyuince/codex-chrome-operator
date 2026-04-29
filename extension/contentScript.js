@@ -164,6 +164,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message && message.type === 'content.waitFor') {
+      sendResponse(await globalThis.CodexPageWait.waitForCondition({
+        condition: message.condition,
+        timeoutMs: message.timeoutMs,
+        pollIntervalMs: message.pollIntervalMs,
+        context: {
+          window,
+          document,
+          location,
+          resolveHandle
+        }
+      }));
+      return;
+    }
+
     if (message && message.type === 'content.action') {
       sendResponse(await runAction(message));
       return;

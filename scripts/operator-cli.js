@@ -36,6 +36,7 @@ function usage() {
   node scripts/operator-cli.js observe <origin>
   node scripts/operator-cli.js visual-observe <origin>
   node scripts/operator-cli.js navigate <url>
+  node scripts/operator-cli.js wait-for <origin> <condition-json> [timeoutMs] [pollIntervalMs]
   node scripts/operator-cli.js fill <origin> <handle> <text>
   node scripts/operator-cli.js click <origin> <handle>
 
@@ -197,6 +198,17 @@ function buildRpcRequest(argv) {
         params: {
           url: args[0],
           origin: new URL(args[0]).origin
+        }
+      };
+    case 'wait-for':
+      requireArgs(args, 2);
+      return {
+        method: 'page.waitFor',
+        params: {
+          origin: args[0],
+          condition: parseJsonArg(args[1], 'wait-for condition'),
+          ...(args[2] === undefined ? {} : { timeoutMs: Number(args[2]) }),
+          ...(args[3] === undefined ? {} : { pollIntervalMs: Number(args[3]) })
         }
       };
     case 'fill':

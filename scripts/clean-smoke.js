@@ -517,6 +517,16 @@ async function runCleanSmoke(options = {}) {
     if (!postReconnectObserve.ok) {
       throw new Error(`Observe failed after reconnect: ${JSON.stringify(postReconnectObserve)}`);
     }
+    const waitForBasicForm = runCliJson([
+      'wait-for',
+      config.origin,
+      JSON.stringify({ type: 'textVisible', text: 'Basic Form Fixture' }),
+      '5000',
+      '100'
+    ], settings);
+    if (!waitForBasicForm.ok || waitForBasicForm.result.condition.type !== 'textVisible') {
+      throw new Error(`WaitFor textVisible failed after reconnect: ${JSON.stringify(waitForBasicForm)}`);
+    }
     const activeTabStatus = runCliJson(['status'], settings);
     const activeTab = activeTabStatus.result && activeTabStatus.result.activeTab;
     if (
@@ -649,6 +659,7 @@ async function runCleanSmoke(options = {}) {
       emergencyCleared: emergencyClear.result.active === false,
       reconnectBlocked: disconnectedObserve.error.code,
       reconnectRecoveredTitle: postReconnectObserve.result.title,
+      waitForTextVisibleElapsedMs: waitForBasicForm.result.elapsedMs,
       activeTabTitle: activeTab.title,
       activeTabOrigin: activeTab.origin,
       activeTabLoadingState: activeTab.loadingState,

@@ -78,6 +78,22 @@ test('buildRpcRequest maps approval and page commands', () => {
       origin: 'https://example.com'
     }
   });
+  assert.deepEqual(buildRpcRequest([
+    'wait-for',
+    'https://example.com',
+    '{"type":"textVisible","text":"Draft saved"}',
+    '750'
+  ]), {
+    method: 'page.waitFor',
+    params: {
+      origin: 'https://example.com',
+      condition: {
+        type: 'textVisible',
+        text: 'Draft saved'
+      },
+      timeoutMs: 750
+    }
+  });
 });
 
 test('buildRpcRequest maps profile and readiness commands', () => {

@@ -220,7 +220,7 @@ async function syncPermissionsAfterChange() {
 async function ensureContentScript(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ['actionPolicy.js', 'gateDetector.js', 'contentScript.js']
+    files: ['actionPolicy.js', 'gateDetector.js', 'pageWait.js', 'contentScript.js']
   });
 }
 
@@ -328,6 +328,15 @@ async function handleOperatorCommand(command) {
           }
         }
       };
+    }
+
+    if (command.method === 'page.waitFor') {
+      return chrome.tabs.sendMessage(ready.tab.id, {
+        type: 'content.waitFor',
+        condition: params.condition,
+        timeoutMs: params.timeoutMs,
+        pollIntervalMs: params.pollIntervalMs
+      });
     }
 
     const actionMap = {

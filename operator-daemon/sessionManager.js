@@ -72,7 +72,8 @@ const PAGE_ACTION_KINDS = Object.freeze({
   'page.check': 'check',
   'page.scroll': 'scroll',
   'page.pressKey': 'pressKey',
-  'page.navigate': 'navigate'
+  'page.navigate': 'navigate',
+  'page.waitFor': 'wait'
 });
 
 function cloneJson(value) {
@@ -327,6 +328,7 @@ class SessionManager {
       case 'page.scroll':
       case 'page.pressKey':
       case 'page.navigate':
+      case 'page.waitFor':
         response = await this.routePageCommand(id, request.method, params);
         break;
       case 'bridge.poll':
