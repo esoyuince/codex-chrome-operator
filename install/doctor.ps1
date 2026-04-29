@@ -65,6 +65,95 @@ function Same-Path {
   return $leftFull.Equals($rightFull, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-UserOnlyAcl {
+  param([string[]] $Paths)
+
+  $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+  $currentUserSid = $identity.User.Value
+  $results = @()
+  $allOk = $true
+
+  foreach ($pathToCheck in $Paths) {
+    $exists = Test-Path -LiteralPath $pathToCheck
+    $protected = $false
+    $unexpectedAllow = @()
+    $denyRules = @()
+    $currentUserFullControl = $false
+
+    if ($exists) {
+      $item = Get-Item -LiteralPath $pathToCheck
+      if ($item.PSIsContainer) {
+        $acl = [System.IO.Directory]::GetAccessControl($item.FullName)
+      } else {
+        $acl = [System.IO.File]::GetAccessControl($item.FullName)
+      }
+      $protected = $acl.AreAccessRulesProtected
+      foreach ($rule in @($acl.Access)) {
+        try {
+          $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+        } catch {
+          $sid = $rule.IdentityReference.Value
+        }
+        if ($rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Deny) {
+          $denyRules += $rule.IdentityReference.Value
+          continue
+        }
+        if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) {
+          continue
+        }
+        if ($sid -ne $currentUserSid) {
+          $unexpectedAllow += $rule.IdentityReference.Value
+        } elseif (($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl) {
+          $currentUserFullControl = $true
+        }
+      }
+    }
+
+    $pathOk = $exists -and $protected -and $unexpectedAllow.Count -eq 0 -and $denyRules.Count -eq 0 -and $currentUserFullControl
+    if (-not $pathOk) {
+      $allOk = $false
+    }
+    $results += [ordered]@{
+      path = $pathToCheck
+      exists = $exists
+      protected = $protected
+      currentUserFullControl = $currentUserFullControl
+      denyRules = $denyRules
+      unexpectedAllow = $unexpectedAllow
+    }
+  }
+
+  return [ordered]@{
+    ok = $allOk
+    paths = $results
+  }
+}
+
+function Test-TokenSecretStorage {
+  param(
+    [string] $Token,
+    [hashtable] $Files
+  )
+
+  $leaked = @()
+  if ($Token) {
+    foreach ($entry in $Files.GetEnumerator()) {
+      if (-not (Test-Path -LiteralPath $entry.Value)) {
+        continue
+      }
+      $content = Get-Content -LiteralPath $entry.Value -Raw
+      if ($content.Contains($Token)) {
+        $leaked += $entry.Key
+      }
+    }
+  }
+
+  return [ordered]@{
+    ok = $leaked.Count -eq 0
+    leakedLocations = $leaked
+  }
+}
+
 $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
 $nodeVersion = $null
 $nodeMajorOk = $false
@@ -154,6 +243,29 @@ if (-not $NoInstallCheck) {
   Add-Check "token" ($null -ne $token -and $token.Length -ge 32) "TOKEN" "Native bridge token exists and is non-empty." ([ordered]@{
     path = $tokenPath
     length = if ($token) { $token.Length } else { 0 }
+  })
+
+  $tokenStorage = Test-TokenSecretStorage $token @{
+    config = $configPath
+    nativeManifest = $manifestPath
+    extensionId = $extensionIdPath
+  }
+  Add-Check "tokenSecretStorage" $tokenStorage.ok "TOKEN_SECRET_STORAGE" "Token is stored only in token.txt and launcher read command." ([ordered]@{
+    leakedLocations = $tokenStorage.leakedLocations
+  })
+
+  $aclCheck = Test-UserOnlyAcl @(
+    $InstallDir,
+    (Join-Path $InstallDir "audit"),
+    (Join-Path $InstallDir "screenshots"),
+    $manifestPath,
+    $launcherPath,
+    $tokenPath,
+    $configPath,
+    $extensionIdPath
+  )
+  Add-Check "userOnlyAcl" $aclCheck.ok "USER_ONLY_ACL" "Install secrets and audit directories are protected by current-user-only ACLs." ([ordered]@{
+    paths = $aclCheck.paths
   })
 
   if (-not $NoRegistryCheck) {

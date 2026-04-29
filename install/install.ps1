@@ -9,6 +9,46 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Protect-UserOnlyPath {
+  param([string] $Path)
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return
+  }
+
+  $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+  $item = Get-Item -LiteralPath $Path
+  if ($item.PSIsContainer) {
+    $acl = [System.IO.Directory]::GetAccessControl($item.FullName)
+  } else {
+    $acl = [System.IO.File]::GetAccessControl($item.FullName)
+  }
+  $acl.SetAccessRuleProtection($true, $false)
+
+  foreach ($rule in @($acl.Access)) {
+    [void] $acl.RemoveAccessRuleSpecific($rule)
+  }
+
+  $inheritanceFlags = [System.Security.AccessControl.InheritanceFlags]::None
+  if ($item.PSIsContainer) {
+    $inheritanceFlags = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+  }
+
+  $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    $identity.User,
+    [System.Security.AccessControl.FileSystemRights]::FullControl,
+    $inheritanceFlags,
+    [System.Security.AccessControl.PropagationFlags]::None,
+    [System.Security.AccessControl.AccessControlType]::Allow
+  )
+  $acl.AddAccessRule($accessRule)
+  if ($item.PSIsContainer) {
+    [System.IO.Directory]::SetAccessControl($item.FullName, $acl)
+  } else {
+    [System.IO.File]::SetAccessControl($item.FullName, $acl)
+  }
+}
+
 if (-not $RepoRoot) {
   $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 } else {
@@ -118,6 +158,20 @@ if (-not $SkipRegistry) {
   $registryPath = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.codex.chrome_operator"
   New-Item -Path $registryPath -Force | Out-Null
   Set-Item -Path $registryPath -Value $manifestPath
+}
+
+$sensitivePaths = @(
+  $InstallDir,
+  (Join-Path $InstallDir "audit"),
+  (Join-Path $InstallDir "screenshots"),
+  $launcher,
+  $manifestPath,
+  $tokenPath,
+  $configPath,
+  $extensionIdPath
+)
+foreach ($pathToProtect in $sensitivePaths) {
+  Protect-UserOnlyPath -Path $pathToProtect
 }
 
 Write-Host "Installed Codex Chrome Operator Native Messaging host."
