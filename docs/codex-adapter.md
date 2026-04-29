@@ -74,12 +74,25 @@ When the daemon created an approval request, the hint includes the `approvalId`,
 - `approval-reject <approvalId>`
 - `approval-run <approvalId>`
 
-The same approval lifecycle is also exposed as strict adapter tools:
+The setup, readiness, profile, and approval paths are also exposed as strict
+adapter tools:
 
+- `codex_chrome_prepare_origin`
+- `codex_chrome_readiness`
+- `codex_chrome_profile_doctor`
+- `codex_chrome_profile_onboard`
 - `codex_chrome_approvals_list`
 - `codex_chrome_approval_approve`
 - `codex_chrome_approval_reject`
 - `codex_chrome_approval_run`
+
+Setup tools keep Codex-first browser work out of implicit Chrome UI gestures.
+`codex_chrome_prepare_origin` routes through the same origin preparation path as
+`prepare-origin`, `codex_chrome_readiness` checks `operator.verifyReadiness`,
+`codex_chrome_profile_doctor` diagnoses profile binding and active-tab state,
+and `codex_chrome_profile_onboard` runs the profile discovery, bind, setup, and
+verify workflow. Profile and permission `adapterHints` point to these tools
+when the caller can recover through the adapter surface.
 
 Approval and rejection tools require an explicit `userDecision` argument:
 `"approve"` for `codex_chrome_approval_approve` and `"reject"` for

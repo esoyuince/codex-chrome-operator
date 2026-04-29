@@ -14,6 +14,18 @@ const POLICY_ERROR_CODES = new Set([
   'EMERGENCY_STOPPED'
 ]);
 
+const PROFILE_ERROR_CODES = new Set([
+  'PROFILE_NOT_CONFIGURED',
+  'PROFILE_MISMATCH',
+  'PROFILE_BINDING_MISSING',
+  'PROFILE_BINDING_VERSION_MISMATCH',
+  'PROFILE_BINDING_STALE'
+]);
+
+function originArguments(origin) {
+  return origin ? { origin } : {};
+}
+
 function hostPermissionActions(error) {
   const actions = [];
   if (error.permissionUrl) {
@@ -27,6 +39,8 @@ function hostPermissionActions(error) {
       kind: 'prepare-origin',
       origin: error.origin || null,
       operatorCli: error.origin ? ['prepare-origin', error.origin] : null,
+      toolName: error.origin ? 'codex_chrome_prepare_origin' : null,
+      arguments: error.origin ? { origin: error.origin } : null,
       requiresUserGesture: true
     });
   }
@@ -39,9 +53,46 @@ function hostPermissionActions(error) {
     {
       kind: 'retry-tool',
       origin: error.origin || null,
+      toolName: error.origin ? 'codex_chrome_readiness' : null,
+      arguments: error.origin ? { origin: error.origin } : null,
       requiresFreshReadiness: true
     }
   );
+  return actions;
+}
+
+function profileActions(error) {
+  const actions = [
+    {
+      kind: 'profile-doctor',
+      origin: error.origin || null,
+      toolName: 'codex_chrome_profile_doctor',
+      arguments: originArguments(error.origin),
+      operatorCli: error.origin ? ['profile-doctor', error.origin] : ['profile-doctor'],
+      requiresUserDecision: false
+    },
+    {
+      kind: 'profile-onboard',
+      origin: error.origin || null,
+      toolName: 'codex_chrome_profile_onboard',
+      arguments: {},
+      operatorCli: ['profile-onboard'],
+      requiresUserGesture: true
+    }
+  ];
+
+  if (error.origin) {
+    actions.push({
+      kind: 'retry-readiness',
+      origin: error.origin,
+      toolName: 'codex_chrome_readiness',
+      arguments: {
+        origin: error.origin
+      },
+      requiresFreshReadiness: true
+    });
+  }
+
   return actions;
 }
 
@@ -62,12 +113,18 @@ function buildPolicyHints(error = {}) {
       kind: 'approve-domain',
       origin: error.origin || null,
       operatorCli: error.origin ? ['approve', error.origin] : null,
+      toolName: error.origin ? 'codex_chrome_prepare_origin' : null,
+      arguments: error.origin ? { origin: error.origin } : null,
       requiresUserDecision: true
     }, {
       kind: 'retry-tool',
       origin: error.origin || null,
+      toolName: error.origin ? 'codex_chrome_readiness' : null,
+      arguments: error.origin ? { origin: error.origin } : null,
       requiresFreshReadiness: true
     }];
+  } else if (PROFILE_ERROR_CODES.has(error.code)) {
+    nextActions = profileActions(error);
   } else {
     nextActions = [{
       kind: 'manual-diagnostic',

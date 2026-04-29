@@ -46,10 +46,18 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   });
 
   const openObserve = response.result.tools.find((tool) => tool.name === 'codex_chrome_open_observe');
+  const profileDoctor = response.result.tools.find((tool) => tool.name === 'codex_chrome_profile_doctor');
+  const profileOnboard = response.result.tools.find((tool) => tool.name === 'codex_chrome_profile_onboard');
   assert.ok(openObserve);
   assert.equal(openObserve.inputSchema.additionalProperties, false);
   assert.deepEqual(openObserve.inputSchema.required, ['url']);
   assert.equal(openObserve.adapterProtocolVersion, '1.0');
+  assert.ok(profileDoctor);
+  assert.equal(profileDoctor.inputSchema.additionalProperties, false);
+  assert.deepEqual(profileDoctor.inputSchema.required, []);
+  assert.ok(profileOnboard);
+  assert.equal(profileOnboard.inputSchema.additionalProperties, false);
+  assert.deepEqual(profileOnboard.inputSchema.required, []);
 });
 
 test('MCP handler calls adapter tools and returns JSON content without raw visual bytes', async () => {
@@ -294,6 +302,9 @@ test('package exposes MCP adapter script and docs explain local usage', () => {
   assert.match(docs, /tools\/call/);
   assert.match(docs, /adapterSession/);
   assert.match(docs, /adapterHints/);
+  assert.match(docs, /codex_chrome_readiness/);
+  assert.match(docs, /codex_chrome_profile_doctor/);
+  assert.match(docs, /codex_chrome_profile_onboard/);
   assert.match(docs, /codex_chrome_approval_approve/);
   assert.match(docs, /userDecision/);
   assert.match(docs, /approval-approve/);

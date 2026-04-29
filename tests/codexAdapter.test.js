@@ -12,6 +12,7 @@ const {
 test('listTools exposes strict versioned Codex browser tool definitions', () => {
   const tools = listTools();
   const openObserve = tools.find((tool) => tool.name === 'codex_chrome_open_observe');
+  const profileOnboard = tools.find((tool) => tool.name === 'codex_chrome_profile_onboard');
 
   assert.equal(ADAPTER_PROTOCOL_VERSION, '1.0');
   assert.ok(openObserve);
@@ -19,6 +20,10 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.equal(openObserve.inputSchema.additionalProperties, false);
   assert.deepEqual(openObserve.inputSchema.required, ['url']);
   assert.equal(openObserve.outputContract.untrusted, true);
+  assert.ok(profileOnboard);
+  assert.equal(profileOnboard.inputSchema.type, 'object');
+  assert.equal(profileOnboard.inputSchema.additionalProperties, false);
+  assert.deepEqual(profileOnboard.inputSchema.required, []);
   assert.match(toolDefinitionsHash(), /^[a-f0-9]{64}$/);
   assert.equal(toolDefinitionsHash(), toolDefinitionsHash());
 });
@@ -100,6 +105,131 @@ test('CodexChromeToolAdapter executes open observe through the orchestration pat
     timeoutMs: 1500,
     pollIntervalMs: 25
   });
+});
+
+test('CodexChromeToolAdapter exposes profile readiness and onboarding setup tools', async () => {
+  const tools = listTools().map((tool) => tool.name);
+  for (const toolName of [
+    'codex_chrome_prepare_origin',
+    'codex_chrome_readiness',
+    'codex_chrome_profile_doctor',
+    'codex_chrome_profile_onboard'
+  ]) {
+    assert.ok(tools.includes(toolName), `${toolName} should be exposed`);
+  }
+
+  assert.equal(validateToolInput('codex_chrome_readiness', {}).error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(validateToolInput('codex_chrome_profile_onboard', {
+    userDataDir: 'C:/Chrome/User Data',
+    profileDirectory: 'Profile 1',
+    profileLabel: 'Play Console',
+    openBootstrap: false
+  }).ok, true);
+
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push({
+        kind: 'rpc',
+        request
+      });
+      return {
+        ok: true,
+        result: { method: request.method, params: request.params }
+      };
+    },
+    prepareOriginFn: async ({ settings, request, openBootstrap }) => {
+      calls.push({
+        kind: 'prepareOrigin',
+        settings,
+        request,
+        openBootstrap
+      });
+      return {
+        ok: true,
+        result: { method: request.method, params: request.params, openBootstrap }
+      };
+    },
+    profileDoctorFn: async ({ settings, request }) => {
+      calls.push({
+        kind: 'profileDoctor',
+        settings,
+        request
+      });
+      return {
+        ok: true,
+        result: { method: request.method, params: request.params }
+      };
+    },
+    profileOnboardFn: async ({ settings, request, openBootstrap }) => {
+      calls.push({
+        kind: 'profileOnboard',
+        settings,
+        request,
+        openBootstrap
+      });
+      return {
+        ok: true,
+        result: { method: request.method, params: request.params, openBootstrap }
+      };
+    }
+  });
+
+  await adapter.executeTool({
+    toolName: 'codex_chrome_prepare_origin',
+    input: {
+      origin: 'https://example.com/path',
+      openBootstrap: false
+    }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_readiness',
+    input: {
+      origin: 'https://example.com/path'
+    }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_profile_doctor',
+    input: {
+      origin: 'https://example.com/path'
+    }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_profile_onboard',
+    input: {
+      userDataDir: 'C:/Chrome/User Data',
+      profileDirectory: 'Profile 1',
+      profileLabel: 'Play Console',
+      openBootstrap: false
+    }
+  });
+
+  assert.deepEqual(calls.map((call) => call.kind), [
+    'prepareOrigin',
+    'rpc',
+    'profileDoctor',
+    'profileOnboard'
+  ]);
+  assert.equal(calls[0].settings.token, 'adapter-token');
+  assert.equal(calls[0].request.method, 'operator.ensureStarted');
+  assert.deepEqual(calls[0].request.params, { origin: 'https://example.com' });
+  assert.equal(calls[0].openBootstrap, false);
+  assert.equal(calls[1].request.method, 'operator.verifyReadiness');
+  assert.deepEqual(calls[1].request.params, { origin: 'https://example.com' });
+  assert.equal(calls[2].request.method, 'operator.status');
+  assert.deepEqual(calls[2].request.params, { origin: 'https://example.com' });
+  assert.equal(calls[3].request.method, 'operator.profiles.discover');
+  assert.deepEqual(calls[3].request.params, {
+    userDataDir: 'C:/Chrome/User Data',
+    profileDirectory: 'Profile 1',
+    profileLabel: 'Play Console'
+  });
+  assert.equal(calls[3].openBootstrap, false);
 });
 
 test('CodexChromeToolAdapter exposes and routes basic DOM action tools', async () => {

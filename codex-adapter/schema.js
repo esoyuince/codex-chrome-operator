@@ -19,6 +19,74 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'codex_chrome_prepare_origin',
+    description: 'Start the operator if needed, approve the origin locally, and return readiness plus user-grant next actions.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        openBootstrap: { type: 'boolean' }
+      },
+      required: ['origin']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_readiness',
+    description: 'Verify whether an origin is ready for Codex-first observation and action.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' }
+      },
+      required: ['origin']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_profile_doctor',
+    description: 'Diagnose daemon, profile binding, active tab, and readiness state for the optional origin.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' }
+      },
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_profile_onboard',
+    description: 'Discover, bind, launch setup, and verify the Chrome profile that owns this operator session.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        userDataDir: { type: 'string' },
+        profileDirectory: { type: 'string' },
+        profileLabel: { type: 'string' },
+        openBootstrap: { type: 'boolean' }
+      },
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
     name: 'codex_chrome_open_observe',
     description: 'Prepare an origin, open a URL in Chrome, wait for the tab, and return a DOM observation.',
     inputSchema: {

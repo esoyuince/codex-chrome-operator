@@ -77,4 +77,42 @@ test('buildPolicyHints explains permission and profile blockers without bypass s
     'retry-tool'
   ]);
   assert.equal(hints.nextActions[0].requiresUserGesture, true);
+  assert.equal(hints.nextActions[2].toolName, 'codex_chrome_readiness');
+  assert.deepEqual(hints.nextActions[2].arguments, {
+    origin: 'https://example.com'
+  });
+});
+
+test('buildPolicyHints points profile blockers to adapter doctor and onboarding tools', () => {
+  const hints = buildPolicyHints({
+    code: 'PROFILE_BINDING_MISSING',
+    message: 'Profile binding is missing.',
+    origin: 'https://example.com'
+  });
+
+  assert.equal(hints.category, 'policy');
+  assert.equal(hints.policyCode, 'PROFILE_BINDING_MISSING');
+  assert.deepEqual(hints.nextActions.map((action) => action.kind), [
+    'profile-doctor',
+    'profile-onboard',
+    'retry-readiness'
+  ]);
+  assert.equal(hints.nextActions[0].toolName, 'codex_chrome_profile_doctor');
+  assert.deepEqual(hints.nextActions[0].arguments, {
+    origin: 'https://example.com'
+  });
+  assert.deepEqual(hints.nextActions[0].operatorCli, [
+    'profile-doctor',
+    'https://example.com'
+  ]);
+  assert.equal(hints.nextActions[0].requiresUserDecision, false);
+  assert.equal(hints.nextActions[1].toolName, 'codex_chrome_profile_onboard');
+  assert.deepEqual(hints.nextActions[1].arguments, {});
+  assert.deepEqual(hints.nextActions[1].operatorCli, ['profile-onboard']);
+  assert.equal(hints.nextActions[1].requiresUserGesture, true);
+  assert.equal(hints.nextActions[2].toolName, 'codex_chrome_readiness');
+  assert.deepEqual(hints.nextActions[2].arguments, {
+    origin: 'https://example.com'
+  });
+  assert.equal(hints.nextActions[2].requiresFreshReadiness, true);
 });

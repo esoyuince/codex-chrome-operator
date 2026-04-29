@@ -4,6 +4,9 @@ const crypto = require('node:crypto');
 const { sendRpc } = require('../native-bridge/daemonClient');
 const {
   openObserve,
+  prepareOrigin,
+  profileDoctor,
+  profileOnboard,
   resolveCliSettings
 } = require('../scripts/operator-cli');
 const {
@@ -186,15 +189,32 @@ function rpcRequest(method, params = {}) {
   };
 }
 
+function normalizeOrigin(value) {
+  if (!value) {
+    return value;
+  }
+  try {
+    return new URL(value).origin;
+  } catch {
+    return value;
+  }
+}
+
 class CodexChromeToolAdapter {
   constructor({
     settings,
     sendRpcFn = sendRpc,
-    openObserveFn = openObserve
+    openObserveFn = openObserve,
+    prepareOriginFn = prepareOrigin,
+    profileDoctorFn = profileDoctor,
+    profileOnboardFn = profileOnboard
   } = {}) {
     this.settings = settings || resolveCliSettings();
     this.sendRpcFn = sendRpcFn;
     this.openObserveFn = openObserveFn;
+    this.prepareOriginFn = prepareOriginFn;
+    this.profileDoctorFn = profileDoctorFn;
+    this.profileOnboardFn = profileOnboardFn;
   }
 
   async executeTool({ toolName, input = {} }) {
@@ -207,6 +227,20 @@ class CodexChromeToolAdapter {
     switch (toolName) {
       case 'codex_chrome_status':
         response = await this.sendRpc('operator.status', {});
+        break;
+      case 'codex_chrome_prepare_origin':
+        response = await this.prepareOrigin(input);
+        break;
+      case 'codex_chrome_readiness':
+        response = await this.sendRpc('operator.verifyReadiness', {
+          origin: normalizeOrigin(input.origin)
+        });
+        break;
+      case 'codex_chrome_profile_doctor':
+        response = await this.profileDoctor(input);
+        break;
+      case 'codex_chrome_profile_onboard':
+        response = await this.profileOnboard(input);
         break;
       case 'codex_chrome_open_observe':
         response = await this.openObserve(input);
@@ -352,6 +386,43 @@ class CodexChromeToolAdapter {
       settings: this.settings,
       request,
       sendRpcFn: this.sendRpcFn
+    });
+  }
+
+  async prepareOrigin(input) {
+    const request = rpcRequest('operator.ensureStarted', {
+      origin: normalizeOrigin(input.origin)
+    });
+    return this.prepareOriginFn({
+      settings: this.settings,
+      request,
+      sendRpcFn: this.sendRpcFn,
+      openBootstrap: input.openBootstrap !== false
+    });
+  }
+
+  async profileDoctor(input) {
+    const params = input.origin ? { origin: normalizeOrigin(input.origin) } : {};
+    const request = rpcRequest('operator.status', params);
+    return this.profileDoctorFn({
+      settings: this.settings,
+      request,
+      sendRpcFn: this.sendRpcFn
+    });
+  }
+
+  async profileOnboard(input) {
+    const params = {
+      ...(input.userDataDir === undefined ? {} : { userDataDir: input.userDataDir }),
+      ...(input.profileDirectory === undefined ? {} : { profileDirectory: input.profileDirectory }),
+      ...(input.profileLabel === undefined ? {} : { profileLabel: input.profileLabel })
+    };
+    const request = rpcRequest('operator.profiles.discover', params);
+    return this.profileOnboardFn({
+      settings: this.settings,
+      request,
+      sendRpcFn: this.sendRpcFn,
+      openBootstrap: input.openBootstrap !== false
     });
   }
 }
