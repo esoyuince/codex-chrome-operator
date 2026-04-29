@@ -323,6 +323,71 @@ async function waitForDaemon({
   throw lastError || new Error('Timed out waiting for daemon.');
 }
 
+async function waitForExtensionConnection({
+  settings,
+  request,
+  sendRpcFn = sendRpc,
+  timeoutMs = 10000,
+  pollIntervalMs = 250,
+  delayFn = delay
+}) {
+  const started = Date.now();
+  let lastResponse = null;
+  let lastError = null;
+  let attempts = 0;
+
+  while (Date.now() - started < timeoutMs) {
+    attempts += 1;
+    try {
+      const response = await sendRpcFn({
+        baseUrl: settings.baseUrl,
+        token: settings.token,
+        request: {
+          ...request,
+          id: `${request.id}_wait_${attempts}`
+        }
+      });
+      lastResponse = response;
+      if (response && response.ok && response.result && response.result.extensionConnected) {
+        response.result.extensionWait = {
+          attempted: true,
+          connected: true,
+          elapsedMs: Date.now() - started,
+          attempts
+        };
+        return response;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await delayFn(pollIntervalMs);
+  }
+
+  if (lastResponse && lastResponse.ok && lastResponse.result) {
+    lastResponse.result.extensionWait = {
+      attempted: true,
+      connected: false,
+      elapsedMs: Date.now() - started,
+      attempts,
+      timeoutMs
+    };
+    return lastResponse;
+  }
+
+  return {
+    id: request.id,
+    ok: false,
+    error: {
+      code: 'EXTENSION_WAIT_TIMEOUT',
+      message: lastError
+        ? `Timed out waiting for extension connection: ${lastError.message}`
+        : 'Timed out waiting for extension connection.',
+      timeoutMs,
+      attempts
+    }
+  };
+}
+
 function findChromeForBootstrap(installDir, env = process.env) {
   const browserRoot = path.join(installDir, 'browsers', 'chrome');
   if (fs.existsSync(browserRoot)) {
@@ -411,12 +476,17 @@ async function ensureStarted({
   sendRpcFn = sendRpc,
   startDaemonFn = startDaemonProcess,
   waitForDaemonFn = waitForDaemon,
+  waitForExtensionConnectionFn = waitForExtensionConnection,
   launchBootstrapFn = launchBootstrapChrome,
-  openBootstrap = true
+  openBootstrap = true,
+  waitForExtension = true,
+  extensionWaitTimeoutMs = 10000,
+  extensionWaitPollIntervalMs = 250
 }) {
   let daemonStarted = false;
   let daemonPid = null;
   let response;
+  let bootstrapLaunch = null;
   try {
     response = await sendRpcFn({
       baseUrl: settings.baseUrl,
@@ -438,15 +508,38 @@ async function ensureStarted({
   }
 
   if (response && response.ok && response.result) {
+    if (openBootstrap && response.result.bootstrapRequired && response.result.bootstrapUrl) {
+      bootstrapLaunch = launchBootstrapFn({
+        installDir: settings.installDir,
+        bootstrapUrl: response.result.bootstrapUrl
+      });
+      response.result.bootstrapLaunch = bootstrapLaunch;
+
+      if (waitForExtension && bootstrapLaunch && bootstrapLaunch.launched) {
+        const waitResponse = await waitForExtensionConnectionFn({
+          settings,
+          request,
+          sendRpcFn,
+          timeoutMs: extensionWaitTimeoutMs,
+          pollIntervalMs: extensionWaitPollIntervalMs
+        });
+        if (waitResponse && waitResponse.ok && waitResponse.result) {
+          response = waitResponse;
+          if (!response.result.extensionWait) {
+            response.result.extensionWait = {
+              attempted: true,
+              connected: Boolean(response.result.extensionConnected)
+            };
+          }
+        }
+      }
+    }
     response.result.daemonStarted = daemonStarted;
     if (daemonPid) {
       response.result.daemonPid = daemonPid;
     }
-    if (openBootstrap && response.result.bootstrapRequired && response.result.bootstrapUrl) {
-      response.result.bootstrapLaunch = launchBootstrapFn({
-        installDir: settings.installDir,
-        bootstrapUrl: response.result.bootstrapUrl
-      });
+    if (bootstrapLaunch) {
+      response.result.bootstrapLaunch = bootstrapLaunch;
     }
   }
   return response;
@@ -495,5 +588,6 @@ module.exports = {
   run,
   startDaemonProcess,
   splitOptions,
-  usage
+  usage,
+  waitForExtensionConnection
 };

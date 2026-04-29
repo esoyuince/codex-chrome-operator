@@ -71,6 +71,70 @@ test('ensureStarted starts daemon when the first RPC cannot connect', async () =
   assert.equal(response.result.daemonPid, 1234);
 });
 
+test('ensureStarted waits for extension connection after bootstrap launch', async () => {
+  const bootstrapUrl = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/bootstrap.html?session=boot';
+  const calls = [];
+  const response = await ensureStarted({
+    request: {
+      id: 'req_2',
+      method: 'operator.ensureStarted',
+      params: {}
+    },
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async () => {
+      calls.push('send');
+      return {
+        ok: true,
+        result: {
+          daemonRunning: true,
+          extensionConnected: false,
+          bootstrapRequired: true,
+          bootstrapUrl
+        }
+      };
+    },
+    launchBootstrapFn: ({ bootstrapUrl }) => {
+      calls.push(`launch:${bootstrapUrl}`);
+      return {
+        attempted: true,
+        launched: true,
+        pid: 4321,
+        bootstrapUrl
+      };
+    },
+    waitForExtensionConnectionFn: async ({ request }) => {
+      calls.push(`wait:${request.method}`);
+      return {
+        ok: true,
+        result: {
+          daemonRunning: true,
+          extensionConnected: true,
+          bootstrapRequired: false,
+          status: {
+            connectionState: 'EXTENSION_CONNECTED'
+          }
+        }
+      };
+    }
+  });
+
+  assert.deepEqual(calls, [
+    'send',
+    `launch:${bootstrapUrl}`,
+    'wait:operator.ensureStarted'
+  ]);
+  assert.equal(response.ok, true);
+  assert.equal(response.result.extensionConnected, true);
+  assert.equal(response.result.bootstrapRequired, false);
+  assert.equal(response.result.bootstrapLaunch.pid, 4321);
+  assert.equal(response.result.extensionWait.attempted, true);
+  assert.equal(response.result.extensionWait.connected, true);
+});
+
 test('buildRpcRequest maps approval and page commands', () => {
   assert.deepEqual(buildRpcRequest(['approve', 'https://example.com']), {
     method: 'operator.approveDomain',
