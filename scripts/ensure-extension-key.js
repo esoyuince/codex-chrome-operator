@@ -55,12 +55,57 @@ function ensureExtensionKey({ manifestPath = MANIFEST_PATH, write = true } = {})
   };
 }
 
+function parseArgs(argv) {
+  const options = {
+    manifestPath: MANIFEST_PATH,
+    write: true,
+    json: false
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--manifest') {
+      if (index + 1 >= argv.length) {
+        throw new Error('--manifest requires a path.');
+      }
+      options.manifestPath = path.resolve(argv[index + 1]);
+      index += 1;
+    } else if (arg === '--no-write') {
+      options.write = false;
+    } else if (arg === '--json') {
+      options.json = true;
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+
+  return options;
+}
+
+function main(argv = process.argv.slice(2)) {
+  const options = parseArgs(argv);
+  const result = ensureExtensionKey({
+    manifestPath: options.manifestPath,
+    write: options.write
+  });
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${result.extensionId}\n`);
+  }
+}
+
 if (require.main === module) {
-  const result = ensureExtensionKey();
-  process.stdout.write(`${result.extensionId}\n`);
+  try {
+    main();
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  }
 }
 
 module.exports = {
   ensureExtensionKey,
-  extensionIdFromPublicKeyDer
+  extensionIdFromPublicKeyDer,
+  parseArgs
 };

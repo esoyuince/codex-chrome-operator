@@ -1,27 +1,54 @@
 param(
-  [Parameter(Mandatory = $true)]
   [string] $ExtensionId,
 
   [string] $InstallDir = "$env:LOCALAPPDATA\CodexChromeOperator",
   [string] $RepoRoot,
-  [switch] $SkipExtensionCopy
+  [switch] $SkipExtensionCopy,
+  [switch] $SkipRegistry
 )
 
 $ErrorActionPreference = "Stop"
 
 if (-not $RepoRoot) {
   $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
+} else {
+  $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 }
 
-if (-not ($ExtensionId -match "^[a-p]{32}$")) {
-  throw "ExtensionId must be the 32-character Chrome extension id."
-}
+$InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "audit") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "screenshots") | Out-Null
 
 $node = (Get-Command node -ErrorAction Stop).Source
+$nodeVersion = (& $node -p "process.versions.node").Trim()
+$nodeMajor = [int]($nodeVersion.Split(".")[0])
+if ($nodeMajor -lt 24) {
+  throw "Node.js 24 or newer is required. Found: $nodeVersion"
+}
+
+$extensionIdScript = Join-Path $RepoRoot "scripts\ensure-extension-key.js"
+if (-not (Test-Path -LiteralPath $extensionIdScript)) {
+  throw "Extension id script not found: $extensionIdScript"
+}
+
+$manifestExtensionId = (& $node $extensionIdScript).Trim()
+if ($LASTEXITCODE -ne 0 -or -not ($manifestExtensionId -match "^[a-p]{32}$")) {
+  throw "Could not derive Chrome extension id from extension manifest."
+}
+
+if ($ExtensionId) {
+  if (-not ($ExtensionId -match "^[a-p]{32}$")) {
+    throw "ExtensionId must be the 32-character Chrome extension id."
+  }
+  if ($ExtensionId -ne $manifestExtensionId) {
+    throw "ExtensionId $ExtensionId does not match manifest-derived extension id $manifestExtensionId."
+  }
+} else {
+  $ExtensionId = $manifestExtensionId
+}
+
 $bridgeScript = Join-Path $RepoRoot "native-bridge\nativeMessagingShim.js"
 $launcher = Join-Path $InstallDir "codex-chrome-operator-native-bridge.cmd"
 $manifestPath = Join-Path $InstallDir "com.codex.chrome_operator.json"
@@ -87,11 +114,14 @@ if (-not $SkipExtensionCopy) {
   Copy-Item -LiteralPath $extensionSource -Destination $extensionTarget -Recurse
 }
 
-$registryPath = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.codex.chrome_operator"
-New-Item -Path $registryPath -Force | Out-Null
-Set-Item -Path $registryPath -Value $manifestPath
+if (-not $SkipRegistry) {
+  $registryPath = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.codex.chrome_operator"
+  New-Item -Path $registryPath -Force | Out-Null
+  Set-Item -Path $registryPath -Value $manifestPath
+}
 
 Write-Host "Installed Codex Chrome Operator Native Messaging host."
+Write-Host "Extension Id: $ExtensionId"
 Write-Host "Manifest: $manifestPath"
 Write-Host "Launcher: $launcher"
 Write-Host "Config: $configPath"

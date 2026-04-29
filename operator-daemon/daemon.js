@@ -6,6 +6,8 @@ const path = require('node:path');
 const { SessionManager } = require('./sessionManager');
 const { startControlServer } = require('./controlServer');
 
+const MIN_NODE_MAJOR = 24;
+
 function defaultConfigPath() {
   return path.join(
     process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
@@ -37,6 +39,32 @@ function loadInstalledToken(tokenPath = defaultTokenPath()) {
   return token || null;
 }
 
+function parseNodeMajor(nodeVersion) {
+  const match = /^v?(\d+)\./.exec(nodeVersion || '');
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+function buildDoctorReport({
+  configPath = defaultConfigPath(),
+  nodeVersion = process.version,
+  nodePath = process.execPath
+} = {}) {
+  const nodeMajor = parseNodeMajor(nodeVersion);
+  const nodeOk = nodeMajor >= MIN_NODE_MAJOR;
+  return {
+    ok: nodeOk,
+    configPath,
+    configExists: fs.existsSync(configPath),
+    nodeVersion,
+    node: {
+      ok: nodeOk,
+      path: nodePath,
+      version: nodeVersion,
+      minimumMajor: MIN_NODE_MAJOR
+    }
+  };
+}
+
 function printHelp() {
   process.stdout.write(`Codex Chrome Operator daemon
 
@@ -62,13 +90,9 @@ async function main() {
   }
 
   if (process.argv.includes('--doctor')) {
-    const configPath = defaultConfigPath();
-    process.stdout.write(JSON.stringify({
-      ok: true,
-      configPath,
-      configExists: fs.existsSync(configPath),
-      nodeVersion: process.version
-    }, null, 2) + '\n');
+    const report = buildDoctorReport();
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    process.exitCode = report.ok ? 0 : 1;
     return;
   }
 
@@ -91,6 +115,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  buildDoctorReport,
   defaultConfigPath,
   defaultTokenPath,
   loadConfig,

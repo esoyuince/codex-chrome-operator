@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { loadConfig, loadInstalledToken } = require('../operator-daemon/daemon');
+const { buildDoctorReport, loadConfig, loadInstalledToken } = require('../operator-daemon/daemon');
 
 test('loadConfig reads installer-written daemon config', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-config-'));
@@ -36,4 +36,29 @@ test('loadInstalledToken returns null when token file is absent or blank', () =>
 
   fs.writeFileSync(tokenPath, '  \n', 'utf8');
   assert.equal(loadInstalledToken(tokenPath), null);
+});
+
+test('buildDoctorReport enforces the Node 24 runtime contract', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-doctor-'));
+  const configPath = path.join(dir, 'config.json');
+  fs.writeFileSync(configPath, '{}', 'utf8');
+
+  const report = buildDoctorReport({
+    configPath,
+    nodeVersion: 'v24.14.0',
+    nodePath: 'C:\\Program Files\\nodejs\\node.exe'
+  });
+
+  assert.equal(report.ok, true);
+  assert.equal(report.configExists, true);
+  assert.equal(report.node.minimumMajor, 24);
+  assert.equal(report.node.ok, true);
+
+  const oldRuntime = buildDoctorReport({
+    configPath,
+    nodeVersion: 'v20.0.0',
+    nodePath: 'C:\\node\\node.exe'
+  });
+  assert.equal(oldRuntime.ok, false);
+  assert.equal(oldRuntime.node.ok, false);
 });
