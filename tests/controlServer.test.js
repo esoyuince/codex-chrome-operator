@@ -13,6 +13,7 @@ function makeSession() {
   return new SessionManager({
     token: 'test-token',
     auditLogPath: path.join(dir, 'audit.jsonl'),
+    statePath: path.join(dir, 'state.json'),
     expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
     expectedProfileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
     expectedProfileBindingVersion: 3

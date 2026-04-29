@@ -15,6 +15,10 @@ function defaultInstallDir(env = process.env) {
 function usage() {
   return `Usage:
   node scripts/operator-cli.js status
+  node scripts/operator-cli.js profiles [userDataDir]
+  node scripts/operator-cli.js profile-bind <userDataDir> <profileDirectory> [profileLabel]
+  node scripts/operator-cli.js profile-verify
+  node scripts/operator-cli.js readiness <origin-or-url>
   node scripts/operator-cli.js approve <origin>
   node scripts/operator-cli.js observe <origin>
   node scripts/operator-cli.js navigate <url>
@@ -65,6 +69,31 @@ function buildRpcRequest(argv) {
   switch (command) {
     case 'status':
       return { method: 'operator.status', params: {} };
+    case 'profiles':
+      return {
+        method: 'operator.profiles.discover',
+        params: args[0] ? { userDataDir: args[0] } : {}
+      };
+    case 'profile-bind':
+      requireArgs(args, 2);
+      return {
+        method: 'operator.profile.bind',
+        params: {
+          userDataDir: args[0],
+          profileDirectory: args[1],
+          profileLabel: args.slice(2).join(' ') || undefined
+        }
+      };
+    case 'profile-verify':
+      return { method: 'operator.profile.verify', params: {} };
+    case 'readiness':
+      requireArgs(args, 1);
+      return {
+        method: 'operator.verifyReadiness',
+        params: {
+          origin: new URL(args[0]).origin
+        }
+      };
     case 'approve':
       requireArgs(args, 1);
       return { method: 'operator.approveDomain', params: { origin: args[0] } };

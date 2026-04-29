@@ -1,18 +1,28 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const { sendRpc } = require('../native-bridge/daemonClient');
 const { SessionManager } = require('../operator-daemon/sessionManager');
 const { startControlServer } = require('../operator-daemon/controlServer');
 const { ERROR_CODES } = require('../operator-daemon/protocol');
 
-test('sendRpc posts a bearer-authenticated JSON request to daemon', async () => {
-  const session = new SessionManager({
+function makeSession() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-daemon-client-'));
+  return new SessionManager({
     token: 'bridge-token',
+    auditLogPath: path.join(dir, 'audit.jsonl'),
+    statePath: path.join(dir, 'state.json'),
     expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
     expectedProfileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
     expectedProfileBindingVersion: 3
   });
+}
+
+test('sendRpc posts a bearer-authenticated JSON request to daemon', async () => {
+  const session = makeSession();
   const server = await startControlServer({ session, token: 'bridge-token', port: 0 });
 
   try {
@@ -30,12 +40,7 @@ test('sendRpc posts a bearer-authenticated JSON request to daemon', async () => 
 });
 
 test('sendRpc reports daemon auth failures without throwing', async () => {
-  const session = new SessionManager({
-    token: 'bridge-token',
-    expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    expectedProfileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
-    expectedProfileBindingVersion: 3
-  });
+  const session = makeSession();
   const server = await startControlServer({ session, token: 'bridge-token', port: 0 });
 
   try {

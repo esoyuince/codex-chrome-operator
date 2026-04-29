@@ -49,9 +49,39 @@ test('buildRpcRequest maps approval and page commands', () => {
   });
 });
 
+test('buildRpcRequest maps profile and readiness commands', () => {
+  assert.deepEqual(buildRpcRequest(['profiles']), {
+    method: 'operator.profiles.discover',
+    params: {}
+  });
+  assert.deepEqual(buildRpcRequest(['profiles', 'C:/Chrome/User Data']), {
+    method: 'operator.profiles.discover',
+    params: { userDataDir: 'C:/Chrome/User Data' }
+  });
+  assert.deepEqual(buildRpcRequest(['profile-bind', 'C:/Chrome/User Data', 'Profile 1', 'Play Console']), {
+    method: 'operator.profile.bind',
+    params: {
+      userDataDir: 'C:/Chrome/User Data',
+      profileDirectory: 'Profile 1',
+      profileLabel: 'Play Console'
+    }
+  });
+  assert.deepEqual(buildRpcRequest(['profile-verify']), {
+    method: 'operator.profile.verify',
+    params: {}
+  });
+  assert.deepEqual(buildRpcRequest(['readiness', 'https://example.com/path']), {
+    method: 'operator.verifyReadiness',
+    params: {
+      origin: 'https://example.com'
+    }
+  });
+});
+
 test('buildRpcRequest rejects incomplete commands with usage error', () => {
   assert.throws(() => buildRpcRequest([]), /Usage:/);
   assert.throws(() => buildRpcRequest(['fill', 'https://example.com', 'el_0']), /Usage:/);
+  assert.throws(() => buildRpcRequest(['profile-bind', 'C:/Chrome/User Data']), /Usage:/);
   assert.throws(() => buildRpcRequest(['wat']), /Usage:/);
 });
 

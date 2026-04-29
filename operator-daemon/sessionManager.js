@@ -8,6 +8,12 @@ const {
   assertReadyForRealSiteAction
 } = require('./protocol');
 const { AuditLog } = require('./auditLog');
+const {
+  buildProfileSetupUrl,
+  discoverChromeProfiles,
+  generateProfileBindingId
+} = require('./profileManager');
+const { OperatorStateStore } = require('./stateStore');
 
 function defaultAuditPath() {
   return path.join(
@@ -30,16 +36,25 @@ function clearsLastErrorOnSuccess(method) {
   return [
     'extension.hello',
     'operator.approveDomain',
-    'extension.hostPermissionGranted'
+    'extension.hostPermissionGranted',
+    'operator.profile.bind',
+    'operator.profile.verify',
+    'operator.profiles.discover'
   ].includes(method) || method.startsWith('page.');
 }
 
 class SessionManager {
   constructor(config = {}) {
+    this.stateStore = config.stateStore || new OperatorStateStore({ statePath: config.statePath });
+    const configuredProfile = this.stateStore.getConfiguredProfile();
     this.config = {
       expectedExtensionId: config.expectedExtensionId || 'development-extension-id',
-      expectedProfileBindingId: config.expectedProfileBindingId || 'profbind_developmentBinding01',
-      expectedProfileBindingVersion: config.expectedProfileBindingVersion || 1,
+      expectedProfileBindingId: (configuredProfile && configuredProfile.profileBindingId)
+        || config.expectedProfileBindingId
+        || 'profbind_developmentBinding01',
+      expectedProfileBindingVersion: (configuredProfile && configuredProfile.profileBindingVersion)
+        || config.expectedProfileBindingVersion
+        || 1,
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       token: config.token || process.env.CODEX_CHROME_OPERATOR_TOKEN || 'dev-token'
     };
@@ -47,8 +62,8 @@ class SessionManager {
     this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
     this.profileVerified = false;
     this.profileBindingStatus = 'unverified';
-    this.approvedOrigins = new Set();
-    this.hostPermissions = new Set();
+    this.approvedOrigins = new Set(Object.keys(this.stateStore.listDomainApprovals()));
+    this.hostPermissions = new Set(this.activeHostPermissionOrigins());
     this.lastError = null;
     this.commandQueue = [];
     this.pendingCommands = new Map();
@@ -62,6 +77,8 @@ class SessionManager {
       profileBindingStatus: this.profileBindingStatus,
       approvedOrigins: [...this.approvedOrigins],
       hostPermissionOrigins: [...this.hostPermissions],
+      domainApprovals: this.stateStore.listDomainApprovals(),
+      configuredProfile: this.stateStore.getConfiguredProfile(),
       auditLogPath: this.config.auditLogPath,
       lastError: this.lastError
     };
@@ -87,10 +104,22 @@ class SessionManager {
         response = this.handleHello(id, params.hello);
         break;
       case 'operator.approveDomain':
-        response = this.approveDomain(id, params.origin);
+        response = this.approveDomain(id, params);
         break;
       case 'extension.hostPermissionGranted':
-        response = this.hostPermissionGranted(id, params.origin);
+        response = this.hostPermissionGranted(id, params);
+        break;
+      case 'operator.profiles.discover':
+        response = this.discoverProfiles(id, params);
+        break;
+      case 'operator.profile.bind':
+        response = this.bindProfile(id, params);
+        break;
+      case 'operator.profile.verify':
+        response = this.verifyProfile(id);
+        break;
+      case 'operator.verifyReadiness':
+        response = this.verifyReadiness(id, params);
         break;
       case 'page.observe':
         response = await this.routePageCommand(id, request.method, params);
@@ -167,26 +196,146 @@ class SessionManager {
     });
   }
 
-  approveDomain(id, origin) {
+  approveDomain(id, params) {
+    const origin = params && params.origin;
     if (!origin || typeof origin !== 'string') {
       return rpcError(id, {
         code: ERROR_CODES.INVALID_SCHEMA,
         message: 'origin is required.'
       });
     }
+    const approval = this.stateStore.approveDomain(origin, {
+      mode: params.mode,
+      taskScope: params.taskScope,
+      expiresAt: params.expiresAt
+    });
     this.approvedOrigins.add(origin);
-    return rpcOk(id, { origin, approved: true });
+    return rpcOk(id, { ...approval, approved: true });
   }
 
-  hostPermissionGranted(id, origin) {
+  hostPermissionGranted(id, params) {
+    const origin = params && params.origin;
     if (!origin || typeof origin !== 'string') {
       return rpcError(id, {
         code: ERROR_CODES.INVALID_SCHEMA,
         message: 'origin is required.'
       });
     }
-    this.hostPermissions.add(origin);
+    this.stateStore.grantHostPermission(origin, {
+      profileBindingId: params.profileBindingId || this.config.expectedProfileBindingId,
+      grantedAt: params.grantedAt
+    });
+    this.hostPermissions = new Set(this.activeHostPermissionOrigins());
     return rpcOk(id, { origin, hostPermissionGranted: true });
+  }
+
+  activeHostPermissionOrigins() {
+    return Object.keys(this.stateStore.listHostPermissions())
+      .filter((origin) => this.hasHostPermission(origin));
+  }
+
+  hasHostPermission(origin) {
+    const permission = this.stateStore.getHostPermission(origin);
+    if (!permission) {
+      return false;
+    }
+
+    const configuredProfile = this.stateStore.getConfiguredProfile();
+    if (!configuredProfile) {
+      return true;
+    }
+
+    return permission.profileBindingId === configuredProfile.profileBindingId;
+  }
+
+  discoverProfiles(id, params) {
+    return rpcOk(id, {
+      profiles: discoverChromeProfiles({
+        userDataDir: params.userDataDir
+      })
+    });
+  }
+
+  bindProfile(id, params) {
+    if (!params.userDataDir || !params.profileDirectory) {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_SCHEMA,
+        message: 'userDataDir and profileDirectory are required.'
+      });
+    }
+
+    const profileBindingId = params.profileBindingId || generateProfileBindingId();
+    const profileBindingVersion = params.profileBindingVersion || 1;
+    const configuredProfile = this.stateStore.setConfiguredProfile({
+      userDataDir: params.userDataDir,
+      profileDirectory: params.profileDirectory,
+      profileLabel: params.profileLabel,
+      profileBindingId,
+      profileBindingVersion
+    });
+
+    this.config.expectedProfileBindingId = profileBindingId;
+    this.config.expectedProfileBindingVersion = profileBindingVersion;
+    this.profileVerified = false;
+    this.profileBindingStatus = 'binding-pending';
+    this.connectionState = 'EXTENSION_CONNECTED_SETUP_ONLY';
+    this.hostPermissions = new Set(this.activeHostPermissionOrigins());
+
+    return rpcOk(id, {
+      ...configuredProfile,
+      setupUrl: buildProfileSetupUrl({
+        extensionId: this.config.expectedExtensionId,
+        profileBindingId,
+        profileBindingVersion
+      })
+    });
+  }
+
+  verifyProfile(id) {
+    const configuredProfile = this.stateStore.getConfiguredProfile();
+    if (!configuredProfile) {
+      return rpcError(id, {
+        code: ERROR_CODES.PROFILE_NOT_CONFIGURED,
+        message: 'Chrome profile is not configured.'
+      });
+    }
+    return rpcOk(id, {
+      configuredProfile,
+      profileVerified: this.profileVerified,
+      profileBindingStatus: this.profileBindingStatus,
+      connectionState: this.connectionState
+    });
+  }
+
+  verifyReadiness(id, params) {
+    const origin = params.origin || (params.url ? new URL(params.url).origin : undefined);
+    const profileVerified = this.profileVerified;
+    const domainApproved = this.approvedOrigins.has(origin);
+    const hostPermissionGranted = this.hasHostPermission(origin);
+    const readiness = assertReadyForRealSiteAction({
+      profileVerified,
+      domainApproved,
+      hostPermissionGranted
+    });
+    const missing = [];
+    if (!profileVerified) {
+      missing.push('profile');
+    }
+    if (!domainApproved) {
+      missing.push('domainApproval');
+    }
+    if (!hostPermissionGranted) {
+      missing.push('hostPermission');
+    }
+    return rpcOk(id, {
+      origin,
+      ready: readiness.ok,
+      profileVerified,
+      domainApproved,
+      hostPermissionGranted,
+      missing,
+      error: readiness.ok ? null : readiness.error
+    });
   }
 
   async routePageCommand(id, method, params) {
@@ -194,7 +343,7 @@ class SessionManager {
     const readiness = assertReadyForRealSiteAction({
       profileVerified: this.profileVerified,
       domainApproved: this.approvedOrigins.has(origin),
-      hostPermissionGranted: this.hostPermissions.has(origin)
+      hostPermissionGranted: this.hasHostPermission(origin)
     });
 
     if (!readiness.ok) {
