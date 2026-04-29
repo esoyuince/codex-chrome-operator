@@ -596,6 +596,81 @@ test('page.waitFor queues extension command and resolves condition result', asyn
   });
 });
 
+test('page.navigate rejects unsupported schemes before queueing browser work', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const result = await postJson(baseUrl, 'page.navigate', {
+      url: 'file:///C:/Users/example/secret.txt'
+    });
+
+    assert.equal(result.body.ok, false);
+    assert.equal(result.body.error.code, ERROR_CODES.UNSUPPORTED_SCHEME);
+
+    const command = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(command.body.ok, true);
+    assert.equal(command.body.result.command, null);
+  });
+});
+
+test('page.navigate revokes previous origin approval after an origin change', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl, 'https://example.com');
+    await postJson(baseUrl, 'extension.activeTabUpdated', {
+      activeTab: {
+        id: 9,
+        windowId: 2,
+        url: 'https://example.com/start',
+        title: 'Start',
+        status: 'complete'
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://next.example'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://next.example'
+    });
+
+    const navigatePromise = postJson(baseUrl, 'page.navigate', {
+      url: 'https://next.example/path'
+    });
+    const command = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(command.body.ok, true);
+    assert.equal(command.body.result.command.method, 'page.navigate');
+
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      activeTab: {
+        id: 9,
+        windowId: 2,
+        url: 'https://next.example/path',
+        title: 'Next',
+        status: 'complete'
+      },
+      response: {
+        ok: true,
+        result: {
+          action: 'navigate',
+          url: 'https://next.example/path'
+        }
+      }
+    });
+
+    const result = await navigatePromise;
+    assert.equal(result.body.ok, true);
+    assert.deepEqual(result.body.result.navigationOriginChange, {
+      from: 'https://example.com',
+      to: 'https://next.example',
+      previousApprovalRevoked: true
+    });
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.equal(status.body.result.approvedOrigins.includes('https://example.com'), false);
+    assert.equal(status.body.result.approvedOrigins.includes('https://next.example'), true);
+  });
+});
+
 test('page.visualObserve queues extension command and resolves from bridge delivery', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {

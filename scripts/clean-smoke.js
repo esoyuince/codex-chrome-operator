@@ -266,6 +266,17 @@ function runCliJson(args, settings) {
   return JSON.parse(output);
 }
 
+function findElementHandle(observation, predicate, label) {
+  const elements = observation && observation.result && Array.isArray(observation.result.elements)
+    ? observation.result.elements
+    : [];
+  const element = elements.find(predicate);
+  if (!element || !element.handle) {
+    throw new Error(`Could not find handle for ${label}: ${JSON.stringify(observation)}`);
+  }
+  return element.handle;
+}
+
 async function waitForStatus(settings, predicate, timeoutMs = 10000) {
   const started = Date.now();
   let lastStatus = null;
@@ -393,6 +404,11 @@ async function runCleanSmoke(options = {}) {
     if (!gateTypes.includes('PASSWORD_REQUIRED')) {
       throw new Error(`Expected PASSWORD_REQUIRED gate: ${JSON.stringify(gateObservation)}`);
     }
+    const completeGateHandle = findElementHandle(
+      gateObservation,
+      (element) => element.id === 'completeGate',
+      'complete gate button'
+    );
     const gatedVisualObserve = runCliJson(['visual-observe', config.origin], settings);
     if (
       gatedVisualObserve.ok ||
@@ -401,7 +417,7 @@ async function runCleanSmoke(options = {}) {
     ) {
       throw new Error(`Expected visual capture policy block on gated page: ${JSON.stringify(gatedVisualObserve)}`);
     }
-    const gatedClick = runCliJson(['click', config.origin, 'el_1'], settings);
+    const gatedClick = runCliJson(['click', config.origin, completeGateHandle], settings);
     if (
       gatedClick.ok ||
       gatedClick.error.code !== 'PASSWORD_REQUIRED' ||
@@ -436,8 +452,18 @@ async function runCleanSmoke(options = {}) {
     if (resumedGateTypes.length !== 0) {
       throw new Error(`Expected gate to clear after manual completion: ${JSON.stringify(resumedGateObservation)}`);
     }
-    const gateFill = runCliJson(['fill', config.origin, 'el_0', 'Manual gate complete'], settings);
-    const gateSafeClick = runCliJson(['click', config.origin, 'el_1'], settings);
+    const postGateValueHandle = findElementHandle(
+      resumedGateObservation,
+      (element) => element.name === 'postGateValue',
+      'post-gate value input'
+    );
+    const safeAfterGateHandle = findElementHandle(
+      resumedGateObservation,
+      (element) => element.id === 'safeAfterGate',
+      'safe after gate button'
+    );
+    const gateFill = runCliJson(['fill', config.origin, postGateValueHandle, 'Manual gate complete'], settings);
+    const gateSafeClick = runCliJson(['click', config.origin, safeAfterGateHandle], settings);
     if (!gateFill.ok || !gateSafeClick.ok) {
       throw new Error(`Post-gate action failed: ${JSON.stringify({ gateFill, gateSafeClick })}`);
     }
@@ -517,6 +543,28 @@ async function runCleanSmoke(options = {}) {
     if (!postReconnectObserve.ok) {
       throw new Error(`Observe failed after reconnect: ${JSON.stringify(postReconnectObserve)}`);
     }
+    const basicHandles = {
+      appName: findElementHandle(
+        postReconnectObserve,
+        (element) => element.name === 'appName',
+        'app name input'
+      ),
+      description: findElementHandle(
+        postReconnectObserve,
+        (element) => element.name === 'description',
+        'description textarea'
+      ),
+      saveDraft: findElementHandle(
+        postReconnectObserve,
+        (element) => element.id === 'saveDraft',
+        'save draft button'
+      ),
+      publish: findElementHandle(
+        postReconnectObserve,
+        (element) => element.id === 'publish',
+        'publish button'
+      )
+    };
     const waitForBasicForm = runCliJson([
       'wait-for',
       config.origin,
@@ -559,10 +607,10 @@ async function runCleanSmoke(options = {}) {
     if (!boundedFullAutoStart.ok || boundedFullAutoStart.result.active !== true) {
       throw new Error(`Bounded Full Auto start failed: ${JSON.stringify(boundedFullAutoStart)}`);
     }
-    runCliJson(['fill', config.origin, 'el_0', 'Clean Smoke App'], settings);
-    runCliJson(['fill', config.origin, 'el_1', 'Single command smoke test.'], settings);
-    runCliJson(['click', config.origin, 'el_2'], settings);
-    const highRiskClick = runCliJson(['click', config.origin, 'el_3'], settings);
+    runCliJson(['fill', config.origin, basicHandles.appName, 'Clean Smoke App'], settings);
+    runCliJson(['fill', config.origin, basicHandles.description, 'Single command smoke test.'], settings);
+    runCliJson(['click', config.origin, basicHandles.saveDraft], settings);
+    const highRiskClick = runCliJson(['click', config.origin, basicHandles.publish], settings);
     if (highRiskClick.ok || highRiskClick.error.code !== 'HIGH_RISK_BLOCKED' || !highRiskClick.error.approvalId) {
       throw new Error(`Expected HIGH_RISK_BLOCKED for publish click: ${JSON.stringify(highRiskClick)}`);
     }

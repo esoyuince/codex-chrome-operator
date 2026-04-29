@@ -9,7 +9,7 @@ function isVisible(element) {
     rect.height > 0;
 }
 
-function elementSummary(element, index) {
+function elementSummary(element, handle) {
   const rect = element.getBoundingClientRect();
   const dataRisk = element.getAttribute('data-risk') || null;
   const label = element.getAttribute('aria-label') ||
@@ -20,7 +20,7 @@ function elementSummary(element, index) {
     '';
 
   return {
-    handle: `el_${index}`,
+    handle,
     tag: element.tagName.toLowerCase(),
     role: element.getAttribute('role') || null,
     type: element.getAttribute('type') || null,
@@ -38,10 +38,19 @@ function elementSummary(element, index) {
   };
 }
 
-function collectObservation() {
-  const candidates = [...document.querySelectorAll(
+function collectInteractiveElements() {
+  return [...document.querySelectorAll(
     'a,button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]'
   )].filter(isVisible).slice(0, 200);
+}
+
+function collectObservation() {
+  const candidates = collectInteractiveElements();
+  const described = globalThis.CodexPageHandles.describeElements(candidates, {
+    location,
+    document,
+    window
+  });
   const detectedGates = globalThis.CodexGateDetector
     ? globalThis.CodexGateDetector.detectGates(document)
     : [];
@@ -50,10 +59,11 @@ function collectObservation() {
     url: location.href,
     origin: location.origin,
     title: document.title,
+    pageStateId: described.pageStateId,
     visibleTextSummary: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 2000),
     detectedGates,
-    elements: candidates.map(elementSummary),
-    focusedElement: document.activeElement ? elementSummary(document.activeElement, 'focused') : null,
+    elements: candidates.map((element, index) => elementSummary(element, described.items[index].handle)),
+    focusedElement: document.activeElement ? elementSummary(document.activeElement, null) : null,
     viewport: {
       width: window.innerWidth,
       height: window.innerHeight,
@@ -65,16 +75,16 @@ function collectObservation() {
 }
 
 function resolveHandle(handle) {
-  const observation = collectObservation();
-  const item = observation.elements.find((element) => element.handle === handle);
-  if (!item) {
-    return null;
-  }
-  const candidates = [...document.querySelectorAll(
-    'a,button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]'
-  )].filter(isVisible);
-  const index = Number(String(handle).replace('el_', ''));
-  return candidates[index] || null;
+  const candidates = collectInteractiveElements();
+  return globalThis.CodexPageHandles.resolveVersionedHandle({
+    handle,
+    elements: candidates,
+    context: {
+      location,
+      document,
+      window
+    }
+  });
 }
 
 async function runAction(message) {
@@ -88,10 +98,11 @@ async function runAction(message) {
     return { ok: false, error: gateError };
   }
 
-  const element = resolveHandle(message.handle);
-  if (!element) {
-    return { ok: false, error: { code: 'STALE_HANDLE' } };
+  const resolved = resolveHandle(message.handle);
+  if (!resolved.ok) {
+    return { ok: false, error: resolved.error };
   }
+  const element = resolved.element;
 
   if (message.action === 'click') {
     const risk = globalThis.CodexActionPolicy.classifyActionRisk({
@@ -173,7 +184,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           window,
           document,
           location,
-          resolveHandle
+          resolveHandle: (handle) => {
+            const resolved = resolveHandle(handle);
+            return resolved.ok ? resolved.element : null;
+          }
         }
       }));
       return;

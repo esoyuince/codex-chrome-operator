@@ -220,7 +220,7 @@ async function syncPermissionsAfterChange() {
 async function ensureContentScript(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ['actionPolicy.js', 'gateDetector.js', 'pageWait.js', 'contentScript.js']
+    files: ['actionPolicy.js', 'gateDetector.js', 'pageHandles.js', 'pageWait.js', 'contentScript.js']
   });
 }
 

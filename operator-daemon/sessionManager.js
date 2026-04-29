@@ -122,6 +122,32 @@ function originFromParams(params = {}) {
   return undefined;
 }
 
+function navigationTarget(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Navigation URL must be an absolute URL.');
+  }
+
+  if (parsed.protocol === 'https:') {
+    return guardOk({ url: parsed.href, origin: parsed.origin });
+  }
+
+  if (
+    parsed.protocol === 'http:' &&
+    ['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)
+  ) {
+    return guardOk({ url: parsed.href, origin: parsed.origin });
+  }
+
+  return guardError(
+    ERROR_CODES.UNSUPPORTED_SCHEME,
+    'Navigation is limited to https and local development http origins.',
+    { scheme: parsed.protocol.replace(/:$/, '') }
+  );
+}
+
 function isBoundedFullAutoError(error) {
   return Boolean(error && typeof error.code === 'string' && error.code.startsWith('BOUNDED_FULL_AUTO_'));
 }
@@ -894,7 +920,12 @@ class SessionManager {
       });
     }
 
-    const origin = params.origin || (params.url ? new URL(params.url).origin : undefined);
+    const previousOrigin = this.activeTab && this.activeTab.origin;
+    const target = method === 'page.navigate' ? navigationTarget(params.url) : null;
+    if (target && !target.ok) {
+      return rpcError(id, target.error);
+    }
+    const origin = target ? target.origin : originFromParams(params);
     const readiness = assertReadyForRealSiteAction({
       profileVerified: this.profileVerified,
       domainApproved: this.hasDomainApproval(origin),
@@ -912,6 +943,7 @@ class SessionManager {
 
     const extensionResponse = await this.enqueueExtensionCommand(method, {
       ...params,
+      ...(target ? { url: target.url } : {}),
       origin
     });
     if (!extensionResponse.ok) {
@@ -923,6 +955,22 @@ class SessionManager {
         return rpcError(id, materialized.error);
       }
       return rpcOk(id, materialized.result);
+    }
+    if (method === 'page.navigate') {
+      let navigationOriginChange = null;
+      if (previousOrigin && previousOrigin !== origin) {
+        const previousApprovalRevoked = this.stateStore.revokeDomain(previousOrigin);
+        this.approvedOrigins = new Set(this.activeDomainApprovalOrigins());
+        navigationOriginChange = {
+          from: previousOrigin,
+          to: origin,
+          previousApprovalRevoked
+        };
+      }
+      return rpcOk(id, {
+        ...extensionResponse.result,
+        ...(navigationOriginChange ? { navigationOriginChange } : {})
+      });
     }
     return rpcOk(id, extensionResponse.result);
   }
