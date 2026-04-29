@@ -10,6 +10,7 @@
     "extension:id": "node scripts/ensure-extension-key.js",
     "extension:launch-cft": "powershell -NoProfile -ExecutionPolicy Bypass -File install/launch-chrome-for-testing.ps1",
     "operator:cli": "node scripts/operator-cli.js",
+    "adapter:mcp": "node codex-adapter/mcpServer.js",
     "smoke:clean": "node scripts/clean-smoke.js",
     "daemon": "node operator-daemon/daemon.js",
     "native-bridge": "node native-bridge/nativeMessagingShim.js",
