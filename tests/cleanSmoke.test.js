@@ -134,3 +134,50 @@ test('sensitive page fixture exposes a visual policy block marker', () => {
     'account security'
   ]);
 });
+
+test('mock Play Console fixture exposes upload targets and release controls', () => {
+  const html = readFixture('mock-play-console.html');
+
+  assertIncludesAll(html, [
+    '<title>Codex Operator Mock Play Console Fixture</title>',
+    'id="mock-play-console-fixture"',
+    'data-fixture="mock-play-console"',
+    'id="appIconUpload"',
+    'data-upload-role="playStoreAppIcon"',
+    'accept="image/png"',
+    'id="featureGraphicUpload"',
+    'data-upload-role="playStoreFeatureGraphic"',
+    'accept="image/png,image/jpeg"',
+    'id="phoneScreenshotUpload"',
+    'data-upload-role="playStorePhoneScreenshot"',
+    'multiple',
+    'data-preview-role="playStoreAppIcon"',
+    'data-preview-role="playStoreFeatureGraphic"',
+    'data-preview-role="playStorePhoneScreenshot"',
+    'data-validation-message="playStoreAppIcon"',
+    'data-validation-message="playStoreFeatureGraphic"',
+    'data-validation-message="playStorePhoneScreenshot"',
+    'id="saveDraftButton"',
+    'Save draft',
+    'id="sendForReviewButton"',
+    'data-risk="high"',
+    'Send for review'
+  ]);
+});
+
+test('extension wires the upload helper into background and content scripts', () => {
+  const background = fs.readFileSync(path.join(__dirname, '..', 'extension', 'background.js'), 'utf8');
+  const contentScript = fs.readFileSync(path.join(__dirname, '..', 'extension', 'contentScript.js'), 'utf8');
+
+  assertIncludesAll(background, [
+    "importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js')",
+    "'fileUpload.v1'",
+    "'fileUpload.js'",
+    "'page.uploadFile'",
+    "type: 'content.uploadFile'"
+  ]);
+  assertIncludesAll(contentScript, [
+    "message.type === 'content.uploadFile'",
+    'globalThis.CodexFileUpload.uploadFiles'
+  ]);
+});

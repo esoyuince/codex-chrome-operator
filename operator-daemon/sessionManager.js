@@ -23,6 +23,7 @@ const {
   createVisualAnalyzerRegistry,
   visualPolicyBlockIfNeeded
 } = require('./visualAnalyzer');
+const defaultAssetValidator = require('./assetValidator');
 const { OperatorStateStore } = require('./stateStore');
 
 function defaultAuditPath() {
@@ -70,6 +71,7 @@ const PAGE_ACTION_KINDS = Object.freeze({
   'page.observe': 'observe',
   'page.visualObserve': 'screenshot',
   'page.visualAnalyze': 'screenshot',
+  'page.uploadFile': 'upload',
   'page.click': 'click',
   'page.type': 'type',
   'page.fill': 'fill',
@@ -100,6 +102,20 @@ function guardError(code, message, extra = {}) {
       ...extra
     }
   };
+}
+
+function safeUploadErrorDetails(error) {
+  if (!error || typeof error !== 'object') {
+    return {};
+  }
+
+  const blockedKeys = new Set(['path', 'filePath', 'absolutePath']);
+  return Object.entries(error).reduce((safe, [key, value]) => {
+    if (key !== 'code' && key !== 'message' && !blockedKeys.has(key)) {
+      safe[key] = value;
+    }
+    return safe;
+  }, {});
 }
 
 function isLocalMockOrigin(origin) {
@@ -233,6 +249,7 @@ class SessionManager {
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       visualAnalyzerRegistry: config.visualAnalyzerRegistry || createVisualAnalyzerRegistry(),
+      assetValidator: config.assetValidator || defaultAssetValidator,
       token: config.token || process.env.CODEX_CHROME_OPERATOR_TOKEN || 'dev-token'
     };
     this.audit = new AuditLog(this.config.auditLogPath);
@@ -240,6 +257,7 @@ class SessionManager {
       rootDir: this.config.screenshotDir
     });
     this.visualAnalyzerRegistry = this.config.visualAnalyzerRegistry;
+    this.assetValidator = this.config.assetValidator;
     this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
     this.profileVerified = false;
     this.profileBindingStatus = 'unverified';
@@ -385,6 +403,7 @@ class SessionManager {
       case 'page.observe':
       case 'page.visualObserve':
       case 'page.visualAnalyze':
+      case 'page.uploadFile':
         response = await this.routePageCommand(id, request.method, params);
         break;
       case 'page.click':
@@ -971,6 +990,78 @@ class SessionManager {
     return guardOk({ boundedFullAuto: this.boundedFullAutoStatus() });
   }
 
+  validateUploadCommandParams(params = {}, origin) {
+    const targetHandle = params.target && typeof params.target.handle === 'string'
+      ? params.target.handle.trim()
+      : '';
+    if (!targetHandle) {
+      return guardError(
+        ERROR_CODES.UPLOAD_TARGET_INVALID,
+        'Upload target handle is required.'
+      );
+    }
+
+    if (!Array.isArray(params.files) || params.files.length === 0) {
+      return guardError(
+        ERROR_CODES.INVALID_SCHEMA,
+        'Upload files must be a non-empty array.'
+      );
+    }
+
+    const files = params.files.map((file) => {
+      const normalized = {
+        role: file && file.role,
+        path: file && file.path
+      };
+      if (file && file.expectedSha256 !== undefined) {
+        normalized.expectedSha256 = file.expectedSha256;
+      }
+      return normalized;
+    });
+    const invalidFile = files.find((file) => (
+      !file ||
+      typeof file.role !== 'string' ||
+      !file.role.trim() ||
+      typeof file.path !== 'string' ||
+      !file.path.trim()
+    ));
+    if (invalidFile) {
+      return guardError(
+        ERROR_CODES.INVALID_SCHEMA,
+        'Each upload file must include role and path.'
+      );
+    }
+
+    const ruleset = typeof params.ruleset === 'string' && params.ruleset.trim()
+      ? params.ruleset.trim()
+      : 'googlePlayPreviewAssets.v2026';
+    const validation = this.assetValidator.validateUploadFiles(files, {
+      ruleset,
+      expectedOrigin: origin,
+      targetHandle
+    });
+
+    if (!validation || validation.ok !== true) {
+      const firstError = validation && (
+        validation.error ||
+        (Array.isArray(validation.errors) && validation.errors[0])
+      );
+      return guardError(
+        firstError && firstError.code ? firstError.code : ERROR_CODES.INVALID_SCHEMA,
+        firstError && firstError.message ? firstError.message : 'Upload asset validation failed.',
+        safeUploadErrorDetails(firstError)
+      );
+    }
+
+    return guardOk({
+      target: { handle: targetHandle },
+      ruleset: validation.ruleset || ruleset,
+      files: Array.isArray(validation.files) ? validation.files : [],
+      verifyPreview: params.verifyPreview === true,
+      assetValidation: validation
+    });
+  }
+
   async routePageCommand(id, method, params) {
     if (this.emergencyStop.active) {
       return rpcError(id, this.emergencyStopError());
@@ -1003,6 +1094,34 @@ class SessionManager {
     const boundedFullAuto = this.enforceBoundedFullAuto(method, origin);
     if (!boundedFullAuto.ok) {
       return rpcError(id, boundedFullAuto.error);
+    }
+
+    if (method === 'page.uploadFile') {
+      const upload = this.validateUploadCommandParams(params, origin);
+      if (!upload.ok) {
+        return rpcError(id, upload.error);
+      }
+
+      const extensionResponse = await this.enqueueExtensionCommand(method, {
+        origin,
+        target: upload.target,
+        ruleset: upload.ruleset,
+        verifyPreview: upload.verifyPreview,
+        files: upload.files
+      });
+      if (!extensionResponse.ok) {
+        return rpcError(id, this.attachApprovalRequest(method, {
+          origin,
+          target: upload.target,
+          ruleset: upload.ruleset,
+          verifyPreview: upload.verifyPreview,
+          files: upload.files
+        }, extensionResponse.error));
+      }
+      return rpcOk(id, {
+        ...extensionResponse.result,
+        assetValidation: upload.assetValidation
+      });
     }
 
     const extensionMethod = method === 'page.visualAnalyze' ? 'page.visualObserve' : method;

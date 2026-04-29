@@ -13,6 +13,7 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   const tools = listTools();
   const openObserve = tools.find((tool) => tool.name === 'codex_chrome_open_observe');
   const profileOnboard = tools.find((tool) => tool.name === 'codex_chrome_profile_onboard');
+  const uploadFile = tools.find((tool) => tool.name === 'codex_chrome_upload_file');
 
   assert.equal(ADAPTER_PROTOCOL_VERSION, '1.0');
   assert.ok(openObserve);
@@ -24,6 +25,13 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.equal(profileOnboard.inputSchema.type, 'object');
   assert.equal(profileOnboard.inputSchema.additionalProperties, false);
   assert.deepEqual(profileOnboard.inputSchema.required, []);
+  assert.ok(uploadFile);
+  assert.equal(uploadFile.inputSchema.type, 'object');
+  assert.equal(uploadFile.inputSchema.additionalProperties, false);
+  assert.deepEqual(uploadFile.inputSchema.required, ['origin', 'handle', 'files']);
+  assert.equal(uploadFile.inputSchema.properties.files.type, 'array');
+  assert.equal(uploadFile.inputSchema.properties.ruleset.type, 'string');
+  assert.equal(uploadFile.inputSchema.properties.verifyPreview.type, 'boolean');
   assert.match(toolDefinitionsHash(), /^[a-f0-9]{64}$/);
   assert.equal(toolDefinitionsHash(), toolDefinitionsHash());
 });
@@ -53,6 +61,77 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     }).ok,
     true
   );
+  assert.equal(
+    validateToolInput('codex_chrome_upload_file', {
+      origin: 'https://example.com',
+      handle: 'el_file',
+      files: 'not-an-array'
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_upload_file', {
+      origin: 'https://example.com',
+      handle: 'el_file',
+      files: [],
+      extra: true
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+});
+
+test('CodexChromeToolAdapter routes upload file with normalized origin and optional controls', async () => {
+  const calls = [];
+  const files = [{
+    role: 'playStoreAppIcon',
+    path: 'C:/tmp/icon.png',
+    expectedSha256: 'abc123'
+  }];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          method: request.method,
+          params: request.params
+        }
+      };
+    }
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_upload_file',
+    input: {
+      origin: 'https://example.com/path?x=1',
+      handle: 'el_file',
+      ruleset: 'play-store-draft',
+      verifyPreview: true,
+      files
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.method, 'page.uploadFile');
+  assert.deepEqual(response.result.params, {
+    origin: 'https://example.com',
+    target: { handle: 'el_file' },
+    ruleset: 'play-store-draft',
+    verifyPreview: true,
+    files: [{
+      role: 'playStoreAppIcon',
+      path: '[REDACTED_PATH]',
+      expectedSha256: 'abc123'
+    }]
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'page.uploadFile');
+  assert.deepEqual(calls[0].params.files, files);
 });
 
 test('CodexChromeToolAdapter exposes strict visual analyze schema and validation', () => {
@@ -496,4 +575,38 @@ test('CodexChromeToolAdapter redacts raw visual data URLs from tool responses', 
   assert.equal(response.result.screenshot.artifactId, 'shot_1');
   assert.equal(response.result.screenshot.dataUrl, undefined);
   assert.equal(response.result.screenshot.rawDataRedacted, true);
+});
+
+test('CodexChromeToolAdapter redacts path fields without redacting basename or hash', async () => {
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async () => ({
+      ok: true,
+      result: {
+        file: {
+          basename: 'icon.png',
+          expectedSha256: 'abc123',
+          path: 'C:/tmp/icon.png'
+        }
+      }
+    })
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_upload_file',
+    input: {
+      origin: 'https://example.com',
+      handle: 'el_file',
+      files: []
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.file.basename, 'icon.png');
+  assert.equal(response.result.file.expectedSha256, 'abc123');
+  assert.equal(response.result.file.path, '[REDACTED_PATH]');
 });

@@ -315,6 +315,28 @@ function findElementHandle(observation, predicate, label) {
   return element.handle;
 }
 
+function pngBuffer({ width, height, colorType }) {
+  const buffer = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buffer, 0);
+  buffer.writeUInt32BE(13, 8);
+  buffer.write('IHDR', 12, 'ascii');
+  buffer.writeUInt32BE(width, 16);
+  buffer.writeUInt32BE(height, 20);
+  buffer[24] = 8;
+  buffer[25] = colorType;
+  return buffer;
+}
+
+function writeSmokePngAsset(config, name, options) {
+  const assetDir = path.join(config.profileDir, 'assets');
+  assertPathInside(config.profileDir, assetDir);
+  fs.mkdirSync(assetDir, { recursive: true });
+  const assetPath = path.join(assetDir, name);
+  assertPathInside(assetDir, assetPath);
+  fs.writeFileSync(assetPath, pngBuffer(options));
+  return assetPath;
+}
+
 async function waitForStatus(settings, predicate, timeoutMs = 10000) {
   const started = Date.now();
   let lastStatus = null;
@@ -621,6 +643,114 @@ async function runCleanSmoke(options = {}) {
       throw new Error(`Expected sensitive visual policy block: ${JSON.stringify(sensitiveVisualAnalyze)}`);
     }
 
+    const mockPlayObservation = await runCliJsonAsync([
+      'open-observe',
+      `${config.origin}/mock-play-console.html`,
+      '45000',
+      '1000'
+    ], settings);
+    if (
+      !mockPlayObservation.ok ||
+      !mockPlayObservation.result.observation ||
+      mockPlayObservation.result.observation.title !== 'Codex Operator Mock Play Console Fixture'
+    ) {
+      throw new Error(`Mock Play Console observation failed: ${JSON.stringify(mockPlayObservation)}`);
+    }
+    const appIconUploadHandle = findElementHandle(
+      { result: mockPlayObservation.result.observation },
+      (element) => element.id === 'appIconDropzone' &&
+        element.uploadTarget === true &&
+        element.uploadRole === 'playStoreAppIcon',
+      'mock Play app icon upload target'
+    );
+    const featureGraphicUploadHandle = findElementHandle(
+      { result: mockPlayObservation.result.observation },
+      (element) => element.id === 'featureGraphicDropzone' &&
+        element.uploadTarget === true &&
+        element.uploadRole === 'playStoreFeatureGraphic',
+      'mock Play feature graphic upload target'
+    );
+
+    const validIconPath = writeSmokePngAsset(config, 'play-icon.png', {
+      width: 512,
+      height: 512,
+      colorType: 6
+    });
+    const mockPlayUpload = runCliJson([
+      'upload-file',
+      config.origin,
+      appIconUploadHandle,
+      'googlePlayPreviewAssets.v2026',
+      JSON.stringify([{
+        role: 'playStoreAppIcon',
+        path: validIconPath
+      }]),
+      'true'
+    ], settings);
+    if (
+      !mockPlayUpload.ok ||
+      mockPlayUpload.result.action !== 'uploaded' ||
+      mockPlayUpload.result.previewVerified !== true ||
+      !Array.isArray(mockPlayUpload.result.files) ||
+      mockPlayUpload.result.files[0].role !== 'playStoreAppIcon'
+    ) {
+      throw new Error(`Mock Play upload failed: ${JSON.stringify(mockPlayUpload)}`);
+    }
+    const mockPlayDom = await withCdp(await pageTarget(config), async (send) => {
+      const result = await send('Runtime.evaluate', {
+        expression: `({
+          appIconPreview: document.getElementById('appIconPreview').textContent,
+          appIconStatus: document.getElementById('appIconStatus').textContent,
+          uploadedBasenames: document.getElementById('appIconUpload').dataset.codexUploadedBasenames
+        })`,
+        returnByValue: true
+      });
+      return result.result.result.value;
+    });
+    if (
+      !/play-icon\.png/.test(mockPlayDom.appIconPreview || '') ||
+      !/accepted/.test(mockPlayDom.appIconStatus || '') ||
+      mockPlayDom.uploadedBasenames !== 'play-icon.png'
+    ) {
+      throw new Error(`Mock Play upload DOM verification failed: ${JSON.stringify(mockPlayDom)}`);
+    }
+
+    const invalidFeaturePath = writeSmokePngAsset(config, 'bad-feature.png', {
+      width: 100,
+      height: 100,
+      colorType: 2
+    });
+    const invalidAssetUpload = runCliJson([
+      'upload-file',
+      config.origin,
+      featureGraphicUploadHandle,
+      'googlePlayPreviewAssets.v2026',
+      JSON.stringify([{
+        role: 'playStoreFeatureGraphic',
+        path: invalidFeaturePath
+      }])
+    ], settings);
+    if (
+      invalidAssetUpload.ok ||
+      invalidAssetUpload.error.code !== 'ASSET_DIMENSION_MISMATCH'
+    ) {
+      throw new Error(`Expected invalid mock asset to be blocked: ${JSON.stringify(invalidAssetUpload)}`);
+    }
+
+    const mockPlayPostUploadObservation = runCliJson(['observe', config.origin], settings);
+    const sendForReviewHandle = findElementHandle(
+      mockPlayPostUploadObservation,
+      (element) => element.id === 'sendForReviewButton',
+      'mock Play send for review button'
+    );
+    const mockPlaySendForReview = runCliJson(['click', config.origin, sendForReviewHandle], settings);
+    if (
+      mockPlaySendForReview.ok ||
+      mockPlaySendForReview.error.code !== 'HIGH_RISK_BLOCKED'
+    ) {
+      throw new Error(`Expected mock Play send-for-review to be high-risk blocked: ${JSON.stringify(mockPlaySendForReview)}`);
+    }
+
     await withCdp(await pageTarget(config), async (send) => {
       await send('Page.navigate', { url: `${config.origin}/basic-form.html` });
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -902,6 +1032,12 @@ async function runCleanSmoke(options = {}) {
       boundedFullAutoActions: boundedFullAutoAfterHighRisk.result.counters.browserActions,
       boundedFullAutoStopped: boundedFullAutoStop.result.active === false,
       boundedFullAutoAudited: auditedBoundedAction,
+      mockPlayUploadPreviewVerified: mockPlayUpload.result.previewVerified,
+      mockPlayUploadStatus: mockPlayUpload.result.action,
+      mockPlayUploadRole: mockPlayUpload.result.files[0].role,
+      mockPlayUploadDom: mockPlayDom,
+      invalidAssetBlocked: invalidAssetUpload.error.code,
+      mockPlaySendForReviewBlocked: mockPlaySendForReview.error.code,
       basicDomActions,
       highRiskBlocked: highRiskClick.error.code,
       highRiskApprovalReplay: replayedHighRisk.result.action,

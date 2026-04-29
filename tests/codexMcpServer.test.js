@@ -47,6 +47,7 @@ test('MCP handler lists strict adapter tool schemas', async () => {
 
   const openObserve = response.result.tools.find((tool) => tool.name === 'codex_chrome_open_observe');
   const visualAnalyze = response.result.tools.find((tool) => tool.name === 'codex_chrome_visual_analyze');
+  const uploadFile = response.result.tools.find((tool) => tool.name === 'codex_chrome_upload_file');
   const profileDoctor = response.result.tools.find((tool) => tool.name === 'codex_chrome_profile_doctor');
   const profileOnboard = response.result.tools.find((tool) => tool.name === 'codex_chrome_profile_onboard');
   assert.ok(openObserve);
@@ -62,6 +63,10 @@ test('MCP handler lists strict adapter tool schemas', async () => {
     maxBytes: { type: 'number' },
     allowSensitive: { type: 'boolean' }
   });
+  assert.ok(uploadFile);
+  assert.equal(uploadFile.inputSchema.additionalProperties, false);
+  assert.deepEqual(uploadFile.inputSchema.required, ['origin', 'handle', 'files']);
+  assert.equal(uploadFile.inputSchema.properties.files.type, 'array');
   assert.ok(profileDoctor);
   assert.equal(profileDoctor.inputSchema.additionalProperties, false);
   assert.deepEqual(profileDoctor.inputSchema.required, []);
@@ -315,6 +320,10 @@ test('package exposes MCP adapter script and docs explain local usage', () => {
   assert.match(docs, /codex_chrome_readiness/);
   assert.match(docs, /codex_chrome_visual_analyze/);
   assert.match(docs, /page\.visualAnalyze/);
+  assert.match(docs, /codex_chrome_upload_file/);
+  assert.match(docs, /page\.uploadFile/);
+  assert.match(docs, /guarded\/draft-only/);
+  assert.match(docs, /redacted file references/);
   assert.match(docs, /codex_chrome_profile_doctor/);
   assert.match(docs, /codex_chrome_profile_onboard/);
   assert.match(docs, /codex_chrome_approval_approve/);

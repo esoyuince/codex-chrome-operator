@@ -46,6 +46,7 @@ function usage() {
   node scripts/operator-cli.js observe <origin>
   node scripts/operator-cli.js visual-observe <origin>
   node scripts/operator-cli.js visual-analyze <origin> [provider]
+  node scripts/operator-cli.js upload-file <origin> <handle> <ruleset> <files-json> [verifyPreview]
   node scripts/operator-cli.js navigate <url>
   node scripts/operator-cli.js wait-for <origin> <condition-json> [timeoutMs] [pollIntervalMs]
   node scripts/operator-cli.js fill <origin> <handle> <text>
@@ -287,6 +288,28 @@ function buildRpcRequest(argv) {
           ...(args[1] === undefined ? {} : { provider: args[1] })
         }
       };
+    case 'upload-file':
+      requireArgs(args, 4);
+      {
+        const maybeVerifyPreview = args.at(-1);
+        const hasVerifyPreview = maybeVerifyPreview === 'true' || maybeVerifyPreview === 'false';
+        const filesJson = args
+          .slice(3, hasVerifyPreview ? -1 : undefined)
+          .join(' ');
+        const verifyPreview = hasVerifyPreview
+          ? parseBooleanArg(maybeVerifyPreview)
+          : undefined;
+        return {
+          method: 'page.uploadFile',
+          params: {
+            origin: args[0],
+            target: { handle: args[1] },
+            ruleset: args[2],
+            files: parseJsonArg(filesJson, 'files-json'),
+            ...(verifyPreview === undefined ? {} : { verifyPreview })
+          }
+        };
+      }
     case 'navigate':
       requireArgs(args, 1);
       return {

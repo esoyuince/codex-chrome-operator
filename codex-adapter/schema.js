@@ -156,6 +156,29 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'codex_chrome_upload_file',
+    description: 'Upload guarded draft-only files to an approved page file input handle, returning redacted file references.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        handle: { type: 'string' },
+        ruleset: { type: 'string' },
+        verifyPreview: { type: 'boolean' },
+        files: {
+          type: 'array',
+          items: { type: 'object' }
+        }
+      },
+      required: ['origin', 'handle', 'files']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
     name: 'codex_chrome_fill',
     description: 'Fill an approved page element handle.',
     inputSchema: {

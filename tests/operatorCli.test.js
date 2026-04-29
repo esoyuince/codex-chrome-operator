@@ -891,6 +891,45 @@ test('buildRpcRequest maps approval and page commands', () => {
       handle: 'el_2'
     }
   });
+  assert.deepEqual(buildRpcRequest([
+    'upload-file',
+    'https://example.com',
+    'el_file',
+    'play-store-draft',
+    '[{"role":"playStoreAppIcon","path":"C:/tmp/icon.png","expectedSha256":"abc123"}]'
+  ]), {
+    method: 'page.uploadFile',
+    params: {
+      origin: 'https://example.com',
+      target: { handle: 'el_file' },
+      ruleset: 'play-store-draft',
+      files: [{
+        role: 'playStoreAppIcon',
+        path: 'C:/tmp/icon.png',
+        expectedSha256: 'abc123'
+      }]
+    }
+  });
+  assert.deepEqual(buildRpcRequest([
+    'upload-file',
+    'https://example.com',
+    'el_file',
+    'play-store-draft',
+    '[{"role":"playStoreAppIcon","path":"C:/tmp/icon.png"}]',
+    'true'
+  ]), {
+    method: 'page.uploadFile',
+    params: {
+      origin: 'https://example.com',
+      target: { handle: 'el_file' },
+      ruleset: 'play-store-draft',
+      files: [{
+        role: 'playStoreAppIcon',
+        path: 'C:/tmp/icon.png'
+      }],
+      verifyPreview: true
+    }
+  });
   assert.deepEqual(buildRpcRequest(['navigate', 'https://example.com/path']), {
     method: 'page.navigate',
     params: {
@@ -1024,6 +1063,8 @@ test('buildRpcRequest rejects incomplete commands with usage error', () => {
   assert.throws(() => buildRpcRequest([]), /Usage:/);
   assert.throws(() => buildRpcRequest(['revoke']), /Usage:/);
   assert.throws(() => buildRpcRequest(['fill', 'https://example.com', 'el_0']), /Usage:/);
+  assert.throws(() => buildRpcRequest(['upload-file', 'https://example.com', 'el_0', 'ruleset']), /Usage:/);
+  assert.throws(() => buildRpcRequest(['upload-file', 'https://example.com', 'el_0', 'ruleset', 'not-json']), /files-json must be valid JSON/);
   assert.throws(() => buildRpcRequest(['profile-bind', 'C:/Chrome/User Data']), /Usage:/);
   assert.throws(() => buildRpcRequest(['approval-run']), /Usage:/);
   assert.throws(() => buildRpcRequest(['full-auto-start']), /Usage:/);

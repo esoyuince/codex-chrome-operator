@@ -8,7 +8,7 @@ const { SessionManager } = require('../operator-daemon/sessionManager');
 const { startControlServer } = require('../operator-daemon/controlServer');
 const { ERROR_CODES } = require('../operator-daemon/protocol');
 
-function makeSession() {
+function makeSession(overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-session-'));
   return new SessionManager({
     token: 'test-token',
@@ -17,7 +17,8 @@ function makeSession() {
     screenshotDir: path.join(dir, 'screenshots'),
     expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
     expectedProfileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
-    expectedProfileBindingVersion: 3
+    expectedProfileBindingVersion: 3,
+    ...overrides
   });
 }
 
@@ -921,6 +922,132 @@ test('operator.screenshots.cleanup removes stored visual artifacts', async () =>
     assert.equal(cleanup.body.ok, true);
     assert.equal(cleanup.body.result.removed.length, 1);
     assert.equal(fs.existsSync(artifactPath), false);
+  });
+});
+
+test('page.uploadFile rejects invalid assets before queueing browser work', async () => {
+  const rawPath = 'C:\\Users\\example\\Pictures\\bad-feature.png';
+  const session = makeSession({
+    assetValidator: {
+      validateUploadFiles(files, options) {
+        assert.deepEqual(files, [{
+          role: 'playStoreFeatureGraphic',
+          path: rawPath
+        }]);
+        assert.equal(options.ruleset, 'googlePlayPreviewAssets.v2026');
+        return {
+          ok: false,
+          error: {
+            code: 'ASSET_DIMENSION_MISMATCH',
+            message: 'Feature graphic must be 1024x500.',
+            role: 'playStoreFeatureGraphic',
+            basename: 'bad-feature.png'
+          }
+        };
+      }
+    }
+  });
+
+  await withServer(session, async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const result = await postJson(baseUrl, 'page.uploadFile', {
+      origin: 'https://example.com',
+      target: { handle: 'el_upload_feature' },
+      ruleset: 'googlePlayPreviewAssets.v2026',
+      files: [{
+        role: 'playStoreFeatureGraphic',
+        path: rawPath
+      }]
+    });
+
+    assert.equal(result.body.ok, false);
+    assert.equal(result.body.error.code, 'ASSET_DIMENSION_MISMATCH');
+    assert.equal(session.pendingCommands.size, 0);
+
+    const auditTail = await postJson(baseUrl, 'operator.audit.tail', { limit: 5 });
+    assert.doesNotMatch(JSON.stringify(auditTail.body.result.entries), /C:\\\\Users\\\\example\\\\Pictures/);
+    assert.match(JSON.stringify(auditTail.body.result.entries), /\[REDACTED_PATH:bad-feature\.png\]/);
+  });
+});
+
+test('page.uploadFile queues redacted validated file metadata and returns upload verification', async () => {
+  const rawPath = 'C:\\Users\\example\\Pictures\\icon.png';
+  const validatedFile = {
+    role: 'playStoreAppIcon',
+    basename: 'icon.png',
+    extension: '.png',
+    mimeType: 'image/png',
+    bytes: 2048,
+    sha256: 'a'.repeat(64),
+    width: 512,
+    height: 512,
+    hasAlpha: true,
+    ruleset: 'googlePlayPreviewAssets.v2026'
+  };
+  const session = makeSession({
+    assetValidator: {
+      validateUploadFiles(files, options) {
+        assert.equal(options.ruleset, 'googlePlayPreviewAssets.v2026');
+        assert.equal(options.expectedOrigin, 'https://example.com');
+        assert.equal(options.targetHandle, 'el_upload_icon');
+        assert.equal(files[0].path, rawPath);
+        return {
+          ok: true,
+          ruleset: 'googlePlayPreviewAssets.v2026',
+          files: [validatedFile]
+        };
+      }
+    }
+  });
+
+  await withServer(session, async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const uploadPromise = postJson(baseUrl, 'page.uploadFile', {
+      origin: 'https://example.com',
+      target: { handle: 'el_upload_icon' },
+      ruleset: 'googlePlayPreviewAssets.v2026',
+      verifyPreview: true,
+      files: [{
+        role: 'playStoreAppIcon',
+        path: rawPath,
+        expectedSha256: 'a'.repeat(64)
+      }]
+    });
+
+    const command = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(command.body.ok, true);
+    assert.equal(command.body.result.command.method, 'page.uploadFile');
+    assert.equal(command.body.result.command.params.origin, 'https://example.com');
+    assert.deepEqual(command.body.result.command.params.target, { handle: 'el_upload_icon' });
+    assert.equal(command.body.result.command.params.verifyPreview, true);
+    assert.deepEqual(command.body.result.command.params.files, [validatedFile]);
+    assert.equal(JSON.stringify(command.body.result.command.params).includes(rawPath), false);
+
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          action: 'uploaded',
+          uploadTarget: 'el_upload_icon',
+          previewVerified: true,
+          validationMessages: ['App icon accepted'],
+          files: [{
+            role: 'playStoreAppIcon',
+            basename: 'icon.png',
+            sha256: 'a'.repeat(64)
+          }]
+        }
+      }
+    });
+
+    const result = await uploadPromise;
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.action, 'uploaded');
+    assert.deepEqual(result.body.result.assetValidation.files, [validatedFile]);
+    assert.equal(result.body.result.previewVerified, true);
   });
 });
 

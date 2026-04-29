@@ -62,6 +62,9 @@ function validationError(message, details = {}) {
 }
 
 function validateFieldType(name, value, schema) {
+  if (schema.type === 'array') {
+    return Array.isArray(value);
+  }
   if (schema.type === 'number') {
     return typeof value === 'number' &&
       Number.isFinite(value) &&
@@ -135,6 +138,10 @@ function redactRawVisualData(value) {
   for (const [key, nestedValue] of Object.entries(value)) {
     if (key === 'dataUrl') {
       removedRawData = true;
+      continue;
+    }
+    if (key === 'path') {
+      redacted[key] = '[REDACTED_PATH]';
       continue;
     }
     redacted[key] = redactRawVisualData(nestedValue);
@@ -257,6 +264,15 @@ class CodexChromeToolAdapter {
           ...(input.provider === undefined ? {} : { provider: input.provider }),
           ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }),
           ...(input.allowSensitive === undefined ? {} : { allowSensitive: input.allowSensitive })
+        });
+        break;
+      case 'codex_chrome_upload_file':
+        response = await this.sendRpc('page.uploadFile', {
+          origin: normalizeOrigin(input.origin),
+          target: { handle: input.handle },
+          files: input.files,
+          ...(input.ruleset === undefined ? {} : { ruleset: input.ruleset }),
+          ...(input.verifyPreview === undefined ? {} : { verifyPreview: input.verifyPreview })
         });
         break;
       case 'codex_chrome_fill':

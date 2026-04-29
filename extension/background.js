@@ -1,6 +1,6 @@
 'use strict';
 
-importScripts('permissionOrigins.js', 'visualCapture.js');
+importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js');
 
 const NATIVE_HOST = 'com.codex.chrome_operator';
 const PROFILE_BINDING_SOURCE = 'chrome.storage.local';
@@ -54,6 +54,7 @@ async function buildHello() {
       'visualAnalyze.v1',
       'screenshots.v1',
       'actions.basic.v1',
+      'fileUpload.v1',
       'guarded.v1',
       'gateHandoff.v1'
     ]
@@ -252,7 +253,7 @@ async function syncPermissionsAfterChange() {
 async function ensureContentScript(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ['actionPolicy.js', 'gateDetector.js', 'pageHandles.js', 'pageWait.js', 'contentScript.js']
+    files: ['actionPolicy.js', 'gateDetector.js', 'pageHandles.js', 'pageWait.js', 'fileUpload.js', 'contentScript.js']
   });
 }
 
@@ -386,6 +387,16 @@ async function handleOperatorCommand(command) {
         condition: params.condition,
         timeoutMs: params.timeoutMs,
         pollIntervalMs: params.pollIntervalMs
+      });
+    }
+
+    if (command.method === 'page.uploadFile') {
+      return chrome.tabs.sendMessage(ready.tab.id, {
+        type: 'content.uploadFile',
+        target: params.target,
+        ruleset: params.ruleset,
+        verifyPreview: params.verifyPreview,
+        files: params.files
       });
     }
 

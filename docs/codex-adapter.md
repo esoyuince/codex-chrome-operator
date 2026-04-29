@@ -81,6 +81,7 @@ adapter tools:
 - `codex_chrome_readiness`
 - `codex_chrome_profile_doctor`
 - `codex_chrome_profile_onboard`
+- `codex_chrome_upload_file`
 - `codex_chrome_approvals_list`
 - `codex_chrome_approval_approve`
 - `codex_chrome_approval_reject`
@@ -117,6 +118,13 @@ arguments; the adapter normalizes URL-like origin inputs to an origin before the
 daemon call. Raw screenshot bytes and `dataUrl` fields are redacted before the
 result reaches Codex unless a future policy explicitly allows a different
 handoff.
+
+`codex_chrome_upload_file` routes to `page.uploadFile` with `origin`, target
+`handle`, optional `ruleset`, optional `verifyPreview`, and a `files` array. The
+upload surface remains guarded/draft-only: daemon policy, domain approval,
+profile binding, host permissions, and approval prompts still decide whether a
+file interaction can run. Results return redacted file references; raw `path`
+fields are redacted while safe file basenames and hashes may remain visible.
 
 High-risk browser actions cannot be bypassed through this adapter. The operator
 daemon still controls guarded mode, approval prompts, profile binding, host

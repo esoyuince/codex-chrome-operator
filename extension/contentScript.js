@@ -21,7 +21,50 @@ function numericAttribute(element, name) {
   return Number.isFinite(value) ? value : null;
 }
 
+function uploadInputForElement(element) {
+  if (element.matches('input[type="file"]')) {
+    return element;
+  }
+
+  const referencedId = element.getAttribute('for') ||
+    element.getAttribute('data-upload-input') ||
+    (element.getAttribute('aria-controls') || '').split(/\s+/).find(Boolean);
+  if (referencedId) {
+    const referenced = document.getElementById(referencedId);
+    if (referenced && referenced.matches('input[type="file"]')) {
+      return referenced;
+    }
+  }
+
+  const nested = element.querySelector && element.querySelector('input[type="file"]');
+  return nested || null;
+}
+
+function uploadRoleForElement(element) {
+  return element.getAttribute('data-upload-role') ||
+    element.getAttribute('data-preview-role') ||
+    element.getAttribute('data-validation-message') ||
+    (uploadInputForElement(element) || {}).getAttribute?.('data-upload-role') ||
+    null;
+}
+
+function isUploadTargetElement(element) {
+  return Boolean(element.getAttribute('data-upload-role') || uploadInputForElement(element));
+}
+
 function visualRoleForElement(element) {
+  const uploadRole = element.getAttribute('data-upload-role');
+  if (uploadRole) {
+    return `${uploadRole}-upload`;
+  }
+  const previewRole = element.getAttribute('data-preview-role');
+  if (previewRole) {
+    return `${previewRole}-preview`;
+  }
+  const validationRole = element.getAttribute('data-validation-message');
+  if (validationRole) {
+    return `${validationRole}-validation`;
+  }
   if (element.getAttribute('data-visual-card') === 'product') {
     return 'product-card';
   }
@@ -50,6 +93,8 @@ function isSensitiveElement(element) {
 function elementSummary(element, handle) {
   const rect = element.getBoundingClientRect();
   const dataRisk = element.getAttribute('data-risk') || null;
+  const uploadInput = uploadInputForElement(element);
+  const uploadRole = uploadRoleForElement(element);
   const label = element.getAttribute('aria-label') ||
     element.innerText ||
     element.value ||
@@ -69,6 +114,10 @@ function elementSummary(element, handle) {
     dataRisk,
     data: dataAttributes(element),
     visualRole,
+    uploadRole,
+    uploadTarget: isUploadTargetElement(element),
+    accepts: uploadInput ? uploadInput.getAttribute('accept') || null : element.getAttribute('accept') || null,
+    multiple: uploadInput ? Boolean(uploadInput.multiple) : Boolean(element.multiple),
     productId: element.getAttribute('data-product-id') || null,
     analyzerField: element.getAttribute('data-analyzer-field') || null,
     ratingValue,
@@ -90,6 +139,41 @@ function collectInteractiveElements() {
   )].filter(isVisible).slice(0, 200);
 }
 
+function hasVisibleUploadAssociation(input) {
+  if (!input.matches('input[type="file"]')) {
+    return false;
+  }
+
+  const visibleLabels = [...(input.labels || [])].some(isVisible);
+  if (visibleLabels) {
+    return true;
+  }
+
+  const id = input.id;
+  if (!id) {
+    return false;
+  }
+
+  return [...document.querySelectorAll('[data-upload-input], [aria-controls]')]
+    .some((element) => {
+      const matchesDataReference = element.getAttribute('data-upload-input') === id;
+      const matchesAriaReference = (element.getAttribute('aria-controls') || '').split(/\s+/).includes(id);
+      return (matchesDataReference || matchesAriaReference) && isVisible(element);
+    });
+}
+
+function collectUploadElements() {
+  const visibleUploadWidgets = [...document.querySelectorAll([
+    '[data-upload-role]',
+    '[data-preview-role]',
+    '[data-validation-message]'
+  ].join(','))].filter(isVisible);
+  const associatedHiddenInputs = [...document.querySelectorAll('input[type="file"][data-upload-role]')]
+    .filter((element) => !isVisible(element) && hasVisibleUploadAssociation(element));
+
+  return [...visibleUploadWidgets, ...associatedHiddenInputs].slice(0, 200);
+}
+
 function collectVisualElements() {
   return [...document.querySelectorAll([
     '[data-visual-card]',
@@ -99,6 +183,8 @@ function collectVisualElements() {
     '[data-analysis-policy]',
     '[data-rating]',
     '[data-product-id]',
+    '[data-preview-role]',
+    '[data-validation-message]',
     '[role="dialog"]',
     '[role="status"]',
     '[role="alert"]'
@@ -106,7 +192,7 @@ function collectVisualElements() {
 }
 
 function collectObservedElements() {
-  return [...new Set([...collectInteractiveElements(), ...collectVisualElements()])].slice(0, 300);
+  return [...new Set([...collectInteractiveElements(), ...collectVisualElements(), ...collectUploadElements()])].slice(0, 300);
 }
 
 function collectSensitiveFields() {
@@ -289,6 +375,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return resolved.ok ? resolved.element : null;
           }
         }
+      }));
+      return;
+    }
+
+    if (message && message.type === 'content.uploadFile') {
+      sendResponse(await globalThis.CodexFileUpload.uploadFiles(message, {
+        document,
+        location,
+        window,
+        Event,
+        resolveHandle
       }));
       return;
     }

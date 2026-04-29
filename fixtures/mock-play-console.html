@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Codex Operator Mock Play Console Fixture</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f5f7fb;
+      color: #1f2933;
+    }
+
+    body {
+      margin: 0;
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 32px 24px 48px;
+    }
+
+    h1,
+    h2,
+    p {
+      margin-top: 0;
+    }
+
+    .asset-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .upload-card {
+      border: 1px solid #c8d2df;
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 16px;
+    }
+
+    .upload-zone {
+      display: block;
+      min-height: 126px;
+      border: 2px dashed #6b7f95;
+      border-radius: 8px;
+      background: #f9fbfd;
+      padding: 14px;
+      cursor: pointer;
+    }
+
+    .visually-hidden-file {
+      display: none;
+    }
+
+    .preview {
+      min-height: 54px;
+      margin-top: 12px;
+      border: 1px solid #d4dde8;
+      border-radius: 6px;
+      background: #eef3f8;
+      padding: 10px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    button {
+      border: 1px solid #617083;
+      border-radius: 6px;
+      background: #ffffff;
+      padding: 10px 14px;
+      font: inherit;
+    }
+
+    .high-risk {
+      border-color: #a63a2d;
+      color: #8f2418;
+    }
+  </style>
+</head>
+<body>
+  <main id="mock-play-console-fixture" data-fixture="mock-play-console" data-analyzer-surface="play-console-store-listing">
+    <header>
+      <h1>Mock Play Console Store Listing</h1>
+      <p>Local-only fixture for upload target observation. No real Play Console action is connected.</p>
+    </header>
+
+    <section class="asset-grid" aria-label="Store listing assets">
+      <article class="upload-card" data-analyzer-field="play-store-app-icon-section">
+        <h2>App icon</h2>
+        <label
+          id="appIconDropzone"
+          class="upload-zone"
+          for="appIconUpload"
+          data-upload-role="playStoreAppIcon"
+          data-upload-input="appIconUpload"
+          data-analyzer-field="play-store-app-icon-upload-zone">
+          Upload PNG app icon
+        </label>
+        <input
+          id="appIconUpload"
+          class="visually-hidden-file"
+          type="file"
+          data-upload-role="playStoreAppIcon"
+          data-analyzer-field="play-store-app-icon-file-input"
+          accept="image/png">
+        <div
+          id="appIconPreview"
+          class="preview"
+          data-preview-role="playStoreAppIcon"
+          data-analyzer-field="play-store-app-icon-preview"
+          role="status">App icon preview tile waiting for upload.</div>
+        <p id="appIconStatus" data-validation-message="playStoreAppIcon">App icon is required.</p>
+      </article>
+
+      <article class="upload-card" data-analyzer-field="play-store-feature-graphic-section">
+        <h2>Feature graphic</h2>
+        <label
+          id="featureGraphicDropzone"
+          class="upload-zone"
+          for="featureGraphicUpload"
+          data-upload-role="playStoreFeatureGraphic"
+          data-upload-input="featureGraphicUpload"
+          data-analyzer-field="play-store-feature-graphic-upload-zone">
+          Upload PNG or JPEG feature graphic
+        </label>
+        <input
+          id="featureGraphicUpload"
+          class="visually-hidden-file"
+          type="file"
+          data-upload-role="playStoreFeatureGraphic"
+          data-analyzer-field="play-store-feature-graphic-file-input"
+          accept="image/png,image/jpeg">
+        <div
+          id="featureGraphicPreview"
+          class="preview"
+          data-preview-role="playStoreFeatureGraphic"
+          data-analyzer-field="play-store-feature-graphic-preview"
+          role="status">Feature graphic banner preview waiting for upload.</div>
+        <p id="featureGraphicStatus" data-validation-message="playStoreFeatureGraphic">Feature graphic is required.</p>
+      </article>
+
+      <article class="upload-card" data-analyzer-field="play-store-phone-screenshot-section">
+        <h2>Phone screenshots</h2>
+        <label
+          id="phoneScreenshotDropzone"
+          class="upload-zone"
+          for="phoneScreenshotUpload"
+          data-upload-role="playStorePhoneScreenshot"
+          data-upload-input="phoneScreenshotUpload"
+          data-analyzer-field="play-store-phone-screenshot-upload-zone">
+          Upload PNG or JPEG phone screenshots
+        </label>
+        <input
+          id="phoneScreenshotUpload"
+          class="visually-hidden-file"
+          type="file"
+          data-upload-role="playStorePhoneScreenshot"
+          data-analyzer-field="play-store-phone-screenshot-file-input"
+          accept="image/png,image/jpeg"
+          multiple>
+        <div
+          id="phoneScreenshotPreview"
+          class="preview"
+          data-preview-role="playStorePhoneScreenshot"
+          data-analyzer-field="play-store-phone-screenshot-preview"
+          role="status">Phone screenshot preview tile waiting for upload.</div>
+        <p id="phoneScreenshotStatus" data-validation-message="playStorePhoneScreenshot">At least two phone screenshots are recommended.</p>
+      </article>
+    </section>
+
+    <section class="actions" aria-label="Draft actions">
+      <button id="saveDraftButton" type="button" data-risk="low">Save draft</button>
+      <button id="sendForReviewButton" class="high-risk" type="button" data-risk="high">Send for review</button>
+    </section>
+  </main>
+</body>
+</html>
