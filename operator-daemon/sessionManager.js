@@ -42,6 +42,9 @@ class SessionManager {
     this.approvedOrigins = new Set();
     this.hostPermissions = new Set();
     this.lastError = null;
+    this.commandQueue = [];
+    this.pendingCommands = new Map();
+    this.nextCommandId = 1;
   }
 
   status() {
@@ -56,7 +59,7 @@ class SessionManager {
     };
   }
 
-  handleRpc(request) {
+  async handleRpc(request) {
     const id = request && request.id;
     if (!request || typeof request.method !== 'string') {
       return rpcError(id || null, {
@@ -82,7 +85,25 @@ class SessionManager {
         response = this.hostPermissionGranted(id, params.origin);
         break;
       case 'page.observe':
-        response = this.observe(id, params);
+        response = await this.routePageCommand(id, request.method, params);
+        break;
+      case 'page.click':
+      case 'page.type':
+      case 'page.fill':
+      case 'page.clear':
+      case 'page.focus':
+      case 'page.select':
+      case 'page.check':
+      case 'page.scroll':
+      case 'page.pressKey':
+      case 'page.navigate':
+        response = await this.routePageCommand(id, request.method, params);
+        break;
+      case 'bridge.poll':
+        response = this.pollBridge(id);
+        break;
+      case 'bridge.deliver':
+        response = this.deliverBridgeResponse(id, params);
         break;
       default:
         response = rpcError(id, {
@@ -158,8 +179,8 @@ class SessionManager {
     return rpcOk(id, { origin, hostPermissionGranted: true });
   }
 
-  observe(id, params) {
-    const origin = params.origin;
+  async routePageCommand(id, method, params) {
+    const origin = params.origin || (params.url ? new URL(params.url).origin : undefined);
     const readiness = assertReadyForRealSiteAction({
       profileVerified: this.profileVerified,
       domainApproved: this.approvedOrigins.has(origin),
@@ -170,12 +191,73 @@ class SessionManager {
       return rpcError(id, readiness.error);
     }
 
+    const extensionResponse = await this.enqueueExtensionCommand(method, {
+      ...params,
+      origin
+    });
+    if (!extensionResponse.ok) {
+      return rpcError(id, extensionResponse.error);
+    }
+    return rpcOk(id, extensionResponse.result);
+  }
+
+  enqueueExtensionCommand(method, params) {
+    const commandId = `cmd_${this.nextCommandId++}`;
+    const command = {
+      type: 'command',
+      commandId,
+      method,
+      params
+    };
+    this.commandQueue.push(command);
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.pendingCommands.delete(commandId);
+        resolve({
+          ok: false,
+          error: {
+            code: ERROR_CODES.TIMEOUT,
+            message: `Timed out waiting for extension response to ${method}.`
+          }
+        });
+      }, 30000);
+
+      this.pendingCommands.set(commandId, {
+        resolve,
+        timeout
+      });
+    });
+  }
+
+  pollBridge(id) {
     return rpcOk(id, {
-      origin,
-      title: null,
-      url: null,
-      elements: [],
-      note: 'Extension observation routing is ready for M1.'
+      command: this.commandQueue.shift() || null
+    });
+  }
+
+  deliverBridgeResponse(id, params) {
+    const pending = this.pendingCommands.get(params.commandId);
+    if (!pending) {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_REQUEST,
+        message: 'Unknown or expired command id.'
+      });
+    }
+
+    clearTimeout(pending.timeout);
+    this.pendingCommands.delete(params.commandId);
+    pending.resolve(params.response || {
+      ok: false,
+      error: {
+        code: ERROR_CODES.INVALID_REQUEST,
+        message: 'Missing command response.'
+      }
+    });
+
+    return rpcOk(id, {
+      commandId: params.commandId,
+      delivered: true
     });
   }
 }

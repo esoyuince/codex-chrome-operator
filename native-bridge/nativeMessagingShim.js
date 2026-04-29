@@ -29,10 +29,47 @@ async function handleMessage(message, options) {
   });
 }
 
+async function pollOnce(options, output = process.stdout) {
+  const response = await sendRpc({
+    baseUrl: options.daemonUrl,
+    token: options.token,
+    request: {
+      id: `poll_${Date.now()}`,
+      method: 'bridge.poll',
+      params: {}
+    }
+  });
+
+  if (response.ok && response.result && response.result.command) {
+    output.write(encodeNativeMessage(response.result.command));
+  }
+
+  return response;
+}
+
+function startPolling(options) {
+  let busy = false;
+  const interval = setInterval(async () => {
+    if (busy) {
+      return;
+    }
+    busy = true;
+    try {
+      await pollOnce(options);
+    } catch (error) {
+      process.stderr.write(`${error.stack || error.message}\n`);
+    } finally {
+      busy = false;
+    }
+  }, options.pollIntervalMs || 250);
+  return interval;
+}
+
 async function runBridge(options = {}) {
   const daemonUrl = options.daemonUrl || argValue('--daemon-url', process.env.CODEX_CHROME_OPERATOR_DAEMON_URL || 'http://127.0.0.1:17391');
   const token = options.token || process.env.CODEX_CHROME_OPERATOR_TOKEN || 'dev-token';
   const decoder = new NativeMessageDecoder();
+  const pollInterval = startPolling({ daemonUrl, token, pollIntervalMs: options.pollIntervalMs });
 
   process.stdin.on('data', async (chunk) => {
     try {
@@ -55,6 +92,7 @@ async function runBridge(options = {}) {
   });
 
   process.stdin.on('end', () => {
+    clearInterval(pollInterval);
     process.exit(0);
   });
 }
@@ -69,5 +107,7 @@ if (require.main === module) {
 
 module.exports = {
   runBridge,
-  handleMessage
+  handleMessage,
+  pollOnce,
+  startPolling
 };

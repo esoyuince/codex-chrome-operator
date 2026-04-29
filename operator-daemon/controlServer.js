@@ -72,7 +72,7 @@ function startControlServer({ session, token, host = '127.0.0.1', port = 17391 }
     try {
       const raw = await readBody(req);
       const body = JSON.parse(raw);
-      jsonResponse(res, 200, session.handleRpc(body));
+      jsonResponse(res, 200, await session.handleRpc(body));
     } catch (error) {
       jsonResponse(res, error.code === ERROR_CODES.BODY_TOO_LARGE ? 413 : 400, {
         ok: false,

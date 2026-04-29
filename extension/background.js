@@ -58,7 +58,7 @@ async function connectNative() {
     nativePort = chrome.runtime.connectNative(NATIVE_HOST);
     connectionState = 'CONNECTING';
     nativePort.onMessage.addListener((message) => {
-      chrome.storage.local.set({ lastNativeResponse: message });
+      handleNativeMessage(message);
     });
     nativePort.onDisconnect.addListener(() => {
       lastNativeError = chrome.runtime.lastError ? chrome.runtime.lastError.message : null;
@@ -81,6 +81,25 @@ async function connectNative() {
     nativePort = null;
     await chrome.storage.local.set({ connectionState, lastNativeError });
   }
+}
+
+async function handleNativeMessage(message) {
+  if (message && message.type === 'command') {
+    const response = await handleOperatorCommand(message);
+    if (nativePort) {
+      nativePort.postMessage({
+        id: requestId('deliver'),
+        method: 'bridge.deliver',
+        params: {
+          commandId: message.commandId,
+          response
+        }
+      });
+    }
+    return;
+  }
+
+  await chrome.storage.local.set({ lastNativeResponse: message });
 }
 
 function originPatternFromOrigin(origin) {
@@ -112,6 +131,89 @@ async function activeTabInfo() {
     title: tab.title || null,
     status: tab.status || null
   };
+}
+
+async function requireActiveTabForOrigin(origin) {
+  const tab = await activeTabInfo();
+  if (!tab || !tab.id || !tab.url) {
+    return { ok: false, error: { code: 'NO_ACTIVE_TAB' } };
+  }
+  const activeOrigin = new URL(tab.url).origin;
+  if (origin && activeOrigin !== origin) {
+    return {
+      ok: false,
+      error: {
+        code: 'DOMAIN_NOT_APPROVED',
+        message: `Active tab origin ${activeOrigin} does not match requested ${origin}.`
+      }
+    };
+  }
+  if (!(await hasHostPermission(activeOrigin))) {
+    return { ok: false, error: { code: 'HOST_PERMISSION_REQUIRED', origin: activeOrigin } };
+  }
+  await ensureContentScript(tab.id);
+  return { ok: true, tab, origin: activeOrigin };
+}
+
+async function handleOperatorCommand(command) {
+  const params = command.params || {};
+
+  try {
+    if (command.method === 'page.navigate') {
+      const tab = await activeTabInfo();
+      if (!tab || !tab.id) {
+        return { ok: false, error: { code: 'NO_ACTIVE_TAB' } };
+      }
+      await chrome.tabs.update(tab.id, { url: params.url });
+      return { ok: true, result: { action: 'navigate', url: params.url } };
+    }
+
+    const ready = await requireActiveTabForOrigin(params.origin);
+    if (!ready.ok) {
+      return ready;
+    }
+
+    if (command.method === 'page.observe') {
+      const observation = await chrome.tabs.sendMessage(ready.tab.id, { type: 'content.observe' });
+      return { ok: true, result: observation };
+    }
+
+    const actionMap = {
+      'page.click': 'click',
+      'page.type': 'type',
+      'page.fill': 'fill',
+      'page.clear': 'clear',
+      'page.focus': 'focus',
+      'page.select': 'select',
+      'page.check': 'check',
+      'page.scroll': 'scroll',
+      'page.pressKey': 'pressKey'
+    };
+    const action = actionMap[command.method];
+    if (!action) {
+      return { ok: false, error: { code: 'UNKNOWN_METHOD' } };
+    }
+
+    return chrome.tabs.sendMessage(ready.tab.id, {
+      type: 'content.action',
+      action,
+      handle: params.handle,
+      text: params.text,
+      value: params.value,
+      checked: params.checked,
+      deltaX: params.deltaX,
+      deltaY: params.deltaY,
+      key: params.key
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        code: 'EXTENSION_COMMAND_FAILED',
+        message: error.message
+      }
+    };
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

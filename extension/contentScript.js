@@ -82,12 +82,50 @@ async function runAction(message) {
     return { ok: true, result: { action: 'clicked' } };
   }
 
-  if (message.action === 'fill') {
+  if (message.action === 'fill' || message.action === 'type') {
     element.focus();
-    element.value = message.text || '';
+    element.value = message.text || message.value || '';
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
-    return { ok: true, result: { action: 'filled' } };
+    return { ok: true, result: { action: message.action === 'type' ? 'typed' : 'filled' } };
+  }
+
+  if (message.action === 'clear') {
+    element.focus();
+    element.value = '';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    return { ok: true, result: { action: 'cleared' } };
+  }
+
+  if (message.action === 'focus') {
+    element.focus();
+    return { ok: true, result: { action: 'focused' } };
+  }
+
+  if (message.action === 'select') {
+    element.value = message.value || '';
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    return { ok: true, result: { action: 'selected' } };
+  }
+
+  if (message.action === 'check') {
+    element.checked = message.checked !== false;
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    return { ok: true, result: { action: 'checked', checked: element.checked } };
+  }
+
+  if (message.action === 'scroll') {
+    window.scrollBy(message.deltaX || 0, message.deltaY || 0);
+    return { ok: true, result: { action: 'scrolled', scrollX: window.scrollX, scrollY: window.scrollY } };
+  }
+
+  if (message.action === 'pressKey') {
+    element.focus();
+    const event = new KeyboardEvent('keydown', { key: message.key || 'Enter', bubbles: true });
+    element.dispatchEvent(event);
+    return { ok: true, result: { action: 'key-pressed', key: event.key } };
   }
 
   return { ok: false, error: { code: 'UNKNOWN_ACTION' } };

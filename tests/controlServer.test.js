@@ -122,7 +122,7 @@ test('page.observe fails closed before host permission is granted', async () => 
   });
 });
 
-test('page.observe returns placeholder observation after profile, domain, and host permission are ready', async () => {
+test('page.observe queues extension command and resolves from bridge delivery', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {
       hello: {
@@ -146,12 +146,30 @@ test('page.observe returns placeholder observation after profile, domain, and ho
       origin: 'https://example.com'
     });
 
-    const result = await postJson(baseUrl, 'page.observe', {
+    const observePromise = postJson(baseUrl, 'page.observe', {
       origin: 'https://example.com'
     });
 
+    const command = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(command.body.ok, true);
+    assert.equal(command.body.result.command.method, 'page.observe');
+    assert.equal(command.body.result.command.params.origin, 'https://example.com');
+
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          title: 'Fixture',
+          elements: []
+        }
+      }
+    });
+
+    const result = await observePromise;
     assert.equal(result.body.ok, true);
     assert.equal(result.body.result.origin, 'https://example.com');
-    assert.equal(result.body.result.note, 'Extension observation routing is ready for M1.');
+    assert.equal(result.body.result.title, 'Fixture');
   });
 });
