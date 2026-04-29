@@ -46,6 +46,13 @@ function usage() {
   node scripts/operator-cli.js navigate <url>
   node scripts/operator-cli.js wait-for <origin> <condition-json> [timeoutMs] [pollIntervalMs]
   node scripts/operator-cli.js fill <origin> <handle> <text>
+  node scripts/operator-cli.js type <origin> <handle> <text>
+  node scripts/operator-cli.js clear <origin> <handle>
+  node scripts/operator-cli.js focus <origin> <handle>
+  node scripts/operator-cli.js select <origin> <handle> <value>
+  node scripts/operator-cli.js check <origin> <handle> [true|false]
+  node scripts/operator-cli.js scroll <origin> <handle> <deltaX> <deltaY>
+  node scripts/operator-cli.js press-key <origin> <handle> <key>
   node scripts/operator-cli.js click <origin> <handle>
 
 Options:
@@ -94,6 +101,19 @@ function parseJsonArg(value, label) {
   } catch {
     throw new Error(`${label} must be valid JSON.\n\n${usage()}`);
   }
+}
+
+function parseBooleanArg(value, defaultValue = true) {
+  if (value === undefined) {
+    return defaultValue;
+  }
+  if (value === 'true') {
+    return true;
+  }
+  if (value === 'false') {
+    return false;
+  }
+  throw usageError();
 }
 
 function buildRpcRequest(argv) {
@@ -267,6 +287,75 @@ function buildRpcRequest(argv) {
           origin: args[0],
           handle: args[1],
           text: args.slice(2).join(' ')
+        }
+      };
+    case 'type':
+      requireArgs(args, 3);
+      return {
+        method: 'page.type',
+        params: {
+          origin: args[0],
+          handle: args[1],
+          text: args.slice(2).join(' ')
+        }
+      };
+    case 'clear':
+      requireArgs(args, 2);
+      return {
+        method: 'page.clear',
+        params: {
+          origin: args[0],
+          handle: args[1]
+        }
+      };
+    case 'focus':
+      requireArgs(args, 2);
+      return {
+        method: 'page.focus',
+        params: {
+          origin: args[0],
+          handle: args[1]
+        }
+      };
+    case 'select':
+      requireArgs(args, 3);
+      return {
+        method: 'page.select',
+        params: {
+          origin: args[0],
+          handle: args[1],
+          value: args.slice(2).join(' ')
+        }
+      };
+    case 'check':
+      requireArgs(args, 2);
+      return {
+        method: 'page.check',
+        params: {
+          origin: args[0],
+          handle: args[1],
+          checked: parseBooleanArg(args[2], true)
+        }
+      };
+    case 'scroll':
+      requireArgs(args, 4);
+      return {
+        method: 'page.scroll',
+        params: {
+          origin: args[0],
+          handle: args[1],
+          deltaX: Number(args[2]),
+          deltaY: Number(args[3])
+        }
+      };
+    case 'press-key':
+      requireArgs(args, 3);
+      return {
+        method: 'page.pressKey',
+        params: {
+          origin: args[0],
+          handle: args[1],
+          key: args.slice(2).join(' ')
         }
       };
     case 'click':

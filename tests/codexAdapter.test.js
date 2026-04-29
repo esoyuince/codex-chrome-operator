@@ -102,6 +102,69 @@ test('CodexChromeToolAdapter executes open observe through the orchestration pat
   });
 });
 
+test('CodexChromeToolAdapter exposes and routes basic DOM action tools', async () => {
+  const tools = listTools().map((tool) => tool.name);
+  for (const toolName of [
+    'codex_chrome_type',
+    'codex_chrome_clear',
+    'codex_chrome_focus',
+    'codex_chrome_select',
+    'codex_chrome_check',
+    'codex_chrome_scroll',
+    'codex_chrome_press_key'
+  ]) {
+    assert.ok(tools.includes(toolName), `${toolName} should be exposed`);
+  }
+
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: { method: request.method, params: request.params }
+      };
+    }
+  });
+
+  const checks = [
+    ['codex_chrome_type', 'page.type', { origin: 'https://example.com', handle: 'el_0', text: 'hello' }],
+    ['codex_chrome_clear', 'page.clear', { origin: 'https://example.com', handle: 'el_0' }],
+    ['codex_chrome_focus', 'page.focus', { origin: 'https://example.com', handle: 'el_0' }],
+    ['codex_chrome_select', 'page.select', { origin: 'https://example.com', handle: 'el_1', value: 'tr' }],
+    ['codex_chrome_check', 'page.check', { origin: 'https://example.com', handle: 'el_2', checked: false }],
+    ['codex_chrome_scroll', 'page.scroll', { origin: 'https://example.com', handle: 'el_4', deltaX: 0, deltaY: 240 }],
+    ['codex_chrome_press_key', 'page.pressKey', { origin: 'https://example.com', handle: 'el_0', key: 'Enter' }]
+  ];
+
+  for (const [toolName, method, input] of checks) {
+    const response = await adapter.executeTool({ toolName, input });
+    assert.equal(response.ok, true);
+    assert.equal(response.result.method, method);
+    assert.deepEqual(response.result.params, input);
+  }
+  assert.deepEqual(calls.map((request) => request.method), checks.map(([, method]) => method));
+});
+
+test('validateToolInput enforces typed basic action parameters', () => {
+  assert.equal(validateToolInput('codex_chrome_check', {
+    origin: 'https://example.com',
+    handle: 'el_2',
+    checked: 'false'
+  }).error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(validateToolInput('codex_chrome_scroll', {
+    origin: 'https://example.com',
+    handle: 'el_4',
+    deltaX: 0,
+    deltaY: '240'
+  }).error.code, 'INVALID_TOOL_INPUT');
+});
+
 test('CodexChromeToolAdapter redacts raw visual data URLs from tool responses', async () => {
   const adapter = new CodexChromeToolAdapter({
     settings: {

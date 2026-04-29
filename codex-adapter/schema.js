@@ -87,6 +87,131 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'codex_chrome_type',
+    description: 'Type text into an approved page element handle.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        handle: { type: 'string' },
+        text: { type: 'string' }
+      },
+      required: ['origin', 'handle', 'text']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_clear',
+    description: 'Clear an approved text input or editable element handle.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        handle: { type: 'string' }
+      },
+      required: ['origin', 'handle']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_focus',
+    description: 'Focus an approved page element handle.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        handle: { type: 'string' }
+      },
+      required: ['origin', 'handle']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_select',
+    description: 'Select an option value on an approved select element handle.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        handle: { type: 'string' },
+        value: { type: 'string' }
+      },
+      required: ['origin', 'handle', 'value']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_check',
+    description: 'Set an approved checkbox or radio element checked state.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        handle: { type: 'string' },
+        checked: { type: 'boolean' }
+      },
+      required: ['origin', 'handle', 'checked']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_scroll',
+    description: 'Scroll the approved page after resolving a page element handle in the current page state.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        handle: { type: 'string' },
+        deltaX: { type: 'number' },
+        deltaY: { type: 'number' }
+      },
+      required: ['origin', 'handle', 'deltaX', 'deltaY']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_press_key',
+    description: 'Dispatch a key press to an approved page element handle.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        handle: { type: 'string' },
+        key: { type: 'string' }
+      },
+      required: ['origin', 'handle', 'key']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
     name: 'codex_chrome_click',
     description: 'Click an approved page element handle.',
     inputSchema: {

@@ -814,6 +814,61 @@ test('buildRpcRequest maps approval and page commands', () => {
       text: 'hello world'
     }
   });
+  assert.deepEqual(buildRpcRequest(['type', 'https://example.com', 'el_0', 'hello world']), {
+    method: 'page.type',
+    params: {
+      origin: 'https://example.com',
+      handle: 'el_0',
+      text: 'hello world'
+    }
+  });
+  assert.deepEqual(buildRpcRequest(['clear', 'https://example.com', 'el_0']), {
+    method: 'page.clear',
+    params: {
+      origin: 'https://example.com',
+      handle: 'el_0'
+    }
+  });
+  assert.deepEqual(buildRpcRequest(['focus', 'https://example.com', 'el_0']), {
+    method: 'page.focus',
+    params: {
+      origin: 'https://example.com',
+      handle: 'el_0'
+    }
+  });
+  assert.deepEqual(buildRpcRequest(['select', 'https://example.com', 'el_1', 'tr']), {
+    method: 'page.select',
+    params: {
+      origin: 'https://example.com',
+      handle: 'el_1',
+      value: 'tr'
+    }
+  });
+  assert.deepEqual(buildRpcRequest(['check', 'https://example.com', 'el_2', 'false']), {
+    method: 'page.check',
+    params: {
+      origin: 'https://example.com',
+      handle: 'el_2',
+      checked: false
+    }
+  });
+  assert.deepEqual(buildRpcRequest(['scroll', 'https://example.com', 'el_4', '0', '240']), {
+    method: 'page.scroll',
+    params: {
+      origin: 'https://example.com',
+      handle: 'el_4',
+      deltaX: 0,
+      deltaY: 240
+    }
+  });
+  assert.deepEqual(buildRpcRequest(['press-key', 'https://example.com', 'el_0', 'Enter']), {
+    method: 'page.pressKey',
+    params: {
+      origin: 'https://example.com',
+      handle: 'el_0',
+      key: 'Enter'
+    }
+  });
   assert.deepEqual(buildRpcRequest(['click', 'https://example.com', 'el_2']), {
     method: 'page.click',
     params: {

@@ -213,6 +213,54 @@ class CodexChromeToolAdapter {
           text: input.text
         });
         break;
+      case 'codex_chrome_type':
+        response = await this.sendRpc('page.type', {
+          origin: input.origin,
+          handle: input.handle,
+          text: input.text
+        });
+        break;
+      case 'codex_chrome_clear':
+        response = await this.sendRpc('page.clear', {
+          origin: input.origin,
+          handle: input.handle
+        });
+        break;
+      case 'codex_chrome_focus':
+        response = await this.sendRpc('page.focus', {
+          origin: input.origin,
+          handle: input.handle
+        });
+        break;
+      case 'codex_chrome_select':
+        response = await this.sendRpc('page.select', {
+          origin: input.origin,
+          handle: input.handle,
+          value: input.value
+        });
+        break;
+      case 'codex_chrome_check':
+        response = await this.sendRpc('page.check', {
+          origin: input.origin,
+          handle: input.handle,
+          checked: input.checked
+        });
+        break;
+      case 'codex_chrome_scroll':
+        response = await this.sendRpc('page.scroll', {
+          origin: input.origin,
+          handle: input.handle,
+          deltaX: input.deltaX,
+          deltaY: input.deltaY
+        });
+        break;
+      case 'codex_chrome_press_key':
+        response = await this.sendRpc('page.pressKey', {
+          origin: input.origin,
+          handle: input.handle,
+          key: input.key
+        });
+        break;
       case 'codex_chrome_click':
         response = await this.sendRpc('page.click', {
           origin: input.origin,
