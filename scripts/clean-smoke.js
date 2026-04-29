@@ -304,7 +304,7 @@ Start-Sleep -Milliseconds 1000
   execFile('powershell', ['-NoProfile', '-Command', script]);
 }
 
-async function clickElement(send, elementId) {
+async function clickElement(send, elementId, options = {}) {
   const rect = await send('Runtime.evaluate', {
     expression: `(() => { const r = document.getElementById('${elementId}').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,
     returnByValue: true
@@ -313,6 +313,11 @@ async function clickElement(send, elementId) {
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left' });
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+  if (options.fallbackDomClick) {
+    await send('Runtime.evaluate', {
+      expression: `document.getElementById('${elementId}').click()`
+    });
+  }
 }
 
 async function runCleanSmoke(options = {}) {
@@ -416,7 +421,7 @@ async function runCleanSmoke(options = {}) {
     }
 
     await withCdp(await pageTarget(config), async (send) => {
-      await clickElement(send, 'completeGate');
+      await clickElement(send, 'completeGate', { fallbackDomClick: true });
       await new Promise((resolve) => setTimeout(resolve, 500));
     });
     const resumedGateObservation = runCliJson(['observe', config.origin], settings);
@@ -548,6 +553,18 @@ async function runCleanSmoke(options = {}) {
     if (!boundedFullAutoStop.ok || boundedFullAutoStop.result.active !== false) {
       throw new Error(`Bounded Full Auto stop failed: ${JSON.stringify(boundedFullAutoStop)}`);
     }
+    const auditTail = runCliJson(['audit-tail', '40'], settings);
+    const auditedBoundedAction = auditTail.ok && auditTail.result.entries.some((entry) => (
+      entry.method === 'page.click' &&
+      entry.mode === 'bounded-full-auto-v1' &&
+      entry.origin === config.origin &&
+      entry.boundedFullAuto &&
+      entry.boundedFullAuto.counters &&
+      entry.boundedFullAuto.counters.browserActions === 4
+    ));
+    if (!auditedBoundedAction) {
+      throw new Error(`Bounded Full Auto audit entry not found: ${JSON.stringify(auditTail)}`);
+    }
     const blockedStatus = await withCdp(await pageTarget(config), async (send) => {
       const result = await send('Runtime.evaluate', {
         expression: "document.getElementById('status').textContent",
@@ -623,6 +640,7 @@ async function runCleanSmoke(options = {}) {
       boundedFullAutoStarted: boundedFullAutoStart.result.active,
       boundedFullAutoActions: boundedFullAutoAfterHighRisk.result.counters.browserActions,
       boundedFullAutoStopped: boundedFullAutoStop.result.active === false,
+      boundedFullAutoAudited: auditedBoundedAction,
       highRiskBlocked: highRiskClick.error.code,
       highRiskApprovalReplay: replayedHighRisk.result.action,
       screenshotCleanupRemoved: screenshotRemoved,
@@ -669,6 +687,7 @@ if (require.main === module) {
 
 module.exports = {
   assertPathInside,
+  clickElement,
   findChromeForTesting,
   parseSmokeArgs,
   resolveSmokeConfig,

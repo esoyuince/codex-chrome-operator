@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const {
   assertPathInside,
+  clickElement,
   findChromeForTesting,
   resolveSmokeConfig
 } = require('../scripts/clean-smoke');
@@ -49,4 +50,28 @@ test('resolveSmokeConfig creates deterministic clean profile and URLs', () => {
   assert.equal(config.debugBaseUrl, 'http://127.0.0.1:9231');
   assert.equal(config.extensionId, 'abcdefghijklmnopabcdefghijklmnop');
   assert.equal(config.profileDir, path.join(installDir, 'clean-smoke-unit'));
+});
+
+test('clickElement can fall back to a DOM click for fixture-only controls', async () => {
+  const calls = [];
+  async function send(method, params = {}) {
+    calls.push({ method, params });
+    if (method === 'Runtime.evaluate' && params.expression.includes('getBoundingClientRect')) {
+      return {
+        result: {
+          result: {
+            value: { x: 10, y: 20 }
+          }
+        }
+      };
+    }
+    return {};
+  }
+
+  await clickElement(send, 'completeGate', { fallbackDomClick: true });
+
+  assert.equal(calls.filter((call) => call.method === 'Input.dispatchMouseEvent').length, 3);
+  assert.equal(calls.at(-1).method, 'Runtime.evaluate');
+  assert.match(calls.at(-1).params.expression, /completeGate/);
+  assert.match(calls.at(-1).params.expression, /\.click\(\)/);
 });

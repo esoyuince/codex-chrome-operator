@@ -53,6 +53,7 @@ function clearsLastErrorOnSuccess(method) {
     'operator.fullAuto.start',
     'operator.fullAuto.stop',
     'operator.fullAuto.status',
+    'operator.audit.tail',
     'operator.approvals.approve',
     'operator.approvals.reject',
     'operator.approvals.run'
@@ -104,6 +105,24 @@ function isLocalMockOrigin(origin) {
 
 function makeConnectionId() {
   return `conn_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function originFromParams(params = {}) {
+  if (params.origin) {
+    return params.origin;
+  }
+  if (params.url) {
+    try {
+      return new URL(params.url).origin;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function isBoundedFullAutoError(error) {
+  return Boolean(error && typeof error.code === 'string' && error.code.startsWith('BOUNDED_FULL_AUTO_'));
 }
 
 class SessionManager {
@@ -260,6 +279,9 @@ class SessionManager {
       case 'operator.fullAuto.status':
         response = rpcOk(id, this.boundedFullAutoStatus());
         break;
+      case 'operator.audit.tail':
+        response = this.tailAudit(id, params);
+        break;
       case 'page.observe':
       case 'page.visualObserve':
         response = await this.routePageCommand(id, request.method, params);
@@ -291,12 +313,12 @@ class SessionManager {
     }
 
     this.audit.append({
-      sessionId: 'daemon',
-      requestId: id,
-      method: request.method,
-      params,
-      result: response.ok ? 'ok' : 'error',
-      errorCode: response.error && response.error.code
+      ...this.buildAuditEntry({
+        requestId: id,
+        method: request.method,
+        params,
+        response
+      })
     });
 
     if (!response.ok) {
@@ -306,6 +328,68 @@ class SessionManager {
     }
 
     return response;
+  }
+
+  buildAuditEntry({ requestId, method, params, response }) {
+    const origin = originFromParams(params) || (response.ok && response.result && response.result.origin);
+    const actionKind = PAGE_ACTION_KINDS[method];
+    const mode = this.auditMode(method, response);
+    const entry = {
+      sessionId: 'daemon',
+      requestId,
+      method,
+      mode,
+      origin,
+      actionKind,
+      targetSummary: response.error && response.error.targetSummary,
+      params,
+      result: response.ok ? 'ok' : 'error',
+      errorCode: response.error && response.error.code
+    };
+
+    const boundedFullAuto = this.auditBoundedFullAutoSummary(method, response);
+    if (boundedFullAuto) {
+      entry.boundedFullAuto = boundedFullAuto;
+    }
+
+    return entry;
+  }
+
+  auditMode(method, response) {
+    if (
+      method.startsWith('operator.fullAuto.') ||
+      this.boundedFullAuto.active ||
+      isBoundedFullAutoError(response.error)
+    ) {
+      return 'bounded-full-auto-v1';
+    }
+    return 'guarded';
+  }
+
+  auditBoundedFullAutoSummary(method, response) {
+    if (
+      !method.startsWith('operator.fullAuto.') &&
+      !this.boundedFullAuto.active &&
+      !isBoundedFullAutoError(response.error)
+    ) {
+      return null;
+    }
+
+    const state = this.boundedFullAutoStatus();
+    const contract = state.contract || {};
+    return {
+      active: state.active,
+      taskScope: contract.taskScope || null,
+      approvedOrigins: Array.isArray(contract.approvedOrigins) ? contract.approvedOrigins : [],
+      allowedActionKinds: Array.isArray(contract.allowedActionKinds) ? contract.allowedActionKinds : [],
+      blockedActionKinds: Array.isArray(contract.blockedActionKinds) ? contract.blockedActionKinds : [],
+      limits: contract.limits || {},
+      counters: state.counters,
+      startedAt: state.startedAt,
+      expiresAt: state.expiresAt,
+      stoppedAt: state.stoppedAt,
+      stopReason: state.stopReason
+    };
   }
 
   handleHello(id, hello) {
@@ -564,6 +648,15 @@ class SessionManager {
       hostPermissionGranted,
       missing,
       error: readiness.ok ? null : readiness.error
+    });
+  }
+
+  tailAudit(id, params = {}) {
+    return rpcOk(id, {
+      auditLogPath: this.config.auditLogPath,
+      entries: this.audit.tail({
+        limit: params.limit
+      })
     });
   }
 

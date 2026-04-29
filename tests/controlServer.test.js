@@ -238,6 +238,60 @@ test('bounded full auto blocks out-of-scope and expired sessions', async () => {
   });
 });
 
+test('operator.audit.tail exposes bounded full-auto action summaries', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+    await postJson(baseUrl, 'operator.fullAuto.start', {
+      contract: boundedFullAutoContract({
+        allowedActionKinds: ['observe'],
+        limits: {
+          expiresInMinutes: 30,
+          maxBrowserActions: 1,
+          maxScreenshots: 0,
+          maxOriginChanges: 0
+        }
+      })
+    });
+
+    const observePromise = postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: {
+        origin: 'https://example.com',
+        title: 'Audited',
+        elements: []
+      }
+    });
+    await observePromise;
+    await postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+
+    const tail = await postJson(baseUrl, 'operator.audit.tail', { limit: 20 });
+    assert.equal(tail.body.ok, true);
+    assert.match(tail.body.result.auditLogPath, /audit\.jsonl$/);
+
+    const entries = tail.body.result.entries;
+    const startEntry = entries.find((entry) => entry.method === 'operator.fullAuto.start');
+    assert.equal(startEntry.mode, 'bounded-full-auto-v1');
+    assert.equal(startEntry.boundedFullAuto.taskScope, 'unit bounded task');
+    assert.deepEqual(startEntry.boundedFullAuto.approvedOrigins, ['https://example.com']);
+
+    const actionEntry = entries.find((entry) => entry.method === 'page.observe' && entry.result === 'ok');
+    assert.equal(actionEntry.mode, 'bounded-full-auto-v1');
+    assert.equal(actionEntry.origin, 'https://example.com');
+    assert.equal(actionEntry.actionKind, 'observe');
+    assert.equal(actionEntry.boundedFullAuto.counters.browserActions, 1);
+
+    const limitEntry = entries.find((entry) => entry.errorCode === ERROR_CODES.BOUNDED_FULL_AUTO_LIMIT_EXCEEDED);
+    assert.equal(limitEntry.mode, 'bounded-full-auto-v1');
+    assert.equal(limitEntry.actionKind, 'observe');
+    assert.equal(limitEntry.boundedFullAuto.counters.browserActions, 1);
+  });
+});
+
 test('extension.hello verifies profile binding and updates status', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     const result = await postJson(baseUrl, 'extension.hello', {

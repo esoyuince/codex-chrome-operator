@@ -59,3 +59,20 @@ test('AuditLog appends redacted JSONL entries', () => {
   assert.equal(entry.params.path, '[REDACTED_PATH:icon.png]');
   assert.match(entry.timestamp, /^\d{4}-\d{2}-\d{2}T/);
 });
+
+test('AuditLog.tail returns recent redacted entries in order', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-audit-'));
+  const file = path.join(dir, 'audit.jsonl');
+  const audit = new AuditLog(file);
+
+  audit.append({ requestId: 'req_1', token: 'secret-1' });
+  audit.append({ requestId: 'req_2', path: 'C:/Users/example/Desktop/file.txt' });
+  audit.append({ requestId: 'req_3' });
+
+  const entries = audit.tail({ limit: 2 });
+
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].requestId, 'req_2');
+  assert.equal(entries[0].path, '[REDACTED_PATH:file.txt]');
+  assert.equal(entries[1].requestId, 'req_3');
+});

@@ -49,6 +49,19 @@ class AuditLog {
     fs.appendFileSync(this.filePath, `${JSON.stringify(withTimestamp)}\n`, 'utf8');
     return withTimestamp;
   }
+
+  tail({ limit = 20 } = {}) {
+    const normalizedLimit = Math.min(Math.max(Number(limit) || 20, 1), 200);
+    if (!fs.existsSync(this.filePath)) {
+      return [];
+    }
+
+    return fs.readFileSync(this.filePath, 'utf8')
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-normalizedLimit)
+      .map((line) => JSON.parse(line));
+  }
 }
 
 module.exports = {

@@ -25,6 +25,7 @@ function usage() {
   node scripts/operator-cli.js approval-run <approvalId>
   node scripts/operator-cli.js approve <origin>
   node scripts/operator-cli.js revoke <origin>
+  node scripts/operator-cli.js audit-tail [limit]
   node scripts/operator-cli.js screenshots-cleanup [olderThanMs]
   node scripts/operator-cli.js emergency-stop [reason]
   node scripts/operator-cli.js emergency-clear
@@ -132,6 +133,16 @@ function buildRpcRequest(argv) {
     case 'revoke':
       requireArgs(args, 1);
       return { method: 'operator.revokeDomain', params: { origin: args[0] } };
+    case 'audit-tail':
+      if (args[0] !== undefined && !Number.isFinite(Number(args[0]))) {
+        throw usageError();
+      }
+      return {
+        method: 'operator.audit.tail',
+        params: {
+          limit: args[0] === undefined ? 20 : Number(args[0])
+        }
+      };
     case 'screenshots-cleanup':
       return {
         method: 'operator.screenshots.cleanup',

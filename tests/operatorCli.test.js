@@ -37,6 +37,10 @@ test('buildRpcRequest maps approval and page commands', () => {
     method: 'operator.screenshots.cleanup',
     params: { olderThanMs: 60000 }
   });
+  assert.deepEqual(buildRpcRequest(['audit-tail', '5']), {
+    method: 'operator.audit.tail',
+    params: { limit: 5 }
+  });
   assert.deepEqual(buildRpcRequest(['emergency-stop', 'stop now']), {
     method: 'operator.emergencyStop',
     params: { reason: 'stop now' }
@@ -156,6 +160,7 @@ test('buildRpcRequest rejects incomplete commands with usage error', () => {
   assert.throws(() => buildRpcRequest(['profile-bind', 'C:/Chrome/User Data']), /Usage:/);
   assert.throws(() => buildRpcRequest(['approval-run']), /Usage:/);
   assert.throws(() => buildRpcRequest(['full-auto-start']), /Usage:/);
+  assert.throws(() => buildRpcRequest(['audit-tail', 'nope']), /Usage:/);
   assert.throws(() => buildRpcRequest(['wat']), /Usage:/);
 });
 
