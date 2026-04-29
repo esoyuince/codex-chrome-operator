@@ -123,6 +123,37 @@ test('page.observe fails closed before host permission is granted', async () => 
   });
 });
 
+test('page.visualObserve fails closed before host permission is granted', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+        profileBindingVersion: 3,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1', 'visualObserve.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+
+    const result = await postJson(baseUrl, 'page.visualObserve', {
+      origin: 'https://example.com'
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, false);
+    assert.equal(result.body.error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+  });
+});
+
 test('page.observe queues extension command and resolves from bridge delivery', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {
@@ -172,6 +203,60 @@ test('page.observe queues extension command and resolves from bridge delivery', 
     assert.equal(result.body.ok, true);
     assert.equal(result.body.result.origin, 'https://example.com');
     assert.equal(result.body.result.title, 'Fixture');
+  });
+});
+
+test('page.visualObserve queues extension command and resolves from bridge delivery', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+        profileBindingVersion: 3,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1', 'visualObserve.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://example.com'
+    });
+
+    const observePromise = postJson(baseUrl, 'page.visualObserve', {
+      origin: 'https://example.com'
+    });
+
+    const command = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(command.body.ok, true);
+    assert.equal(command.body.result.command.method, 'page.visualObserve');
+    assert.equal(command.body.result.command.params.origin, 'https://example.com');
+
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          screenshot: {
+            mimeType: 'image/png',
+            dataUrl: 'data:image/png;base64,abc'
+          },
+          elements: []
+        }
+      }
+    });
+
+    const result = await observePromise;
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.screenshot.mimeType, 'image/png');
   });
 });
 

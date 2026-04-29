@@ -126,6 +126,7 @@ class SessionManager {
         response = this.verifyReadiness(id, params);
         break;
       case 'page.observe':
+      case 'page.visualObserve':
         response = await this.routePageCommand(id, request.method, params);
         break;
       case 'page.click':

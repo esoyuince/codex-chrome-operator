@@ -364,6 +364,15 @@ async function runCleanSmoke(options = {}) {
     await waitForStatus(settings, (status) => status.hostPermissionOrigins.includes(config.origin));
 
     await withCdp(await pageTarget(config), async (send) => {
+      await send('Page.navigate', {
+        url: `chrome-extension://${config.extensionId}/permissionRequest.html?origin=${encodeURIComponent(config.origin)}&visualCapture=1`
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await clickElement(send, 'grant');
+    });
+    acceptPermissionPrompt(config.profileDir);
+
+    await withCdp(await pageTarget(config), async (send) => {
       await send('Page.navigate', { url: `${config.origin}/basic-form.html` });
       await new Promise((resolve) => setTimeout(resolve, 1000));
     });
@@ -371,6 +380,13 @@ async function runCleanSmoke(options = {}) {
     const observation = runCliJson(['observe', config.origin], settings);
     if (!observation.ok) {
       throw new Error(`Observe failed after permission grant: ${JSON.stringify(observation)}`);
+    }
+    const visualObservation = runCliJson(['visual-observe', config.origin], settings);
+    if (!visualObservation.ok) {
+      throw new Error(`Visual observe failed after permission grant: ${JSON.stringify(visualObservation)}`);
+    }
+    if (!visualObservation.result.screenshot || !visualObservation.result.screenshot.dataUrl.startsWith('data:image/png;base64,')) {
+      throw new Error(`Visual observe did not return a PNG screenshot: ${JSON.stringify(visualObservation)}`);
     }
     runCliJson(['fill', config.origin, 'el_0', 'Clean Smoke App'], settings);
     runCliJson(['fill', config.origin, 'el_1', 'Single command smoke test.'], settings);
@@ -400,6 +416,8 @@ async function runCleanSmoke(options = {}) {
       origin: config.origin,
       blockedBeforeHostPermission: blockedObserve.error.code,
       observedTitle: observation.result.title,
+      visualObservedTitle: visualObservation.result.title,
+      visualScreenshotBytes: visualObservation.result.screenshot.bytesApprox,
       dom,
       finalStatus: finalStatus.result
     };

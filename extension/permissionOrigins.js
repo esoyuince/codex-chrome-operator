@@ -25,7 +25,12 @@
     return [...origins];
   }
 
+  function hasBroadHostPermission(patterns) {
+    return (patterns || []).includes('<all_urls>');
+  }
+
   const api = {
+    hasBroadHostPermission,
     permissionPatternToOrigin,
     permissionPatternsToOrigins
   };

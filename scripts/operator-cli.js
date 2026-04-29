@@ -21,6 +21,7 @@ function usage() {
   node scripts/operator-cli.js readiness <origin-or-url>
   node scripts/operator-cli.js approve <origin>
   node scripts/operator-cli.js observe <origin>
+  node scripts/operator-cli.js visual-observe <origin>
   node scripts/operator-cli.js navigate <url>
   node scripts/operator-cli.js fill <origin> <handle> <text>
   node scripts/operator-cli.js click <origin> <handle>
@@ -100,6 +101,9 @@ function buildRpcRequest(argv) {
     case 'observe':
       requireArgs(args, 1);
       return { method: 'page.observe', params: { origin: args[0] } };
+    case 'visual-observe':
+      requireArgs(args, 1);
+      return { method: 'page.visualObserve', params: { origin: args[0] } };
     case 'navigate':
       requireArgs(args, 1);
       return {

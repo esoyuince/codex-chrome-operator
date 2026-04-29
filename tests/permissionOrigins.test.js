@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  hasBroadHostPermission,
   permissionPatternToOrigin,
   permissionPatternsToOrigins
 } = require('../extension/permissionOrigins');
@@ -24,4 +25,9 @@ test('permissionPatternsToOrigins deduplicates and drops broad patterns', () => 
     'https://example.com',
     'https://other.example'
   ]);
+});
+
+test('hasBroadHostPermission detects all-url grants', () => {
+  assert.equal(hasBroadHostPermission(['https://example.com/*']), false);
+  assert.equal(hasBroadHostPermission(['<all_urls>']), true);
 });

@@ -7,6 +7,7 @@ function originPattern(origin) {
 
 const params = new URLSearchParams(location.search);
 const origin = params.get('origin');
+const visualCapture = params.get('visualCapture') === '1';
 document.getElementById('origin').textContent = origin || 'No origin provided';
 
 document.getElementById('grant').addEventListener('click', async () => {
@@ -15,7 +16,11 @@ document.getElementById('grant').addEventListener('click', async () => {
     status.textContent = 'Missing origin.';
     return;
   }
-  const granted = await chrome.permissions.request({ origins: [originPattern(origin)] });
+  const origins = [originPattern(origin)];
+  if (visualCapture) {
+    origins.push('<all_urls>');
+  }
+  const granted = await chrome.permissions.request({ origins });
   if (granted) {
     await chrome.runtime.sendMessage({
       type: 'operator.hostPermissionGranted',

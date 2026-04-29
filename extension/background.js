@@ -4,7 +4,10 @@ importScripts('permissionOrigins.js');
 
 const NATIVE_HOST = 'com.codex.chrome_operator';
 const PROFILE_BINDING_SOURCE = 'chrome.storage.local';
-const { permissionPatternsToOrigins } = globalThis.CodexPermissionOrigins;
+const {
+  hasBroadHostPermission,
+  permissionPatternsToOrigins
+} = globalThis.CodexPermissionOrigins;
 
 let nativePort = null;
 let lastNativeError = null;
@@ -72,7 +75,11 @@ async function sendHello() {
 
 async function grantedHostPermissionOrigins() {
   const permissions = await chrome.permissions.getAll();
-  return permissionPatternsToOrigins(permissions.origins || []);
+  const origins = permissions.origins || [];
+  if (hasBroadHostPermission(origins)) {
+    return null;
+  }
+  return permissionPatternsToOrigins(origins);
 }
 
 async function syncGrantedHostPermissions() {
@@ -81,9 +88,14 @@ async function syncGrantedHostPermissions() {
     return;
   }
 
+  const origins = await grantedHostPermissionOrigins();
+  if (origins === null) {
+    return;
+  }
+
   postNativeRpc('extension.hostPermissionsSynced', {
     profileBindingId: binding.profileBindingId,
-    origins: await grantedHostPermissionOrigins()
+    origins
   });
 }
 
@@ -150,6 +162,14 @@ async function hasHostPermission(origin) {
   });
 }
 
+function estimateDataUrlBytes(dataUrl) {
+  const commaIndex = dataUrl.indexOf(',');
+  if (commaIndex === -1) {
+    return dataUrl.length;
+  }
+  return Math.ceil((dataUrl.length - commaIndex - 1) * 3 / 4);
+}
+
 async function syncPermissionsAfterChange() {
   try {
     await connectNative();
@@ -176,6 +196,7 @@ async function activeTabInfo() {
   }
   return {
     id: tab.id,
+    windowId: tab.windowId,
     url: tab.url || null,
     title: tab.title || null,
     status: tab.status || null
@@ -225,6 +246,28 @@ async function handleOperatorCommand(command) {
     if (command.method === 'page.observe') {
       const observation = await chrome.tabs.sendMessage(ready.tab.id, { type: 'content.observe' });
       return { ok: true, result: observation };
+    }
+
+    if (command.method === 'page.visualObserve') {
+      const observation = await chrome.tabs.sendMessage(ready.tab.id, { type: 'content.observe' });
+      const dataUrl = await chrome.tabs.captureVisibleTab(ready.tab.windowId, {
+        format: 'png'
+      });
+      return {
+        ok: true,
+        result: {
+          ...observation,
+          visual: {
+            provider: 'chrome.tabs.captureVisibleTab',
+            screenshotBacked: true
+          },
+          screenshot: {
+            mimeType: 'image/png',
+            dataUrl,
+            bytesApprox: estimateDataUrlBytes(dataUrl)
+          }
+        }
+      };
     }
 
     const actionMap = {
