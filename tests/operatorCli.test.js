@@ -292,6 +292,11 @@ test('ensureStarted reports target readiness diagnostic for missing gates', asyn
     response.result.diagnostic.nextActions.map((action) => action.kind),
     ['profile', 'domainApproval', 'hostPermission']
   );
+  assert.equal(
+    response.result.diagnostic.nextActions[0].command,
+    'node scripts/operator-cli.js profile-onboard'
+  );
+  assert.equal(response.result.diagnostic.nextActions[0].requiresUserGesture, true);
   assert.ok(response.result.diagnostic.nextActions[1].command.includes('approve https://example.com'));
   assert.equal(response.result.diagnostic.nextActions[2].requiresUserGesture, true);
   assert.equal(
@@ -1088,6 +1093,39 @@ test('profileDoctor reports configured profile, active tab, and readiness in one
   assert.deepEqual(response.result.nextActions, []);
 });
 
+test('profileDoctor points an unconfigured profile to profile-onboard', async () => {
+  const response = await profileDoctor({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    request: {
+      id: 'profile_doctor_unconfigured',
+      method: 'operator.status',
+      params: {}
+    },
+    sendRpcFn: async ({ request }) => {
+      assert.equal(request.method, 'operator.status');
+      return {
+        ok: true,
+        result: {
+          connectionState: 'EXTENSION_CONNECTED_SETUP_ONLY',
+          profileVerified: false,
+          profileBindingStatus: 'setup-unbound',
+          configuredProfile: null
+        }
+      };
+    }
+  });
+
+  assert.equal(response.ok, false);
+  const profileActions = response.result.nextActions.filter((action) => action.kind === 'profile');
+  assert.equal(profileActions.length, 1);
+  assert.equal(profileActions[0].command, 'node scripts/operator-cli.js profile-onboard');
+  assert.equal(profileActions[0].requiresUserGesture, true);
+});
+
 test('profileOnboard asks for an explicit profile when discovery finds multiple profiles', async () => {
   const calls = [];
   const response = await profileOnboard({
@@ -1352,6 +1390,13 @@ test('profileDoctor gives next actions when profile is not verified and origin i
     'hostPermission'
   ]);
   assert.ok(response.result.nextActions.some((action) => action.kind === 'profile'));
+  const profileActions = response.result.nextActions.filter((action) => action.kind === 'profile');
+  assert.equal(profileActions.length, 1);
+  assert.equal(
+    profileActions[0].command,
+    'node scripts/operator-cli.js profile-onboard "C:/Chrome/User Data" "Profile 1" "Play Console"'
+  );
+  assert.equal(profileActions[0].requiresUserGesture, true);
   assert.ok(response.result.nextActions.some((action) => action.kind === 'domainApproval'));
   assert.ok(response.result.nextActions.some((action) => action.kind === 'hostPermission'));
 });

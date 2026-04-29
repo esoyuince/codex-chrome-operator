@@ -721,17 +721,7 @@ function readinessNextActions(readiness, status = {}, bootstrapUrl = null) {
   const actions = [];
 
   if (missing.includes('profile')) {
-    const configuredProfile = status && status.configuredProfile;
-    actions.push({
-      kind: 'profile',
-      command: configuredProfile
-        ? 'node scripts/operator-cli.js profile-verify'
-        : 'node scripts/operator-cli.js profiles',
-      description: configuredProfile
-        ? 'Verify the configured Chrome profile binding.'
-        : 'Discover and bind the Chrome profile that should own the session.',
-      requiresUserGesture: false
-    });
+    actions.push(profileOnboardAction(status && status.configuredProfile));
   }
 
   if (missing.includes('domainApproval')) {
@@ -794,6 +784,19 @@ function profileOnboardCommand(profile) {
     profile.profileLabel
   ].filter((value) => value !== undefined && value !== null && value !== '');
   return args.map(quoteCommandArg).join(' ');
+}
+
+function profileOnboardAction(configuredProfile = null) {
+  return {
+    kind: 'profile',
+    command: configuredProfile
+      ? profileOnboardCommand(configuredProfile)
+      : 'node scripts/operator-cli.js profile-onboard',
+    description: configuredProfile
+      ? 'Run profile onboarding for the configured Chrome profile and click Bind Profile on the setup page.'
+      : 'Discover, bind, and verify the Chrome profile that should own this operator session.',
+    requiresUserGesture: true
+  };
 }
 
 function profileSetupAction(setupUrl) {
@@ -1167,19 +1170,7 @@ async function profileDoctor({
       : checkResult(true, { skipped: true })
   };
 
-  const profileAction = configuredProfile
-    ? {
-      kind: 'profile',
-      command: 'node scripts/operator-cli.js profile-verify',
-      description: 'Open the profile setup URL in the configured Chrome profile and refresh HELLO.',
-      requiresUserGesture: true
-    }
-    : {
-      kind: 'profile',
-      command: 'node scripts/operator-cli.js profiles',
-      description: 'Discover and bind the Chrome profile that should own this operator session.',
-      requiresUserGesture: false
-    };
+  const profileAction = profileOnboardAction(configuredProfile);
 
   const nextActions = [];
   if (!checks.configuredProfile.ok || !checks.profileVerified.ok) {
