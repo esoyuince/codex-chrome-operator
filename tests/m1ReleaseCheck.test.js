@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   buildReleaseChecks,
+  extractCleanSmokeEvidence,
   runReleaseCheck,
   tailText
 } = require('../scripts/m1-release-check');
@@ -68,6 +69,112 @@ test('runReleaseCheck executes every gate and reports failures as JSON-safe data
   assert.equal(report.checks[2].name, 'daemon-doctor');
   assert.equal(report.checks[2].ok, false);
   assert.equal(report.checks[2].stderrTail, 'doctor failed');
+});
+
+test('extractCleanSmokeEvidence summarizes live browser proof without full daemon state', () => {
+  const evidence = extractCleanSmokeEvidence(JSON.stringify({
+    ok: true,
+    extensionId: 'fgkcpjfdphcpihkpbkjnhcdijocihiod',
+    origin: 'http://127.0.0.1:18180',
+    waitReadyAfterPermission: true,
+    blockedBeforeHostPermission: 'HOST_PERMISSION_REQUIRED',
+    openObserveTitle: 'Codex Operator Basic Fixture',
+    visualScreenshotArtifactId: 'shot_1',
+    visualScreenshotBytes: 2048,
+    gatedVisualBlocked: 'VISUAL_PROVIDER_POLICY_BLOCKED',
+    gateHandoffBlocked: 'PASSWORD_REQUIRED',
+    gateHandoffResume: 'Gate resumed',
+    emergencyBlocked: 'EMERGENCY_STOPPED',
+    emergencyCleared: true,
+    reconnectBlocked: 'EXTENSION_DISCONNECTED',
+    reconnectRecoveredTitle: 'Codex Operator Basic Fixture',
+    boundedFullAutoStarted: true,
+    boundedFullAutoActions: 4,
+    boundedFullAutoStopped: true,
+    boundedFullAutoAudited: true,
+    highRiskBlocked: 'HIGH_RISK_BLOCKED',
+    highRiskApprovalReplay: 'clicked',
+    screenshotCleanupRemoved: true,
+    postRevokeBlocked: 'DOMAIN_NOT_APPROVED',
+    basicDomActions: {
+      locale: 'tr',
+      enableBeta: true,
+      status: 'Pressed Enter'
+    },
+    finalStatus: {
+      profileVerified: true,
+      connectionState: 'EXTENSION_CONNECTED',
+      approvedOrigins: ['http://127.0.0.1:18180'],
+      domainApprovals: {
+        'http://127.0.0.1:18180': { origin: 'http://127.0.0.1:18180' }
+      }
+    }
+  }));
+
+  assert.deepEqual(evidence, {
+    ok: true,
+    extensionId: 'fgkcpjfdphcpihkpbkjnhcdijocihiod',
+    origin: 'http://127.0.0.1:18180',
+    profileVerified: true,
+    connectionState: 'EXTENSION_CONNECTED',
+    hostPermissionReady: true,
+    blockedBeforeHostPermission: 'HOST_PERMISSION_REQUIRED',
+    openObserveTitle: 'Codex Operator Basic Fixture',
+    visualScreenshotArtifactId: 'shot_1',
+    visualScreenshotBytes: 2048,
+    gatedVisualBlocked: 'VISUAL_PROVIDER_POLICY_BLOCKED',
+    gateHandoffBlocked: 'PASSWORD_REQUIRED',
+    gateHandoffResume: 'Gate resumed',
+    emergencyBlocked: 'EMERGENCY_STOPPED',
+    emergencyCleared: true,
+    reconnectBlocked: 'EXTENSION_DISCONNECTED',
+    reconnectRecoveredTitle: 'Codex Operator Basic Fixture',
+    boundedFullAutoStarted: true,
+    boundedFullAutoActions: 4,
+    boundedFullAutoStopped: true,
+    boundedFullAutoAudited: true,
+    highRiskBlocked: 'HIGH_RISK_BLOCKED',
+    highRiskApprovalReplay: 'clicked',
+    screenshotCleanupRemoved: true,
+    postRevokeBlocked: 'DOMAIN_NOT_APPROVED',
+    basicDomActions: {
+      locale: 'tr',
+      enableBeta: true,
+      status: 'Pressed Enter'
+    }
+  });
+});
+
+test('runReleaseCheck attaches clean smoke evidence when the smoke gate succeeds', () => {
+  const report = runReleaseCheck({
+    includeSmoke: true,
+    runner: (check) => ({
+      status: 0,
+      stdout: check.name === 'clean-smoke'
+        ? JSON.stringify({
+          ok: true,
+          origin: 'http://127.0.0.1:18180',
+          waitReadyAfterPermission: true,
+          finalStatus: {
+            profileVerified: true,
+            connectionState: 'EXTENSION_CONNECTED'
+          }
+        })
+        : `${check.name} ok`,
+      stderr: ''
+    })
+  });
+
+  const cleanSmoke = report.checks.find((check) => check.name === 'clean-smoke');
+  assert.equal(cleanSmoke.ok, true);
+  assert.deepEqual(cleanSmoke.evidence, {
+    ok: true,
+    origin: 'http://127.0.0.1:18180',
+    profileVerified: true,
+    connectionState: 'EXTENSION_CONNECTED',
+    hostPermissionReady: true
+  });
+  assert.equal(report.checks[0].evidence, undefined);
 });
 
 test('runReleaseCheck fails closed when a process exits without a numeric status', () => {
