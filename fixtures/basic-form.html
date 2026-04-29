@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Codex Operator Basic Fixture</title>
+</head>
+<body>
+  <main>
+    <h1>Basic Form Fixture</h1>
+    <label>
+      App name
+      <input name="appName" placeholder="App name">
+    </label>
+    <label>
+      Description
+      <textarea name="description"></textarea>
+    </label>
+    <button id="saveDraft" type="button">Save Draft</button>
+    <button id="publish" type="button" data-risk="publish">Publish</button>
+    <p id="status" aria-live="polite"></p>
+  </main>
+  <script>
+    document.getElementById('saveDraft').addEventListener('click', () => {
+      document.getElementById('status').textContent = 'Draft saved';
+    });
+  </script>
+</body>
+</html>

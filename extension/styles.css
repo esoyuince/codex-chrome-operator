@@ -1,0 +1,41 @@
+body {
+  color: #17202a;
+  font-family: Arial, sans-serif;
+  margin: 0;
+  min-width: 260px;
+}
+
+main {
+  padding: 16px;
+}
+
+h1 {
+  font-size: 18px;
+  margin: 0 0 12px;
+}
+
+button {
+  background: #1f6feb;
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  padding: 8px 12px;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 6px 10px;
+  margin: 0 0 12px;
+}
+
+dt {
+  color: #566573;
+}
+
+dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

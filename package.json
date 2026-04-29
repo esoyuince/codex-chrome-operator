@@ -1,0 +1,17 @@
+{
+  "name": "codex-chrome-operator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Codex-first Chrome operator bridge for Windows Chrome.",
+  "main": "operator-daemon/daemon.js",
+  "scripts": {
+    "test": "node --test",
+    "check": "node scripts/check-syntax.js",
+    "daemon": "node operator-daemon/daemon.js",
+    "native-bridge": "node native-bridge/nativeMessagingShim.js",
+    "doctor": "node operator-daemon/daemon.js --doctor"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

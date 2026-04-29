@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Codex Chrome Operator",
+  "version": "0.1.0",
+  "description": "Codex-controlled Chrome operator bridge with guarded local automation.",
+  "permissions": [
+    "nativeMessaging",
+    "scripting",
+    "activeTab",
+    "tabs",
+    "storage"
+  ],
+  "optional_host_permissions": [
+    "https://play.google.com/*",
+    "https://www.hepsiburada.com/*",
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Codex Operator"
+  },
+  "icons": {},
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "bootstrap.html",
+        "permissionRequest.html",
+        "profileSetup.html"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
