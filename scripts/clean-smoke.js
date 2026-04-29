@@ -391,6 +391,10 @@ async function runCleanSmoke(options = {}) {
     runCliJson(['fill', config.origin, 'el_0', 'Clean Smoke App'], settings);
     runCliJson(['fill', config.origin, 'el_1', 'Single command smoke test.'], settings);
     runCliJson(['click', config.origin, 'el_2'], settings);
+    const highRiskClick = runCliJson(['click', config.origin, 'el_3'], settings);
+    if (highRiskClick.ok || highRiskClick.error.code !== 'HIGH_RISK_BLOCKED') {
+      throw new Error(`Expected HIGH_RISK_BLOCKED for publish click: ${JSON.stringify(highRiskClick)}`);
+    }
 
     const dom = await withCdp(await pageTarget(config), async (send) => {
       const result = await send('Runtime.evaluate', {
@@ -418,6 +422,7 @@ async function runCleanSmoke(options = {}) {
       observedTitle: observation.result.title,
       visualObservedTitle: visualObservation.result.title,
       visualScreenshotBytes: visualObservation.result.screenshot.bytesApprox,
+      highRiskBlocked: highRiskClick.error.code,
       dom,
       finalStatus: finalStatus.result
     };

@@ -11,6 +11,7 @@ function isVisible(element) {
 
 function elementSummary(element, index) {
   const rect = element.getBoundingClientRect();
+  const dataRisk = element.getAttribute('data-risk') || null;
   const label = element.getAttribute('aria-label') ||
     element.innerText ||
     element.value ||
@@ -25,6 +26,7 @@ function elementSummary(element, index) {
     type: element.getAttribute('type') || null,
     name: element.getAttribute('name') || null,
     id: element.id || null,
+    dataRisk,
     label: String(label).trim().slice(0, 200),
     disabled: Boolean(element.disabled),
     bbox: {
@@ -78,6 +80,13 @@ async function runAction(message) {
   }
 
   if (message.action === 'click') {
+    const risk = globalThis.CodexActionPolicy.classifyActionRisk({
+      action: 'click',
+      target: elementSummary(element, message.handle)
+    });
+    if (risk) {
+      return { ok: false, error: risk };
+    }
     element.click();
     return { ok: true, result: { action: 'clicked' } };
   }
