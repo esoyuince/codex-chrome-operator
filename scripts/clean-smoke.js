@@ -399,6 +399,10 @@ async function runCleanSmoke(options = {}) {
     });
     acceptPermissionPrompt(config.profileDir);
     await waitForStatus(settings, (status) => status.hostPermissionOrigins.includes(config.origin));
+    const readyAfterPermission = runCliJson(['wait-ready', config.origin, '5000', '100'], settings);
+    if (!readyAfterPermission.ok || readyAfterPermission.result.ready !== true) {
+      throw new Error(`wait-ready did not confirm readiness after permission grant: ${JSON.stringify(readyAfterPermission)}`);
+    }
 
     await withCdp(await pageTarget(config), async (send) => {
       await send('Page.navigate', {
@@ -715,6 +719,7 @@ async function runCleanSmoke(options = {}) {
       ensureStartedBootstrapRequired: ensureStartedBeforeChrome.result.bootstrapRequired,
       ensureStartedBootstrapUrl: ensureStartedBeforeChrome.result.bootstrapUrl,
       prepareOriginPermissionUrl: preparedOrigin.result.permissionUrl,
+      waitReadyAfterPermission: readyAfterPermission.result.ready,
       origin: config.origin,
       blockedBeforeHostPermission: blockedObserve.error.code,
       observedTitle: observation.result.title,

@@ -8,7 +8,8 @@ const {
   buildRpcRequest,
   ensureStarted,
   prepareOrigin,
-  resolveCliSettings
+  resolveCliSettings,
+  waitReady
 } = require('../scripts/operator-cli');
 
 test('buildRpcRequest maps status to operator.status', () => {
@@ -305,6 +306,18 @@ test('buildRpcRequest maps prepare-origin to operator.ensureStarted', () => {
   });
 });
 
+test('buildRpcRequest maps wait-ready to operator.verifyReadiness', () => {
+  assert.deepEqual(buildRpcRequest(['wait-ready', 'https://example.com/path', '1500', '25']), {
+    method: 'operator.verifyReadiness',
+    params: {
+      origin: 'https://example.com',
+      timeoutMs: 1500,
+      pollIntervalMs: 25
+    },
+    cliAction: 'waitReady'
+  });
+});
+
 test('prepareOrigin approves domain and returns permission URL when host permission is missing', async () => {
   const calls = [];
   const bootstrapUrl = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/bootstrap.html?session=boot';
@@ -383,6 +396,102 @@ test('prepareOrigin approves domain and returns permission URL when host permiss
   assert.equal(response.result.permissionUrl, 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html?origin=https%3A%2F%2Fexample.com');
   assert.equal(response.result.requiresUserGesture, true);
   assert.equal(response.result.nextAction.kind, 'hostPermission');
+});
+
+test('waitReady polls verifyReadiness until the origin is ready', async () => {
+  const calls = [];
+  const readinessResponses = [
+    {
+      ready: false,
+      profileVerified: true,
+      domainApproved: true,
+      hostPermissionGranted: false,
+      missing: ['hostPermission']
+    },
+    {
+      ready: true,
+      profileVerified: true,
+      domainApproved: true,
+      hostPermissionGranted: true,
+      missing: []
+    }
+  ];
+  const response = await waitReady({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    request: {
+      id: 'wait_1',
+      method: 'operator.verifyReadiness',
+      params: {
+        origin: 'https://example.com',
+        timeoutMs: 1000,
+        pollIntervalMs: 1
+      }
+    },
+    delayFn: async () => {},
+    sendRpcFn: async ({ request }) => {
+      calls.push(`${request.id}:${request.method}:${request.params.origin}`);
+      const result = readinessResponses.shift();
+      return {
+        ok: true,
+        result: {
+          origin: request.params.origin,
+          ...result
+        }
+      };
+    }
+  });
+
+  assert.deepEqual(calls, [
+    'wait_1_wait_ready_1:operator.verifyReadiness:https://example.com',
+    'wait_1_wait_ready_2:operator.verifyReadiness:https://example.com'
+  ]);
+  assert.equal(response.ok, true);
+  assert.equal(response.result.ready, true);
+  assert.equal(response.result.waitReady.attempted, true);
+  assert.equal(response.result.waitReady.attempts, 2);
+});
+
+test('waitReady timeout returns last readiness next actions', async () => {
+  const response = await waitReady({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    request: {
+      id: 'wait_2',
+      method: 'operator.verifyReadiness',
+      params: {
+        origin: 'https://example.com',
+        timeoutMs: 1,
+        pollIntervalMs: 1
+      }
+    },
+    delayFn: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    },
+    sendRpcFn: async ({ request }) => ({
+      ok: true,
+      result: {
+        origin: request.params.origin,
+        ready: false,
+        profileVerified: true,
+        domainApproved: true,
+        hostPermissionGranted: false,
+        missing: ['hostPermission']
+      }
+    })
+  });
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, 'READINESS_WAIT_TIMEOUT');
+  assert.deepEqual(response.error.lastReadiness.missing, ['hostPermission']);
+  assert.deepEqual(response.error.nextActions.map((action) => action.kind), ['hostPermission']);
+  assert.equal(response.error.nextActions[0].requiresUserGesture, true);
 });
 
 test('buildRpcRequest maps approval and page commands', () => {

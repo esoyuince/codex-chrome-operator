@@ -25,6 +25,7 @@ function usage() {
   node scripts/operator-cli.js profile-bind <userDataDir> <profileDirectory> [profileLabel]
   node scripts/operator-cli.js profile-verify
   node scripts/operator-cli.js readiness <origin-or-url>
+  node scripts/operator-cli.js wait-ready <origin-or-url> [timeoutMs] [pollIntervalMs]
   node scripts/operator-cli.js approvals
   node scripts/operator-cli.js approval-approve <approvalId>
   node scripts/operator-cli.js approval-reject <approvalId>
@@ -139,6 +140,17 @@ function buildRpcRequest(argv) {
         params: {
           origin: new URL(args[0]).origin
         }
+      };
+    case 'wait-ready':
+      requireArgs(args, 1);
+      return {
+        method: 'operator.verifyReadiness',
+        params: {
+          origin: new URL(args[0]).origin,
+          ...(args[1] === undefined ? {} : { timeoutMs: Number(args[1]) }),
+          ...(args[2] === undefined ? {} : { pollIntervalMs: Number(args[2]) })
+        },
+        cliAction: 'waitReady'
       };
     case 'approvals':
       return { method: 'operator.approvals.list', params: {} };
@@ -824,6 +836,91 @@ async function prepareOrigin({
   };
 }
 
+async function waitReady({
+  settings,
+  request,
+  sendRpcFn = sendRpc,
+  timeoutMs = request && request.params && Number.isFinite(request.params.timeoutMs)
+    ? request.params.timeoutMs
+    : 10000,
+  pollIntervalMs = request && request.params && Number.isFinite(request.params.pollIntervalMs)
+    ? request.params.pollIntervalMs
+    : 250,
+  delayFn = delay
+}) {
+  const origin = request && request.params && request.params.origin;
+  if (!origin) {
+    return {
+      id: request && request.id,
+      ok: false,
+      error: {
+        code: 'INVALID_REQUEST',
+        message: 'wait-ready requires an origin or URL.'
+      }
+    };
+  }
+
+  const started = Date.now();
+  let attempts = 0;
+  let lastResponse = null;
+  let lastError = null;
+
+  while (Date.now() - started < timeoutMs) {
+    attempts += 1;
+    try {
+      const response = await sendRpcFn({
+        baseUrl: settings.baseUrl,
+        token: settings.token,
+        request: {
+          id: `${request.id}_wait_ready_${attempts}`,
+          method: 'operator.verifyReadiness',
+          params: { origin }
+        }
+      });
+      lastResponse = response;
+      if (response && response.ok && response.result && response.result.ready) {
+        return {
+          ...response,
+          result: {
+            ...response.result,
+            readiness: normalizeReadiness(response.result),
+            waitReady: {
+              attempted: true,
+              ready: true,
+              elapsedMs: Date.now() - started,
+              attempts
+            }
+          }
+        };
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await delayFn(pollIntervalMs);
+  }
+
+  const lastReadiness = lastResponse && lastResponse.ok
+    ? normalizeReadiness(lastResponse.result)
+    : null;
+  const nextActions = lastReadiness
+    ? readinessNextActions(lastReadiness)
+    : [];
+  return {
+    id: request.id,
+    ok: false,
+    error: {
+      code: 'READINESS_WAIT_TIMEOUT',
+      message: `Timed out waiting for ${origin} readiness.`,
+      origin,
+      timeoutMs,
+      attempts,
+      lastReadiness,
+      nextActions,
+      lastError: lastError ? lastError.message : null
+    }
+  };
+}
+
 async function run(argv = process.argv.slice(2), output = process.stdout) {
   const { options } = splitOptions(argv);
   const builtRequest = buildRpcRequest(argv);
@@ -838,6 +935,11 @@ async function run(argv = process.argv.slice(2), output = process.stdout) {
       settings,
       request,
       openBootstrap: options.openBootstrap !== false
+    })
+    : cliAction === 'waitReady'
+    ? await waitReady({
+      settings,
+      request
     })
     : request.method === 'operator.ensureStarted'
     ? await ensureStarted({
@@ -877,5 +979,6 @@ module.exports = {
   startDaemonProcess,
   splitOptions,
   usage,
-  waitForExtensionConnection
+  waitForExtensionConnection,
+  waitReady
 };
