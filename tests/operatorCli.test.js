@@ -135,6 +135,115 @@ test('ensureStarted waits for extension connection after bootstrap launch', asyn
   assert.equal(response.result.extensionWait.connected, true);
 });
 
+test('ensureStarted reports diagnostic steps when extension wait times out', async () => {
+  const bootstrapUrl = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/bootstrap.html?session=boot';
+  const response = await ensureStarted({
+    request: {
+      id: 'req_3',
+      method: 'operator.ensureStarted',
+      params: {}
+    },
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async () => ({
+      ok: true,
+      result: {
+        daemonRunning: true,
+        extensionConnected: false,
+        bootstrapRequired: true,
+        bootstrapUrl
+      }
+    }),
+    launchBootstrapFn: ({ bootstrapUrl }) => ({
+      attempted: true,
+      launched: true,
+      pid: 4321,
+      bootstrapUrl
+    }),
+    waitForExtensionConnectionFn: async () => ({
+      ok: true,
+      result: {
+        daemonRunning: true,
+        extensionConnected: false,
+        bootstrapRequired: true,
+        bootstrapUrl,
+        extensionWait: {
+          attempted: true,
+          connected: false,
+          attempts: 3,
+          timeoutMs: 750
+        },
+        status: {
+          connectionState: 'DAEMON_RUNNING_EXTENSION_DISCONNECTED'
+        }
+      }
+    })
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.extensionConnected, false);
+  assert.equal(response.result.diagnostic.code, 'EXTENSION_WAIT_TIMEOUT');
+  assert.match(response.result.diagnostic.message, /extension did not connect/i);
+  assert.equal(response.result.diagnostic.bootstrapUrl, bootstrapUrl);
+  assert.ok(response.result.diagnostic.nextSteps.includes('Open the bootstrapUrl manually in the configured Chrome profile.'));
+});
+
+test('ensureStarted reports diagnostic steps when bootstrap launch fails', async () => {
+  const bootstrapUrl = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/bootstrap.html?session=boot';
+  const calls = [];
+  const response = await ensureStarted({
+    request: {
+      id: 'req_4',
+      method: 'operator.ensureStarted',
+      params: {}
+    },
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async () => ({
+      ok: true,
+      result: {
+        daemonRunning: true,
+        extensionConnected: false,
+        bootstrapRequired: true,
+        bootstrapUrl
+      }
+    }),
+    launchBootstrapFn: () => {
+      calls.push('launch');
+      return {
+        attempted: true,
+        launched: false,
+        error: {
+          code: 'CHROME_NOT_FOUND',
+          message: 'Chrome executable was not found for bootstrap launch.'
+        }
+      };
+    },
+    waitForExtensionConnectionFn: async () => {
+      calls.push('wait');
+      return {
+        ok: true,
+        result: {}
+      };
+    }
+  });
+
+  assert.deepEqual(calls, ['launch']);
+  assert.equal(response.ok, true);
+  assert.equal(response.result.extensionWait.attempted, false);
+  assert.equal(response.result.extensionWait.skippedReason, 'BOOTSTRAP_LAUNCH_FAILED');
+  assert.equal(response.result.diagnostic.code, 'BOOTSTRAP_LAUNCH_FAILED');
+  assert.equal(response.result.diagnostic.errorCode, 'CHROME_NOT_FOUND');
+  assert.equal(response.result.diagnostic.bootstrapUrl, bootstrapUrl);
+  assert.ok(response.result.diagnostic.nextSteps.includes('Run install\\doctor.ps1 and check Chrome installation.'));
+});
+
 test('buildRpcRequest maps approval and page commands', () => {
   assert.deepEqual(buildRpcRequest(['approve', 'https://example.com']), {
     method: 'operator.approveDomain',

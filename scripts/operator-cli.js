@@ -470,6 +470,53 @@ function launchBootstrapChrome({
   };
 }
 
+function ensureStartedDiagnostic(result) {
+  if (!result || typeof result !== 'object') {
+    return null;
+  }
+  const bootstrapUrl = result.bootstrapUrl
+    || (result.bootstrapLaunch && result.bootstrapLaunch.bootstrapUrl)
+    || null;
+
+  if (result.bootstrapLaunch && result.bootstrapLaunch.attempted && !result.bootstrapLaunch.launched) {
+    return {
+      code: 'BOOTSTRAP_LAUNCH_FAILED',
+      errorCode: result.bootstrapLaunch.error && result.bootstrapLaunch.error.code
+        ? result.bootstrapLaunch.error.code
+        : undefined,
+      message: result.bootstrapLaunch.error && result.bootstrapLaunch.error.message
+        ? result.bootstrapLaunch.error.message
+        : 'Chrome bootstrap launch failed.',
+      bootstrapUrl,
+      nextSteps: [
+        'Run install\\doctor.ps1 and check Chrome installation.',
+        'Open the bootstrapUrl manually in the configured Chrome profile.',
+        'Verify the unpacked extension exists in the install directory.'
+      ]
+    };
+  }
+
+  if (result.extensionWait && result.extensionWait.attempted && !result.extensionWait.connected) {
+    return {
+      code: 'EXTENSION_WAIT_TIMEOUT',
+      errorCode: result.extensionWait.error && result.extensionWait.error.code
+        ? result.extensionWait.error.code
+        : undefined,
+      message: result.extensionWait.timeoutMs
+        ? `The extension did not connect within ${result.extensionWait.timeoutMs}ms after bootstrap launch.`
+        : 'The extension did not connect after bootstrap launch.',
+      bootstrapUrl,
+      nextSteps: [
+        'Open the bootstrapUrl manually in the configured Chrome profile.',
+        'Check that the Codex Chrome Operator extension is enabled.',
+        'Run install\\doctor.ps1 and retry ensure-started.'
+      ]
+    };
+  }
+
+  return null;
+}
+
 async function ensureStarted({
   settings,
   request,
@@ -531,7 +578,21 @@ async function ensureStarted({
               connected: Boolean(response.result.extensionConnected)
             };
           }
+        } else if (waitResponse && !waitResponse.ok && waitResponse.error) {
+          response.result.extensionWait = {
+            attempted: true,
+            connected: false,
+            timeoutMs: waitResponse.error.timeoutMs,
+            attempts: waitResponse.error.attempts,
+            error: waitResponse.error
+          };
         }
+      } else if (bootstrapLaunch && bootstrapLaunch.attempted && !bootstrapLaunch.launched) {
+        response.result.extensionWait = {
+          attempted: false,
+          connected: false,
+          skippedReason: 'BOOTSTRAP_LAUNCH_FAILED'
+        };
       }
     }
     response.result.daemonStarted = daemonStarted;
@@ -540,6 +601,10 @@ async function ensureStarted({
     }
     if (bootstrapLaunch) {
       response.result.bootstrapLaunch = bootstrapLaunch;
+    }
+    const diagnostic = ensureStartedDiagnostic(response.result);
+    if (diagnostic) {
+      response.result.diagnostic = diagnostic;
     }
   }
   return response;
