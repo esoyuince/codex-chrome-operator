@@ -10,7 +10,9 @@ const {
   openObserve,
   prepareOrigin,
   profileDoctor,
+  profileOnboard,
   resolveCliSettings,
+  waitForProfileVerified,
   waitReady
 } = require('../scripts/operator-cli');
 
@@ -935,6 +937,25 @@ test('buildRpcRequest maps profile and readiness commands', () => {
     },
     cliAction: 'profileDoctor'
   });
+  assert.deepEqual(buildRpcRequest(['profile-onboard']), {
+    method: 'operator.profiles.discover',
+    params: {},
+    cliAction: 'profileOnboard'
+  });
+  assert.deepEqual(buildRpcRequest([
+    'profile-onboard',
+    'C:/Chrome/User Data',
+    'Profile 1',
+    'Play Console'
+  ]), {
+    method: 'operator.profiles.discover',
+    params: {
+      userDataDir: 'C:/Chrome/User Data',
+      profileDirectory: 'Profile 1',
+      profileLabel: 'Play Console'
+    },
+    cliAction: 'profileOnboard'
+  });
   assert.deepEqual(buildRpcRequest(['readiness', 'https://example.com/path']), {
     method: 'operator.verifyReadiness',
     params: {
@@ -1065,6 +1086,203 @@ test('profileDoctor reports configured profile, active tab, and readiness in one
   assert.equal(response.result.checks.activeTabOrigin.ok, true);
   assert.equal(response.result.checks.readiness.ok, true);
   assert.deepEqual(response.result.nextActions, []);
+});
+
+test('profileOnboard asks for an explicit profile when discovery finds multiple profiles', async () => {
+  const calls = [];
+  const response = await profileOnboard({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    request: {
+      id: 'profile_onboard_1',
+      method: 'operator.profiles.discover',
+      params: {
+        userDataDir: 'C:/Chrome/User Data'
+      }
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(`${request.id}:${request.method}`);
+      assert.equal(request.method, 'operator.profiles.discover');
+      return {
+        ok: true,
+        result: {
+          profiles: [
+            {
+              userDataDir: 'C:/Chrome/User Data',
+              profileDirectory: 'Default',
+              profileLabel: 'Work'
+            },
+            {
+              userDataDir: 'C:/Chrome/User Data',
+              profileDirectory: 'Profile 1',
+              profileLabel: 'Play Console'
+            }
+          ]
+        }
+      };
+    }
+  });
+
+  assert.deepEqual(calls, ['profile_onboard_1_discover_profiles:operator.profiles.discover']);
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, 'PROFILE_SELECTION_REQUIRED');
+  assert.equal(response.error.profiles.length, 2);
+  assert.deepEqual(response.error.nextActions.map((action) => action.kind), [
+    'profileSelection',
+    'profileSelection'
+  ]);
+  assert.match(response.error.nextActions[1].command, /profile-onboard/);
+  assert.match(response.error.nextActions[1].command, /Profile 1/);
+});
+
+test('profileOnboard binds the only discovered profile, launches setup, waits, and runs doctor', async () => {
+  const calls = [];
+  const setupUrl = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/profileSetup.html?profileBindingId=profbind_profile01&profileBindingVersion=1';
+  const response = await profileOnboard({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    request: {
+      id: 'profile_onboard_2',
+      method: 'operator.profiles.discover',
+      params: {}
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(`${request.id}:${request.method}`);
+      if (request.method === 'operator.profiles.discover') {
+        return {
+          ok: true,
+          result: {
+            profiles: [
+              {
+                userDataDir: 'C:/Chrome/User Data',
+                profileDirectory: 'Profile 1',
+                profileLabel: 'Play Console'
+              }
+            ]
+          }
+        };
+      }
+      assert.equal(request.method, 'operator.profile.bind');
+      assert.deepEqual(request.params, {
+        userDataDir: 'C:/Chrome/User Data',
+        profileDirectory: 'Profile 1',
+        profileLabel: 'Play Console'
+      });
+      return {
+        ok: true,
+        result: {
+          userDataDir: 'C:/Chrome/User Data',
+          profileDirectory: 'Profile 1',
+          profileLabel: 'Play Console',
+          profileBindingId: 'profbind_profile01',
+          profileBindingVersion: 1,
+          setupUrl
+        }
+      };
+    },
+    launchBootstrapFn: ({ installDir, bootstrapUrl }) => {
+      calls.push(`launch:${installDir}:${bootstrapUrl}`);
+      return {
+        attempted: true,
+        launched: true,
+        pid: 4321,
+        bootstrapUrl
+      };
+    },
+    waitForProfileVerifiedFn: async ({ requestId }) => {
+      calls.push(`wait:${requestId}`);
+      return {
+        ok: true,
+        result: {
+          profileVerified: true,
+          profileBindingStatus: 'verified',
+          connectionState: 'EXTENSION_CONNECTED',
+          profileWait: {
+            attempted: true,
+            verified: true,
+            attempts: 1
+          }
+        }
+      };
+    },
+    profileDoctorFn: async ({ request }) => {
+      calls.push(`${request.id}:${request.method}:doctor`);
+      return {
+        id: request.id,
+        ok: true,
+        result: {
+          failedChecks: [],
+          nextActions: [],
+          status: {
+            profileVerified: true
+          }
+        }
+      };
+    }
+  });
+
+  assert.deepEqual(calls, [
+    'profile_onboard_2_discover_profiles:operator.profiles.discover',
+    'profile_onboard_2_bind_profile:operator.profile.bind',
+    `launch:C:/Operator:${setupUrl}`,
+    'wait:profile_onboard_2',
+    'profile_onboard_2_doctor:operator.status:doctor'
+  ]);
+  assert.equal(response.ok, true);
+  assert.equal(response.result.selection.autoSelected, true);
+  assert.equal(response.result.selectedProfile.profileDirectory, 'Profile 1');
+  assert.equal(response.result.bind.profileBindingId, 'profbind_profile01');
+  assert.equal(response.result.bootstrapLaunch.pid, 4321);
+  assert.equal(response.result.profileWait.profileVerified, true);
+  assert.equal(response.result.doctor.ok, true);
+});
+
+test('waitForProfileVerified polls profile verify until the binding is verified', async () => {
+  const calls = [];
+  const profileResponses = [
+    {
+      profileVerified: false,
+      profileBindingStatus: 'binding-pending',
+      connectionState: 'EXTENSION_CONNECTED_SETUP_ONLY'
+    },
+    {
+      profileVerified: true,
+      profileBindingStatus: 'verified',
+      connectionState: 'EXTENSION_CONNECTED'
+    }
+  ];
+  const response = await waitForProfileVerified({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    requestId: 'profile_onboard_3',
+    delayFn: async () => {},
+    sendRpcFn: async ({ request }) => {
+      calls.push(`${request.id}:${request.method}`);
+      return {
+        ok: true,
+        result: profileResponses.shift()
+      };
+    }
+  });
+
+  assert.deepEqual(calls, [
+    'profile_onboard_3_profile_verify_1:operator.profile.verify',
+    'profile_onboard_3_profile_verify_2:operator.profile.verify'
+  ]);
+  assert.equal(response.ok, true);
+  assert.equal(response.result.profileVerified, true);
+  assert.equal(response.result.profileWait.attempted, true);
+  assert.equal(response.result.profileWait.verified, true);
+  assert.equal(response.result.profileWait.attempts, 2);
 });
 
 test('profileDoctor gives next actions when profile is not verified and origin is not ready', async () => {

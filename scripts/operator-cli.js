@@ -26,6 +26,7 @@ function usage() {
   node scripts/operator-cli.js profile-bind <userDataDir> <profileDirectory> [profileLabel]
   node scripts/operator-cli.js profile-verify
   node scripts/operator-cli.js profile-doctor [origin-or-url]
+  node scripts/operator-cli.js profile-onboard [userDataDir] [profileDirectory] [profileLabel]
   node scripts/operator-cli.js readiness <origin-or-url>
   node scripts/operator-cli.js wait-ready <origin-or-url> [timeoutMs] [pollIntervalMs]
   node scripts/operator-cli.js approvals
@@ -172,6 +173,16 @@ function buildRpcRequest(argv) {
         method: 'operator.status',
         params: args[0] ? { origin: new URL(args[0]).origin } : {},
         cliAction: 'profileDoctor'
+      };
+    case 'profile-onboard':
+      return {
+        method: 'operator.profiles.discover',
+        params: {
+          ...(args[0] === undefined ? {} : { userDataDir: args[0] }),
+          ...(args[1] === undefined ? {} : { profileDirectory: args[1] }),
+          ...(args.length > 2 ? { profileLabel: args.slice(2).join(' ') } : {})
+        },
+        cliAction: 'profileOnboard'
       };
     case 'readiness':
       requireArgs(args, 1);
@@ -766,6 +777,302 @@ function uniqueActions(actions) {
     seen.add(key);
     return true;
   });
+}
+
+function quoteCommandArg(value) {
+  const text = String(value);
+  return /[\s"]/u.test(text) ? JSON.stringify(text) : text;
+}
+
+function profileOnboardCommand(profile) {
+  const args = [
+    'node',
+    'scripts/operator-cli.js',
+    'profile-onboard',
+    profile.userDataDir,
+    profile.profileDirectory,
+    profile.profileLabel
+  ].filter((value) => value !== undefined && value !== null && value !== '');
+  return args.map(quoteCommandArg).join(' ');
+}
+
+function profileSetupAction(setupUrl) {
+  return {
+    kind: 'profileSetup',
+    url: setupUrl,
+    description: 'Open the profile setup URL in the selected Chrome profile to complete profile binding.',
+    requiresUserGesture: true
+  };
+}
+
+async function waitForProfileVerified({
+  settings,
+  requestId,
+  sendRpcFn = sendRpc,
+  timeoutMs = 15000,
+  pollIntervalMs = 250,
+  delayFn = delay
+}) {
+  const started = Date.now();
+  let attempts = 0;
+  let lastResponse = null;
+  let lastError = null;
+
+  while (Date.now() - started < timeoutMs) {
+    attempts += 1;
+    try {
+      const response = await sendRpcFn({
+        baseUrl: settings.baseUrl,
+        token: settings.token,
+        request: {
+          id: `${requestId}_profile_verify_${attempts}`,
+          method: 'operator.profile.verify',
+          params: {}
+        }
+      });
+      lastResponse = response;
+      if (response && response.ok && response.result && response.result.profileVerified === true) {
+        return {
+          ...response,
+          result: {
+            ...response.result,
+            profileWait: {
+              attempted: true,
+              verified: true,
+              elapsedMs: Date.now() - started,
+              attempts
+            }
+          }
+        };
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await delayFn(pollIntervalMs);
+  }
+
+  return {
+    id: requestId,
+    ok: false,
+    error: {
+      code: 'PROFILE_ONBOARD_VERIFY_TIMEOUT',
+      message: 'Timed out waiting for Chrome profile binding verification.',
+      timeoutMs,
+      attempts,
+      lastProfileStatus: lastResponse && lastResponse.ok ? lastResponse.result : null,
+      lastError: lastError ? lastError.message : null
+    }
+  };
+}
+
+async function profileOnboard({
+  settings,
+  request,
+  sendRpcFn = sendRpc,
+  launchBootstrapFn = launchBootstrapChrome,
+  waitForProfileVerifiedFn = waitForProfileVerified,
+  profileDoctorFn = profileDoctor,
+  openBootstrap = true,
+  profileWaitTimeoutMs = 15000,
+  profileWaitPollIntervalMs = 250
+}) {
+  const params = request && request.params ? request.params : {};
+  let selectedProfile = null;
+  let discovery = null;
+  const selection = {
+    source: params.profileDirectory ? 'explicit' : 'discovered',
+    autoSelected: false
+  };
+
+  if (params.profileDirectory) {
+    if (!params.userDataDir) {
+      return {
+        id: request && request.id,
+        ok: false,
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'profile-onboard requires userDataDir when profileDirectory is provided.'
+        }
+      };
+    }
+    selectedProfile = {
+      userDataDir: params.userDataDir,
+      profileDirectory: params.profileDirectory,
+      ...(params.profileLabel ? { profileLabel: params.profileLabel } : {})
+    };
+  } else {
+    const discoveryResponse = await sendRpcFn({
+      baseUrl: settings.baseUrl,
+      token: settings.token,
+      request: {
+        id: `${request.id}_discover_profiles`,
+        method: 'operator.profiles.discover',
+        params: {
+          ...(params.userDataDir ? { userDataDir: params.userDataDir } : {})
+        }
+      }
+    });
+    if (!discoveryResponse || !discoveryResponse.ok) {
+      return discoveryResponse;
+    }
+
+    discovery = discoveryResponse.result || {};
+    const profiles = Array.isArray(discovery.profiles) ? discovery.profiles : [];
+    if (profiles.length === 0) {
+      return {
+        id: request.id,
+        ok: false,
+        error: {
+          code: 'PROFILE_ONBOARD_NO_PROFILES',
+          message: 'No Chrome profiles were discovered for onboarding.',
+          userDataDir: params.userDataDir || null,
+          nextActions: [
+            {
+              kind: 'profileDiscovery',
+              command: params.userDataDir
+                ? `node scripts/operator-cli.js profiles ${quoteCommandArg(params.userDataDir)}`
+                : 'node scripts/operator-cli.js profiles',
+              description: 'Confirm Chrome profile discovery before binding a profile.',
+              requiresUserGesture: false
+            }
+          ]
+        }
+      };
+    }
+
+    if (profiles.length > 1) {
+      return {
+        id: request.id,
+        ok: false,
+        error: {
+          code: 'PROFILE_SELECTION_REQUIRED',
+          message: 'Multiple Chrome profiles were discovered; rerun profile-onboard with the intended profile directory.',
+          profiles,
+          nextActions: profiles.map((profile) => ({
+            kind: 'profileSelection',
+            command: profileOnboardCommand(profile),
+            description: `Bind Chrome profile ${profile.profileLabel || profile.profileDirectory}.`,
+            requiresUserGesture: false
+          }))
+        }
+      };
+    }
+
+    selectedProfile = profiles[0];
+    selection.source = 'single-discovered-profile';
+    selection.autoSelected = true;
+  }
+
+  const bindParams = {
+    userDataDir: selectedProfile.userDataDir,
+    profileDirectory: selectedProfile.profileDirectory,
+    profileLabel: params.profileLabel || selectedProfile.profileLabel || undefined
+  };
+  const bindResponse = await sendRpcFn({
+    baseUrl: settings.baseUrl,
+    token: settings.token,
+    request: {
+      id: `${request.id}_bind_profile`,
+      method: 'operator.profile.bind',
+      params: bindParams
+    }
+  });
+  if (!bindResponse || !bindResponse.ok) {
+    return bindResponse;
+  }
+
+  const setupUrl = bindResponse.result && bindResponse.result.setupUrl;
+  if (!setupUrl) {
+    return {
+      id: request.id,
+      ok: false,
+      error: {
+        code: 'PROFILE_ONBOARD_SETUP_URL_MISSING',
+        message: 'Profile bind succeeded but did not return a setup URL.',
+        selectedProfile,
+        bind: bindResponse.result || null
+      }
+    };
+  }
+
+  const bootstrapLaunch = openBootstrap
+    ? launchBootstrapFn({
+      installDir: settings.installDir,
+      bootstrapUrl: setupUrl
+    })
+    : {
+      attempted: false,
+      launched: false,
+      skippedReason: 'NO_BOOTSTRAP',
+      bootstrapUrl: setupUrl
+    };
+
+  if (!bootstrapLaunch || !bootstrapLaunch.launched) {
+    return {
+      id: request.id,
+      ok: false,
+      error: {
+        code: openBootstrap ? 'PROFILE_ONBOARD_BOOTSTRAP_FAILED' : 'PROFILE_ONBOARD_BOOTSTRAP_SKIPPED',
+        message: openBootstrap
+          ? 'Chrome profile setup could not be launched automatically.'
+          : 'Chrome profile setup launch was skipped.',
+        selectedProfile,
+        bind: bindResponse.result,
+        setupUrl,
+        bootstrapLaunch,
+        nextActions: [profileSetupAction(setupUrl)]
+      }
+    };
+  }
+
+  const verifyResponse = await waitForProfileVerifiedFn({
+    settings,
+    requestId: request.id,
+    sendRpcFn,
+    timeoutMs: profileWaitTimeoutMs,
+    pollIntervalMs: profileWaitPollIntervalMs
+  });
+  if (!verifyResponse || !verifyResponse.ok) {
+    return {
+      id: request.id,
+      ok: false,
+      error: {
+        ...(verifyResponse && verifyResponse.error ? verifyResponse.error : {
+          code: 'PROFILE_ONBOARD_VERIFY_FAILED',
+          message: 'Profile verification did not complete.'
+        }),
+        selectedProfile,
+        bind: bindResponse.result,
+        setupUrl,
+        bootstrapLaunch,
+        nextActions: [profileSetupAction(setupUrl)]
+      }
+    };
+  }
+
+  const doctorResponse = await profileDoctorFn({
+    settings,
+    request: {
+      id: `${request.id}_doctor`,
+      method: 'operator.status',
+      params: {}
+    },
+    sendRpcFn
+  });
+
+  return {
+    id: request.id,
+    ok: Boolean(doctorResponse && doctorResponse.ok),
+    result: {
+      selection,
+      selectedProfile,
+      bind: bindResponse.result,
+      setupUrl,
+      bootstrapLaunch,
+      profileWait: verifyResponse.result,
+      doctor: doctorResponse
+    }
+  };
 }
 
 async function profileDoctor({
@@ -1441,6 +1748,12 @@ async function run(argv = process.argv.slice(2), output = process.stdout) {
       settings,
       request
     })
+    : cliAction === 'profileOnboard'
+    ? await profileOnboard({
+      settings,
+      request,
+      openBootstrap: options.openBootstrap !== false
+    })
     : cliAction === 'openObserve'
     ? await openObserve({
       settings,
@@ -1487,6 +1800,7 @@ module.exports = {
   openObserve,
   prepareOrigin,
   profileDoctor,
+  profileOnboard,
   resolveCliSettings,
   run,
   startDaemonProcess,
@@ -1494,5 +1808,6 @@ module.exports = {
   usage,
   waitForActiveTabUrl,
   waitForExtensionConnection,
+  waitForProfileVerified,
   waitReady
 };
