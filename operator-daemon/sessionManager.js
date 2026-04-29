@@ -54,6 +54,7 @@ function clearsLastErrorOnSuccess(method) {
     'operator.fullAuto.stop',
     'operator.fullAuto.status',
     'operator.audit.tail',
+    'operator.ensureStarted',
     'operator.approvals.approve',
     'operator.approvals.reject',
     'operator.approvals.run'
@@ -106,6 +107,10 @@ function isLocalMockOrigin(origin) {
 
 function makeConnectionId() {
   return `conn_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function makeBootstrapSessionId() {
+  return `boot_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
 function originFromParams(params = {}) {
@@ -269,6 +274,9 @@ class SessionManager {
     switch (request.method) {
       case 'operator.status':
         response = rpcOk(id, this.status());
+        break;
+      case 'operator.ensureStarted':
+        response = this.ensureStarted(id, params);
         break;
       case 'extension.hello':
         response = this.handleHello(id, params.hello, params);
@@ -510,6 +518,35 @@ class SessionManager {
       this.activeTab = normalized;
     }
     return this.activeTab;
+  }
+
+  ensureStarted(id, params = {}) {
+    const status = this.status();
+    const extensionConnected = [
+      'EXTENSION_CONNECTED',
+      'EXTENSION_CONNECTED_SETUP_ONLY'
+    ].includes(status.connectionState);
+    const bootstrapUrl = `chrome-extension://${this.config.expectedExtensionId}/bootstrap.html?session=${makeBootstrapSessionId()}`;
+    let readiness = null;
+    if (params.origin || params.url) {
+      const origin = originFromParams(params);
+      readiness = {
+        origin,
+        profileVerified: this.profileVerified,
+        domainApproved: this.hasDomainApproval(origin),
+        hostPermissionGranted: this.hasHostPermission(origin)
+      };
+    }
+
+    return rpcOk(id, {
+      daemonRunning: true,
+      extensionConnected,
+      profileReady: this.profileVerified,
+      bootstrapRequired: !extensionConnected,
+      bootstrapUrl,
+      readiness,
+      status
+    });
   }
 
   handleDisconnected(id, params = {}) {

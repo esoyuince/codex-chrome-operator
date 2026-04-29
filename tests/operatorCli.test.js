@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const {
   buildRpcRequest,
+  ensureStarted,
   resolveCliSettings
 } = require('../scripts/operator-cli');
 
@@ -14,6 +15,60 @@ test('buildRpcRequest maps status to operator.status', () => {
     method: 'operator.status',
     params: {}
   });
+  assert.deepEqual(buildRpcRequest(['ensure-started']), {
+    method: 'operator.ensureStarted',
+    params: {}
+  });
+  assert.deepEqual(buildRpcRequest(['ensure-started', 'https://example.com/path']), {
+    method: 'operator.ensureStarted',
+    params: {
+      origin: 'https://example.com'
+    }
+  });
+});
+
+test('ensureStarted starts daemon when the first RPC cannot connect', async () => {
+  const calls = [];
+  const response = await ensureStarted({
+    request: {
+      id: 'req_1',
+      method: 'operator.ensureStarted',
+      params: {}
+    },
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    openBootstrap: false,
+    sendRpcFn: async () => {
+      calls.push('send');
+      if (calls.length === 1) {
+        throw Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:19091'), { code: 'ECONNREFUSED' });
+      }
+      return {
+        ok: true,
+        result: {
+          daemonRunning: true,
+          bootstrapRequired: true,
+          bootstrapUrl: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/bootstrap.html?session=boot'
+        }
+      };
+    },
+    startDaemonFn: () => {
+      calls.push('start');
+      return { pid: 1234 };
+    },
+    waitForDaemonFn: async ({ request, sendRpcFn }) => {
+      calls.push('wait');
+      return sendRpcFn({ request });
+    }
+  });
+
+  assert.deepEqual(calls, ['send', 'start', 'wait', 'send']);
+  assert.equal(response.ok, true);
+  assert.equal(response.result.daemonStarted, true);
+  assert.equal(response.result.daemonPid, 1234);
 });
 
 test('buildRpcRequest maps approval and page commands', () => {

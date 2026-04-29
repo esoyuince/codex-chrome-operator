@@ -348,6 +348,15 @@ async function runCleanSmoke(options = {}) {
     stopPortOwner(config.fixturePort);
     startDaemon(config);
     await waitForStatus(settings, (status) => status.connectionState === 'DAEMON_RUNNING_EXTENSION_DISCONNECTED');
+    const ensureStartedBeforeChrome = runCliJson(['--no-bootstrap', 'ensure-started'], settings);
+    if (
+      !ensureStartedBeforeChrome.ok ||
+      ensureStartedBeforeChrome.result.daemonRunning !== true ||
+      ensureStartedBeforeChrome.result.bootstrapRequired !== true ||
+      !ensureStartedBeforeChrome.result.bootstrapUrl
+    ) {
+      throw new Error(`Ensure-started did not report bootstrap readiness: ${JSON.stringify(ensureStartedBeforeChrome)}`);
+    }
 
     fixtureServer = await startFixtureServer(config);
     stopChromeProfile(config.profileDir);
@@ -695,6 +704,8 @@ async function runCleanSmoke(options = {}) {
       ok: true,
       chromePid,
       extensionId: config.extensionId,
+      ensureStartedBootstrapRequired: ensureStartedBeforeChrome.result.bootstrapRequired,
+      ensureStartedBootstrapUrl: ensureStartedBeforeChrome.result.bootstrapUrl,
       origin: config.origin,
       blockedBeforeHostPermission: blockedObserve.error.code,
       observedTitle: observation.result.title,

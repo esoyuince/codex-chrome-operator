@@ -121,6 +121,22 @@ test('operator.status returns disconnected state before HELLO', async () => {
   });
 });
 
+test('operator.ensureStarted reports daemon readiness and bootstrap URL before extension connects', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    const result = await postJson(baseUrl, 'operator.ensureStarted');
+
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.daemonRunning, true);
+    assert.equal(result.body.result.extensionConnected, false);
+    assert.equal(result.body.result.bootstrapRequired, true);
+    assert.match(
+      result.body.result.bootstrapUrl,
+      /^chrome-extension:\/\/abcdefghijklmnopabcdefghijklmnop\/bootstrap\.html\?session=/
+    );
+    assert.equal(result.body.result.status.connectionState, 'DAEMON_RUNNING_EXTENSION_DISCONNECTED');
+  });
+});
+
 test('extension.hello and tab updates expose active tab in operator.status', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     const hello = await postJson(baseUrl, 'extension.hello', {

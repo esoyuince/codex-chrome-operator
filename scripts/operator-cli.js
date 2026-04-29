@@ -1,9 +1,13 @@
 'use strict';
 
+const childProcess = require('node:child_process');
+const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { sendRpc } = require('../native-bridge/daemonClient');
 const { loadConfig, loadInstalledToken } = require('../operator-daemon/daemon');
+
+const ROOT = path.resolve(__dirname, '..');
 
 function defaultInstallDir(env = process.env) {
   return path.join(
@@ -15,6 +19,7 @@ function defaultInstallDir(env = process.env) {
 function usage() {
   return `Usage:
   node scripts/operator-cli.js status
+  node scripts/operator-cli.js ensure-started [origin-or-url]
   node scripts/operator-cli.js profiles [userDataDir]
   node scripts/operator-cli.js profile-bind <userDataDir> <profileDirectory> [profileLabel]
   node scripts/operator-cli.js profile-verify
@@ -43,6 +48,7 @@ function usage() {
 Options:
   --base-url <url>   Override daemon base URL
   --token <token>    Override daemon bearer token
+  --no-bootstrap     Do not launch Chrome bootstrap from ensure-started
 `;
 }
 
@@ -64,6 +70,8 @@ function splitOptions(argv) {
     } else if (arg === '--install-dir') {
       options.installDir = argv[index + 1];
       index += 1;
+    } else if (arg === '--no-bootstrap') {
+      options.openBootstrap = false;
     } else {
       positional.push(arg);
     }
@@ -92,6 +100,11 @@ function buildRpcRequest(argv) {
   switch (command) {
     case 'status':
       return { method: 'operator.status', params: {} };
+    case 'ensure-started':
+      return {
+        method: 'operator.ensureStarted',
+        params: args[0] ? { origin: new URL(args[0]).origin } : {}
+      };
     case 'profiles':
       return {
         method: 'operator.profiles.discover',
@@ -253,8 +266,190 @@ function resolveCliSettings({
 
   return {
     baseUrl: baseUrl || `http://127.0.0.1:${port}`,
-    token: resolvedToken
+    token: resolvedToken,
+    installDir
   };
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isDaemonConnectionFailure(error) {
+  const text = `${error && error.code ? error.code : ''} ${error && error.message ? error.message : ''}`;
+  return /ECONNREFUSED|ECONNRESET|fetch failed|Failed to fetch|connect/i.test(text);
+}
+
+function logPath(installDir, fileName) {
+  const logDir = path.join(installDir, 'logs');
+  fs.mkdirSync(logDir, { recursive: true });
+  return path.join(logDir, fileName);
+}
+
+function startDaemonProcess({ installDir = defaultInstallDir() } = {}) {
+  const out = fs.openSync(logPath(installDir, 'operator-daemon.out.log'), 'a');
+  const err = fs.openSync(logPath(installDir, 'operator-daemon.err.log'), 'a');
+  const child = childProcess.spawn(process.execPath, ['operator-daemon/daemon.js', '--daemon'], {
+    cwd: ROOT,
+    detached: true,
+    windowsHide: true,
+    stdio: ['ignore', out, err]
+  });
+  child.unref();
+  return { pid: child.pid };
+}
+
+async function waitForDaemon({
+  settings,
+  request,
+  sendRpcFn = sendRpc,
+  timeoutMs = 10000,
+  pollIntervalMs = 250
+}) {
+  const started = Date.now();
+  let lastError = null;
+  while (Date.now() - started < timeoutMs) {
+    try {
+      return await sendRpcFn({
+        baseUrl: settings.baseUrl,
+        token: settings.token,
+        request
+      });
+    } catch (error) {
+      lastError = error;
+    }
+    await delay(pollIntervalMs);
+  }
+  throw lastError || new Error('Timed out waiting for daemon.');
+}
+
+function findChromeForBootstrap(installDir, env = process.env) {
+  const browserRoot = path.join(installDir, 'browsers', 'chrome');
+  if (fs.existsSync(browserRoot)) {
+    const candidates = fs.readdirSync(browserRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => path.join(browserRoot, entry.name, 'chrome-win64', 'chrome.exe'))
+      .filter((candidate) => fs.existsSync(candidate))
+      .sort()
+      .reverse();
+    if (candidates[0]) {
+      return candidates[0];
+    }
+  }
+
+  const common = [
+    env.ProgramFiles && path.join(env.ProgramFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    env['ProgramFiles(x86)'] && path.join(env['ProgramFiles(x86)'], 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')
+  ].filter(Boolean);
+  return common.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function loadConfiguredProfile(installDir) {
+  const statePath = path.join(installDir, 'state.json');
+  if (!fs.existsSync(statePath)) {
+    return null;
+  }
+  try {
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    return state.configuredProfile || null;
+  } catch {
+    return null;
+  }
+}
+
+function launchBootstrapChrome({
+  installDir = defaultInstallDir(),
+  bootstrapUrl,
+  env = process.env
+} = {}) {
+  const chromePath = findChromeForBootstrap(installDir, env);
+  if (!chromePath) {
+    return {
+      attempted: true,
+      launched: false,
+      error: {
+        code: 'CHROME_NOT_FOUND',
+        message: 'Chrome executable was not found for bootstrap launch.'
+      }
+    };
+  }
+
+  const extensionDir = path.join(installDir, 'extension-unpacked');
+  const configuredProfile = loadConfiguredProfile(installDir);
+  const args = [];
+  if (configuredProfile && configuredProfile.userDataDir) {
+    args.push(`--user-data-dir=${configuredProfile.userDataDir}`);
+    if (configuredProfile.profileDirectory) {
+      args.push(`--profile-directory=${configuredProfile.profileDirectory}`);
+    }
+  } else if (fs.existsSync(path.join(extensionDir, 'manifest.json'))) {
+    args.push(`--user-data-dir=${path.join(installDir, 'chrome-operator-profile')}`);
+  }
+  if (fs.existsSync(path.join(extensionDir, 'manifest.json'))) {
+    args.push(`--load-extension=${extensionDir}`);
+  }
+  args.push('--no-first-run', '--new-window', bootstrapUrl);
+
+  const child = childProcess.spawn(chromePath, args, {
+    detached: true,
+    windowsHide: true,
+    stdio: 'ignore'
+  });
+  child.unref();
+  return {
+    attempted: true,
+    launched: true,
+    pid: child.pid,
+    bootstrapUrl
+  };
+}
+
+async function ensureStarted({
+  settings,
+  request,
+  sendRpcFn = sendRpc,
+  startDaemonFn = startDaemonProcess,
+  waitForDaemonFn = waitForDaemon,
+  launchBootstrapFn = launchBootstrapChrome,
+  openBootstrap = true
+}) {
+  let daemonStarted = false;
+  let daemonPid = null;
+  let response;
+  try {
+    response = await sendRpcFn({
+      baseUrl: settings.baseUrl,
+      token: settings.token,
+      request
+    });
+  } catch (error) {
+    if (!isDaemonConnectionFailure(error)) {
+      throw error;
+    }
+    const started = startDaemonFn({ installDir: settings.installDir });
+    daemonStarted = true;
+    daemonPid = started && started.pid ? started.pid : null;
+    response = await waitForDaemonFn({
+      settings,
+      request,
+      sendRpcFn
+    });
+  }
+
+  if (response && response.ok && response.result) {
+    response.result.daemonStarted = daemonStarted;
+    if (daemonPid) {
+      response.result.daemonPid = daemonPid;
+    }
+    if (openBootstrap && response.result.bootstrapRequired && response.result.bootstrapUrl) {
+      response.result.bootstrapLaunch = launchBootstrapFn({
+        installDir: settings.installDir,
+        bootstrapUrl: response.result.bootstrapUrl
+      });
+    }
+  }
+  return response;
 }
 
 async function run(argv = process.argv.slice(2), output = process.stdout) {
@@ -264,11 +459,17 @@ async function run(argv = process.argv.slice(2), output = process.stdout) {
     ...buildRpcRequest(argv)
   };
   const settings = resolveCliSettings(options);
-  const response = await sendRpc({
-    baseUrl: settings.baseUrl,
-    token: settings.token,
-    request
-  });
+  const response = request.method === 'operator.ensureStarted'
+    ? await ensureStarted({
+      settings,
+      request,
+      openBootstrap: options.openBootstrap !== false
+    })
+    : await sendRpc({
+      baseUrl: settings.baseUrl,
+      token: settings.token,
+      request
+    });
   output.write(`${JSON.stringify(response, null, 2)}\n`);
   return response;
 }
@@ -287,8 +488,12 @@ if (require.main === module) {
 module.exports = {
   buildRpcRequest,
   defaultInstallDir,
+  ensureStarted,
+  findChromeForBootstrap,
+  launchBootstrapChrome,
   resolveCliSettings,
   run,
+  startDaemonProcess,
   splitOptions,
   usage
 };
