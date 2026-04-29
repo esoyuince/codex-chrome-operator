@@ -47,6 +47,8 @@ function clearsLastErrorOnSuccess(method) {
     'operator.profiles.discover',
     'extension.hostPermissionsSynced',
     'operator.screenshots.cleanup',
+    'operator.emergencyStop',
+    'operator.emergencyClear',
     'operator.approvals.approve',
     'operator.approvals.reject',
     'operator.approvals.run'
@@ -93,6 +95,12 @@ class SessionManager {
     this.nextCommandId = 1;
     this.pendingApprovals = new Map();
     this.nextApprovalId = 1;
+    this.emergencyStop = {
+      active: false,
+      reason: null,
+      stoppedAt: null,
+      clearedAt: null
+    };
   }
 
   status() {
@@ -105,6 +113,7 @@ class SessionManager {
       domainApprovals: this.stateStore.listDomainApprovals(),
       configuredProfile: this.stateStore.getConfiguredProfile(),
       pendingApprovals: this.listApprovalRecords({ status: 'pending' }),
+      emergencyStop: { ...this.emergencyStop },
       auditLogPath: this.config.auditLogPath,
       screenshotDir: this.config.screenshotDir,
       lastError: this.lastError
@@ -168,6 +177,12 @@ class SessionManager {
         break;
       case 'operator.screenshots.cleanup':
         response = this.cleanupScreenshots(id, params);
+        break;
+      case 'operator.emergencyStop':
+        response = this.activateEmergencyStop(id, params);
+        break;
+      case 'operator.emergencyClear':
+        response = this.clearEmergencyStop(id);
         break;
       case 'page.observe':
       case 'page.visualObserve':
@@ -431,6 +446,10 @@ class SessionManager {
   }
 
   async routePageCommand(id, method, params) {
+    if (this.emergencyStop.active) {
+      return rpcError(id, this.emergencyStopError());
+    }
+
     const origin = params.origin || (params.url ? new URL(params.url).origin : undefined);
     const readiness = assertReadyForRealSiteAction({
       profileVerified: this.profileVerified,
@@ -498,6 +517,62 @@ class SessionManager {
     return rpcOk(id, this.screenshotStore.cleanup({
       olderThanMs: params.olderThanMs
     }));
+  }
+
+  emergencyStopError() {
+    return {
+      code: ERROR_CODES.EMERGENCY_STOPPED,
+      message: this.emergencyStop.reason
+        ? `Emergency stop is active: ${this.emergencyStop.reason}`
+        : 'Emergency stop is active.',
+      emergencyStop: { ...this.emergencyStop }
+    };
+  }
+
+  cancelPendingCommands(error) {
+    const cancelledPendingCommands = this.pendingCommands.size;
+    const cancelledQueuedCommands = this.commandQueue.length;
+    this.commandQueue = [];
+
+    for (const pending of this.pendingCommands.values()) {
+      clearTimeout(pending.timeout);
+      pending.resolve({
+        ok: false,
+        error
+      });
+    }
+    this.pendingCommands.clear();
+
+    return {
+      cancelledPendingCommands,
+      cancelledQueuedCommands
+    };
+  }
+
+  activateEmergencyStop(id, params = {}) {
+    this.emergencyStop = {
+      active: true,
+      reason: typeof params.reason === 'string' && params.reason.trim()
+        ? params.reason.trim()
+        : 'Emergency stop requested.',
+      stoppedAt: new Date().toISOString(),
+      clearedAt: null
+    };
+    const cancelled = this.cancelPendingCommands(this.emergencyStopError());
+
+    return rpcOk(id, {
+      ...this.emergencyStop,
+      ...cancelled
+    });
+  }
+
+  clearEmergencyStop(id) {
+    this.emergencyStop = {
+      ...this.emergencyStop,
+      active: false,
+      clearedAt: new Date().toISOString()
+    };
+    return rpcOk(id, { ...this.emergencyStop });
   }
 
   attachApprovalRequest(method, params, error) {
@@ -585,6 +660,10 @@ class SessionManager {
   }
 
   async runApproval(id, params) {
+    if (this.emergencyStop.active) {
+      return rpcError(id, this.emergencyStopError());
+    }
+
     const record = this.approvalRecord(params);
     if (!record) {
       return rpcError(id, {

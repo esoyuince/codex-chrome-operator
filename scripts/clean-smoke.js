@@ -469,6 +469,22 @@ async function runCleanSmoke(options = {}) {
     ) {
       throw new Error(`Visual observe did not return a stored screenshot artifact: ${JSON.stringify(visualObservation)}`);
     }
+    const emergencyStop = runCliJson(['emergency-stop', 'clean smoke stop'], settings);
+    if (!emergencyStop.ok || emergencyStop.result.active !== true) {
+      throw new Error(`Emergency stop failed: ${JSON.stringify(emergencyStop)}`);
+    }
+    const emergencyBlockedObserve = runCliJson(['observe', config.origin], settings);
+    if (emergencyBlockedObserve.ok || emergencyBlockedObserve.error.code !== 'EMERGENCY_STOPPED') {
+      throw new Error(`Expected EMERGENCY_STOPPED during emergency stop: ${JSON.stringify(emergencyBlockedObserve)}`);
+    }
+    const emergencyClear = runCliJson(['emergency-clear'], settings);
+    if (!emergencyClear.ok || emergencyClear.result.active !== false) {
+      throw new Error(`Emergency clear failed: ${JSON.stringify(emergencyClear)}`);
+    }
+    const postEmergencyObserve = runCliJson(['observe', config.origin], settings);
+    if (!postEmergencyObserve.ok) {
+      throw new Error(`Observe failed after emergency clear: ${JSON.stringify(postEmergencyObserve)}`);
+    }
     runCliJson(['fill', config.origin, 'el_0', 'Clean Smoke App'], settings);
     runCliJson(['fill', config.origin, 'el_1', 'Single command smoke test.'], settings);
     runCliJson(['click', config.origin, 'el_2'], settings);
@@ -542,6 +558,8 @@ async function runCleanSmoke(options = {}) {
       visualScreenshotBytes: screenshotArtifact.bytes,
       visualScreenshotSha256: screenshotArtifact.sha256,
       gatedVisualBlocked: gatedVisualObserve.error.code,
+      emergencyBlocked: emergencyBlockedObserve.error.code,
+      emergencyCleared: emergencyClear.result.active === false,
       gateHandoffBlocked: gatedClick.error.code,
       gateHandoffResume: gateDom.gateStatus,
       highRiskBlocked: highRiskClick.error.code,

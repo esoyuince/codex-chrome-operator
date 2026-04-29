@@ -321,6 +321,86 @@ test('operator.screenshots.cleanup removes stored visual artifacts', async () =>
   });
 });
 
+test('operator.emergencyStop cancels pending page actions and blocks new ones until cleared', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+        profileBindingVersion: 3,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://example.com'
+    });
+
+    const observePromise = postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    const command = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(command.body.result.command.method, 'page.observe');
+
+    const stopped = await postJson(baseUrl, 'operator.emergencyStop', {
+      reason: 'unit test stop'
+    });
+    assert.equal(stopped.body.ok, true);
+    assert.equal(stopped.body.result.active, true);
+    assert.equal(stopped.body.result.cancelledPendingCommands, 1);
+
+    const cancelled = await observePromise;
+    assert.equal(cancelled.body.ok, false);
+    assert.equal(cancelled.body.error.code, ERROR_CODES.EMERGENCY_STOPPED);
+
+    const blocked = await postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    assert.equal(blocked.body.ok, false);
+    assert.equal(blocked.body.error.code, ERROR_CODES.EMERGENCY_STOPPED);
+
+    const emptyQueue = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(emptyQueue.body.result.command, null);
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.equal(status.body.result.emergencyStop.active, true);
+    assert.equal(status.body.result.emergencyStop.reason, 'unit test stop');
+
+    const cleared = await postJson(baseUrl, 'operator.emergencyClear');
+    assert.equal(cleared.body.ok, true);
+    assert.equal(cleared.body.result.active, false);
+
+    const afterClearPromise = postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    const afterClearCommand = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(afterClearCommand.body.result.command.method, 'page.observe');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: afterClearCommand.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          title: 'Recovered',
+          elements: []
+        }
+      }
+    });
+    const afterClear = await afterClearPromise;
+    assert.equal(afterClear.body.ok, true);
+    assert.equal(afterClear.body.result.title, 'Recovered');
+  });
+});
+
 test('successful page command clears stale lastError', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {

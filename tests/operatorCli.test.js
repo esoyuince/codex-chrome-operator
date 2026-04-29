@@ -37,6 +37,14 @@ test('buildRpcRequest maps approval and page commands', () => {
     method: 'operator.screenshots.cleanup',
     params: { olderThanMs: 60000 }
   });
+  assert.deepEqual(buildRpcRequest(['emergency-stop', 'stop now']), {
+    method: 'operator.emergencyStop',
+    params: { reason: 'stop now' }
+  });
+  assert.deepEqual(buildRpcRequest(['emergency-clear']), {
+    method: 'operator.emergencyClear',
+    params: {}
+  });
   assert.deepEqual(buildRpcRequest(['fill', 'https://example.com', 'el_0', 'hello world']), {
     method: 'page.fill',
     params: {

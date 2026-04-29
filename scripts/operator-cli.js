@@ -26,6 +26,8 @@ function usage() {
   node scripts/operator-cli.js approve <origin>
   node scripts/operator-cli.js revoke <origin>
   node scripts/operator-cli.js screenshots-cleanup [olderThanMs]
+  node scripts/operator-cli.js emergency-stop [reason]
+  node scripts/operator-cli.js emergency-clear
   node scripts/operator-cli.js observe <origin>
   node scripts/operator-cli.js visual-observe <origin>
   node scripts/operator-cli.js navigate <url>
@@ -125,6 +127,15 @@ function buildRpcRequest(argv) {
           olderThanMs: args[0] === undefined ? 0 : Number(args[0])
         }
       };
+    case 'emergency-stop':
+      return {
+        method: 'operator.emergencyStop',
+        params: {
+          reason: args.join(' ') || undefined
+        }
+      };
+    case 'emergency-clear':
+      return { method: 'operator.emergencyClear', params: {} };
     case 'observe':
       requireArgs(args, 1);
       return { method: 'page.observe', params: { origin: args[0] } };
