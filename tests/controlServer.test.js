@@ -117,6 +117,45 @@ test('operator.status returns disconnected state before HELLO', async () => {
     assert.equal(result.status, 200);
     assert.equal(result.body.ok, true);
     assert.equal(result.body.result.connectionState, 'DAEMON_RUNNING_EXTENSION_DISCONNECTED');
+    assert.equal(result.body.result.activeTab, null);
+  });
+});
+
+test('extension.hello and tab updates expose active tab in operator.status', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    const hello = await postJson(baseUrl, 'extension.hello', {
+      hello: verifiedHello(),
+      activeTab: {
+        id: 7,
+        windowId: 2,
+        url: 'https://example.com/start',
+        title: 'Start Page',
+        status: 'loading'
+      }
+    });
+    assert.equal(hello.body.ok, true);
+
+    const statusAfterHello = await postJson(baseUrl, 'operator.status');
+    assert.equal(statusAfterHello.body.result.activeTab.origin, 'https://example.com');
+    assert.equal(statusAfterHello.body.result.activeTab.title, 'Start Page');
+    assert.equal(statusAfterHello.body.result.activeTab.loadingState, 'loading');
+
+    const updated = await postJson(baseUrl, 'extension.activeTabUpdated', {
+      activeTab: {
+        id: 7,
+        windowId: 2,
+        url: 'https://example.com/done',
+        title: 'Done Page',
+        status: 'complete'
+      }
+    });
+    assert.equal(updated.body.ok, true);
+    assert.equal(updated.body.result.activeTab.origin, 'https://example.com');
+    assert.equal(updated.body.result.activeTab.loadingState, 'complete');
+
+    const statusAfterUpdate = await postJson(baseUrl, 'operator.status');
+    assert.equal(statusAfterUpdate.body.result.activeTab.url, 'https://example.com/done');
+    assert.equal(statusAfterUpdate.body.result.activeTab.title, 'Done Page');
   });
 });
 
@@ -487,6 +526,13 @@ test('page.observe queues extension command and resolves from bridge delivery', 
 
     await postJson(baseUrl, 'bridge.deliver', {
       commandId: command.body.result.command.commandId,
+      activeTab: {
+        id: 3,
+        windowId: 1,
+        url: 'https://example.com/basic',
+        title: 'Fixture',
+        status: 'complete'
+      },
       response: {
         ok: true,
         result: {
@@ -501,6 +547,10 @@ test('page.observe queues extension command and resolves from bridge delivery', 
     assert.equal(result.body.ok, true);
     assert.equal(result.body.result.origin, 'https://example.com');
     assert.equal(result.body.result.title, 'Fixture');
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.equal(status.body.result.activeTab.url, 'https://example.com/basic');
+    assert.equal(status.body.result.activeTab.loadingState, 'complete');
   });
 });
 

@@ -1,6 +1,6 @@
 'use strict';
 
-importScripts('permissionOrigins.js');
+importScripts('permissionOrigins.js', 'visualCapture.js');
 
 const NATIVE_HOST = 'com.codex.chrome_operator';
 const PROFILE_BINDING_SOURCE = 'chrome.storage.local';
@@ -8,6 +8,9 @@ const {
   hasBroadHostPermission,
   permissionPatternsToOrigins
 } = globalThis.CodexPermissionOrigins;
+const {
+  captureVisibleTabWithRetry
+} = globalThis.CodexVisualCapture;
 
 let nativePort = null;
 let lastNativeError = null;
@@ -77,7 +80,8 @@ function postNativeRpcNoThrow(method, params = {}) {
 
 async function sendHello() {
   postNativeRpc('extension.hello', {
-    hello: await buildHello()
+    hello: await buildHello(),
+    activeTab: await activeTabInfo()
   });
 }
 
@@ -154,6 +158,7 @@ async function handleNativeMessage(message) {
         params: {
           commandId: message.commandId,
           connectionId: message.connectionId,
+          activeTab: await activeTabInfo(),
           response
         }
       });
@@ -224,13 +229,32 @@ async function activeTabInfo() {
   if (!tab) {
     return null;
   }
+  let origin = null;
+  if (tab.url) {
+    try {
+      origin = new URL(tab.url).origin;
+    } catch {
+      origin = null;
+    }
+  }
   return {
     id: tab.id,
     windowId: tab.windowId,
     url: tab.url || null,
+    origin,
     title: tab.title || null,
-    status: tab.status || null
+    status: tab.status || null,
+    loadingState: tab.status === 'loading' ? 'loading' : 'complete'
   };
+}
+
+async function reportActiveTab() {
+  if (!nativePort) {
+    return;
+  }
+  postNativeRpcNoThrow('extension.activeTabUpdated', {
+    activeTab: await activeTabInfo()
+  });
 }
 
 async function requireActiveTabForOrigin(origin) {
@@ -284,8 +308,10 @@ async function handleOperatorCommand(command) {
       if (policyError) {
         return { ok: false, error: policyError };
       }
-      const dataUrl = await chrome.tabs.captureVisibleTab(ready.tab.windowId, {
-        format: 'png'
+      const dataUrl = await captureVisibleTabWithRetry({
+        captureVisibleTab: (windowId, options) => chrome.tabs.captureVisibleTab(windowId, options),
+        windowId: ready.tab.windowId,
+        options: { format: 'png' }
       });
       return {
         ok: true,
@@ -416,3 +442,11 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.permissions.onAdded.addListener(syncPermissionsAfterChange);
 chrome.permissions.onRemoved.addListener(syncPermissionsAfterChange);
+chrome.tabs.onActivated.addListener(() => {
+  reportActiveTab();
+});
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status || changeInfo.url || changeInfo.title) {
+    reportActiveTab();
+  }
+});

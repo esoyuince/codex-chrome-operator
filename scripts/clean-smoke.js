@@ -173,6 +173,10 @@ function launchChromeForTesting(config) {
     `--user-data-dir=${config.profileDir}`,
     `--load-extension=${config.extensionDir}`,
     '--no-first-run',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-features=CalculateNativeWinOcclusion',
+    '--window-position=0,0',
+    '--window-size=1280,900',
     '--new-window',
     `--remote-debugging-port=${config.debugPort}`,
     `chrome-extension://${config.extensionId}/bootstrap.html`
@@ -513,6 +517,16 @@ async function runCleanSmoke(options = {}) {
     if (!postReconnectObserve.ok) {
       throw new Error(`Observe failed after reconnect: ${JSON.stringify(postReconnectObserve)}`);
     }
+    const activeTabStatus = runCliJson(['status'], settings);
+    const activeTab = activeTabStatus.result && activeTabStatus.result.activeTab;
+    if (
+      !activeTab ||
+      activeTab.origin !== config.origin ||
+      activeTab.title !== 'Codex Operator Basic Fixture' ||
+      activeTab.loadingState !== 'complete'
+    ) {
+      throw new Error(`Active tab status did not match fixture: ${JSON.stringify(activeTabStatus)}`);
+    }
     const boundedFullAutoContract = {
       mode: 'bounded-full-auto-v1',
       approvedOrigins: [config.origin],
@@ -635,6 +649,9 @@ async function runCleanSmoke(options = {}) {
       emergencyCleared: emergencyClear.result.active === false,
       reconnectBlocked: disconnectedObserve.error.code,
       reconnectRecoveredTitle: postReconnectObserve.result.title,
+      activeTabTitle: activeTab.title,
+      activeTabOrigin: activeTab.origin,
+      activeTabLoadingState: activeTab.loadingState,
       gateHandoffBlocked: gatedClick.error.code,
       gateHandoffResume: gateDom.gateStatus,
       boundedFullAutoStarted: boundedFullAutoStart.result.active,

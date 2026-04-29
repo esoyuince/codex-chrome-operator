@@ -125,6 +125,32 @@ function isBoundedFullAutoError(error) {
   return Boolean(error && typeof error.code === 'string' && error.code.startsWith('BOUNDED_FULL_AUTO_'));
 }
 
+function normalizeActiveTab(tab) {
+  if (!tab || typeof tab !== 'object') {
+    return null;
+  }
+
+  let origin = null;
+  if (typeof tab.url === 'string' && tab.url) {
+    try {
+      origin = new URL(tab.url).origin;
+    } catch {
+      origin = null;
+    }
+  }
+
+  return {
+    id: tab.id ?? null,
+    windowId: tab.windowId ?? null,
+    url: typeof tab.url === 'string' ? tab.url : null,
+    origin,
+    title: typeof tab.title === 'string' ? tab.title : null,
+    status: typeof tab.status === 'string' ? tab.status : null,
+    loadingState: tab.status === 'loading' ? 'loading' : 'complete',
+    updatedAt: new Date().toISOString()
+  };
+}
+
 class SessionManager {
   constructor(config = {}) {
     this.stateStore = config.stateStore || new OperatorStateStore({ statePath: config.statePath });
@@ -163,6 +189,7 @@ class SessionManager {
     this.pendingApprovals = new Map();
     this.nextApprovalId = 1;
     this.lastVersionMismatch = null;
+    this.activeTab = null;
     this.emergencyStop = {
       active: false,
       reason: null,
@@ -185,6 +212,7 @@ class SessionManager {
       domainApprovals: this.stateStore.listDomainApprovals(),
       configuredProfile: this.stateStore.getConfiguredProfile(),
       pendingApprovals: this.listApprovalRecords({ status: 'pending' }),
+      activeTab: this.activeTab ? { ...this.activeTab } : null,
       emergencyStop: { ...this.emergencyStop },
       boundedFullAuto: this.boundedFullAutoStatus(),
       version: {
@@ -216,7 +244,7 @@ class SessionManager {
         response = rpcOk(id, this.status());
         break;
       case 'extension.hello':
-        response = this.handleHello(id, params.hello);
+        response = this.handleHello(id, params.hello, params);
         break;
       case 'operator.approveDomain':
         response = this.approveDomain(id, params);
@@ -229,6 +257,9 @@ class SessionManager {
         break;
       case 'extension.hostPermissionsSynced':
         response = this.hostPermissionsSynced(id, params);
+        break;
+      case 'extension.activeTabUpdated':
+        response = this.activeTabUpdated(id, params);
         break;
       case 'extension.disconnected':
       case 'bridge.disconnected':
@@ -392,7 +423,7 @@ class SessionManager {
     };
   }
 
-  handleHello(id, hello) {
+  handleHello(id, hello, params = {}) {
     const result = validateHello(hello, {
       expectedExtensionId: this.config.expectedExtensionId,
       expectedProtocolVersion: this.config.expectedProtocolVersion,
@@ -429,12 +460,28 @@ class SessionManager {
     this.connectionState = this.profileVerified
       ? 'EXTENSION_CONNECTED'
       : 'EXTENSION_CONNECTED_SETUP_ONLY';
+    this.updateActiveTab(params.activeTab || null);
 
     return rpcOk(id, {
       connectionState: this.connectionState,
       connectionId: this.connectionId,
       profileBindingStatus: this.profileBindingStatus
     });
+  }
+
+  activeTabUpdated(id, params = {}) {
+    this.updateActiveTab(params.activeTab || params.tab || null);
+    return rpcOk(id, {
+      activeTab: this.activeTab ? { ...this.activeTab } : null
+    });
+  }
+
+  updateActiveTab(tab) {
+    const normalized = normalizeActiveTab(tab);
+    if (normalized) {
+      this.activeTab = normalized;
+    }
+    return this.activeTab;
   }
 
   handleDisconnected(id, params = {}) {
@@ -1164,6 +1211,7 @@ class SessionManager {
 
     clearTimeout(pending.timeout);
     this.pendingCommands.delete(params.commandId);
+    this.updateActiveTab(params.activeTab || null);
     pending.resolve(params.response || {
       ok: false,
       error: {
