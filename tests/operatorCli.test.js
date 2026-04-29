@@ -244,6 +244,56 @@ test('ensureStarted reports diagnostic steps when bootstrap launch fails', async
   assert.ok(response.result.diagnostic.nextSteps.includes('Run install\\doctor.ps1 and check Chrome installation.'));
 });
 
+test('ensureStarted reports target readiness diagnostic for missing gates', async () => {
+  const bootstrapUrl = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/bootstrap.html?session=boot';
+  const response = await ensureStarted({
+    request: {
+      id: 'req_5',
+      method: 'operator.ensureStarted',
+      params: {
+        origin: 'https://example.com'
+      }
+    },
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    openBootstrap: false,
+    sendRpcFn: async () => ({
+      ok: true,
+      result: {
+        daemonRunning: true,
+        extensionConnected: true,
+        bootstrapRequired: false,
+        bootstrapUrl,
+        readiness: {
+          origin: 'https://example.com',
+          profileVerified: false,
+          domainApproved: false,
+          hostPermissionGranted: false
+        }
+      }
+    })
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.readiness.ready, false);
+  assert.deepEqual(response.result.readiness.missing, ['profile', 'domainApproval', 'hostPermission']);
+  assert.equal(response.result.diagnostic.code, 'READINESS_INCOMPLETE');
+  assert.equal(response.result.diagnostic.origin, 'https://example.com');
+  assert.deepEqual(
+    response.result.diagnostic.nextActions.map((action) => action.kind),
+    ['profile', 'domainApproval', 'hostPermission']
+  );
+  assert.ok(response.result.diagnostic.nextActions[1].command.includes('approve https://example.com'));
+  assert.equal(response.result.diagnostic.nextActions[2].requiresUserGesture, true);
+  assert.equal(
+    response.result.diagnostic.nextActions[2].url,
+    'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html?origin=https%3A%2F%2Fexample.com'
+  );
+});
+
 test('buildRpcRequest maps approval and page commands', () => {
   assert.deepEqual(buildRpcRequest(['approve', 'https://example.com']), {
     method: 'operator.approveDomain',

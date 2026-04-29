@@ -127,6 +127,32 @@ function originFromParams(params = {}) {
   return undefined;
 }
 
+function summarizeReadiness({
+  origin,
+  profileVerified,
+  domainApproved,
+  hostPermissionGranted
+}) {
+  const missing = [];
+  if (!profileVerified) {
+    missing.push('profile');
+  }
+  if (!domainApproved) {
+    missing.push('domainApproval');
+  }
+  if (!hostPermissionGranted) {
+    missing.push('hostPermission');
+  }
+  return {
+    origin,
+    ready: missing.length === 0,
+    profileVerified,
+    domainApproved,
+    hostPermissionGranted,
+    missing
+  };
+}
+
 function navigationTarget(url) {
   let parsed;
   try {
@@ -530,12 +556,12 @@ class SessionManager {
     let readiness = null;
     if (params.origin || params.url) {
       const origin = originFromParams(params);
-      readiness = {
+      readiness = summarizeReadiness({
         origin,
         profileVerified: this.profileVerified,
         domainApproved: this.hasDomainApproval(origin),
         hostPermissionGranted: this.hasHostPermission(origin)
-      };
+      });
     }
 
     return rpcOk(id, {
@@ -737,28 +763,20 @@ class SessionManager {
     const profileVerified = this.profileVerified;
     const domainApproved = this.hasDomainApproval(origin);
     const hostPermissionGranted = this.hasHostPermission(origin);
+    const summary = summarizeReadiness({
+      origin,
+      profileVerified,
+      domainApproved,
+      hostPermissionGranted
+    });
     const readiness = assertReadyForRealSiteAction({
       profileVerified,
       domainApproved,
       hostPermissionGranted
     });
-    const missing = [];
-    if (!profileVerified) {
-      missing.push('profile');
-    }
-    if (!domainApproved) {
-      missing.push('domainApproval');
-    }
-    if (!hostPermissionGranted) {
-      missing.push('hostPermission');
-    }
     return rpcOk(id, {
-      origin,
+      ...summary,
       ready: readiness.ok,
-      profileVerified,
-      domainApproved,
-      hostPermissionGranted,
-      missing,
       error: readiness.ok ? null : readiness.error
     });
   }

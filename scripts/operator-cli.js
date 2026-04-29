@@ -514,7 +514,108 @@ function ensureStartedDiagnostic(result) {
     };
   }
 
+  if (result.readiness && result.readiness.ready === false) {
+    const origin = result.readiness.origin;
+    const missing = Array.isArray(result.readiness.missing)
+      ? result.readiness.missing
+      : [];
+    const nextActions = readinessNextActions(result.readiness, result.status, bootstrapUrl);
+    return {
+      code: 'READINESS_INCOMPLETE',
+      message: origin
+        ? `Target origin is not ready for browser work: ${origin}.`
+        : 'Target origin is not ready for browser work.',
+      origin,
+      missing,
+      nextActions,
+      nextSteps: nextActions.map((action) => action.command || action.url || action.description)
+    };
+  }
+
   return null;
+}
+
+function normalizeReadiness(readiness) {
+  if (!readiness || typeof readiness !== 'object') {
+    return null;
+  }
+  const missing = [];
+  if (!readiness.profileVerified) {
+    missing.push('profile');
+  }
+  if (!readiness.domainApproved) {
+    missing.push('domainApproval');
+  }
+  if (!readiness.hostPermissionGranted) {
+    missing.push('hostPermission');
+  }
+  return {
+    ...readiness,
+    ready: missing.length === 0,
+    missing
+  };
+}
+
+function permissionRequestUrlFromBootstrap(bootstrapUrl, origin) {
+  if (!bootstrapUrl || !origin) {
+    return null;
+  }
+  try {
+    const parsed = new URL(bootstrapUrl);
+    if (parsed.protocol !== 'chrome-extension:') {
+      return null;
+    }
+    return `chrome-extension://${parsed.hostname}/permissionRequest.html?origin=${encodeURIComponent(origin)}`;
+  } catch {
+    return null;
+  }
+}
+
+function readinessNextActions(readiness, status = {}, bootstrapUrl = null) {
+  const origin = readiness && readiness.origin;
+  const missing = Array.isArray(readiness && readiness.missing)
+    ? readiness.missing
+    : [];
+  const actions = [];
+
+  if (missing.includes('profile')) {
+    const configuredProfile = status && status.configuredProfile;
+    actions.push({
+      kind: 'profile',
+      command: configuredProfile
+        ? 'node scripts/operator-cli.js profile-verify'
+        : 'node scripts/operator-cli.js profiles',
+      description: configuredProfile
+        ? 'Verify the configured Chrome profile binding.'
+        : 'Discover and bind the Chrome profile that should own the session.',
+      requiresUserGesture: false
+    });
+  }
+
+  if (missing.includes('domainApproval')) {
+    actions.push({
+      kind: 'domainApproval',
+      command: origin ? `node scripts/operator-cli.js approve ${origin}` : 'node scripts/operator-cli.js approve <origin>',
+      description: origin
+        ? `Approve ${origin} for guarded operator work.`
+        : 'Approve the target origin for guarded operator work.',
+      requiresUserGesture: false
+    });
+  }
+
+  if (missing.includes('hostPermission')) {
+    actions.push({
+      kind: 'hostPermission',
+      command: null,
+      url: permissionRequestUrlFromBootstrap(bootstrapUrl, origin),
+      description: origin
+        ? `Grant Chrome optional host permission for ${origin} from the extension permission page.`
+        : 'Grant Chrome optional host permission from the extension permission page.',
+      requiresUserGesture: true
+    });
+  }
+
+  return actions;
 }
 
 async function ensureStarted({
@@ -601,6 +702,9 @@ async function ensureStarted({
     }
     if (bootstrapLaunch) {
       response.result.bootstrapLaunch = bootstrapLaunch;
+    }
+    if (response.result.readiness) {
+      response.result.readiness = normalizeReadiness(response.result.readiness);
     }
     const diagnostic = ensureStartedDiagnostic(response.result);
     if (diagnostic) {

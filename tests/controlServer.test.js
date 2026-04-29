@@ -137,6 +137,24 @@ test('operator.ensureStarted reports daemon readiness and bootstrap URL before e
   });
 });
 
+test('operator.ensureStarted summarizes target readiness for requested origin', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    const result = await postJson(baseUrl, 'operator.ensureStarted', {
+      origin: 'https://example.com'
+    });
+
+    assert.equal(result.body.ok, true);
+    assert.deepEqual(result.body.result.readiness, {
+      origin: 'https://example.com',
+      ready: false,
+      profileVerified: false,
+      domainApproved: false,
+      hostPermissionGranted: false,
+      missing: ['profile', 'domainApproval', 'hostPermission']
+    });
+  });
+});
+
 test('extension.hello and tab updates expose active tab in operator.status', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     const hello = await postJson(baseUrl, 'extension.hello', {
