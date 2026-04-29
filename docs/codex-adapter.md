@@ -74,6 +74,18 @@ When the daemon created an approval request, the hint includes the `approvalId`,
 - `approval-reject <approvalId>`
 - `approval-run <approvalId>`
 
+The same approval lifecycle is also exposed as strict adapter tools:
+
+- `codex_chrome_approvals_list`
+- `codex_chrome_approval_approve`
+- `codex_chrome_approval_reject`
+- `codex_chrome_approval_run`
+
+Approval and rejection tools require an explicit `userDecision` argument:
+`"approve"` for `codex_chrome_approval_approve` and `"reject"` for
+`codex_chrome_approval_reject`. This field is checked by the adapter before the
+request reaches the daemon.
+
 Gate handoff hints are returned for visible auth or anti-abuse gates such as
 password, OTP, WebAuthn, and CAPTCHA. The hint carries the daemon
 `resumePolicy`, for example `wait-and-reobserve`, and tells the caller to wait

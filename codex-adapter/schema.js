@@ -229,6 +229,72 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'codex_chrome_approvals_list',
+    description: 'List pending or historical browser operator approval requests.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        status: { type: 'string' }
+      },
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_approval_approve',
+    description: 'Approve a pending browser operator approval request after an explicit user decision.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        approvalId: { type: 'string' },
+        userDecision: { type: 'string' }
+      },
+      required: ['approvalId', 'userDecision']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_approval_reject',
+    description: 'Reject a pending browser operator approval request after an explicit user decision.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        approvalId: { type: 'string' },
+        userDecision: { type: 'string' }
+      },
+      required: ['approvalId', 'userDecision']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_approval_run',
+    description: 'Run a previously approved browser operator approval request.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        approvalId: { type: 'string' }
+      },
+      required: ['approvalId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
     name: 'codex_chrome_emergency_stop',
     description: 'Activate the browser operator emergency stop.',
     inputSchema: {

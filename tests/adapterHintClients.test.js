@@ -27,6 +27,15 @@ test('buildApprovalHints turns high-risk approval errors into actionable handoff
   ]);
   assert.deepEqual(hints.nextActions[1].operatorCli, ['approval-approve', 'approval_42']);
   assert.deepEqual(hints.nextActions[3].operatorCli, ['approval-run', 'approval_42']);
+  assert.equal(hints.nextActions[1].toolName, 'codex_chrome_approval_approve');
+  assert.deepEqual(hints.nextActions[1].arguments, {
+    approvalId: 'approval_42',
+    userDecision: 'approve'
+  });
+  assert.equal(hints.nextActions[3].toolName, 'codex_chrome_approval_run');
+  assert.deepEqual(hints.nextActions[3].arguments, {
+    approvalId: 'approval_42'
+  });
 });
 
 test('buildGateHandoffHints turns auth gates into resume-safe instructions', () => {

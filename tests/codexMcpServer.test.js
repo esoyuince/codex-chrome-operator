@@ -294,6 +294,8 @@ test('package exposes MCP adapter script and docs explain local usage', () => {
   assert.match(docs, /tools\/call/);
   assert.match(docs, /adapterSession/);
   assert.match(docs, /adapterHints/);
+  assert.match(docs, /codex_chrome_approval_approve/);
+  assert.match(docs, /userDecision/);
   assert.match(docs, /approval-approve/);
   assert.match(docs, /wait-and-reobserve/);
   assert.match(docs, /untrusted/);

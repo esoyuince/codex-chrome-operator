@@ -151,6 +151,100 @@ test('CodexChromeToolAdapter exposes and routes basic DOM action tools', async (
   assert.deepEqual(calls.map((request) => request.method), checks.map(([, method]) => method));
 });
 
+test('CodexChromeToolAdapter exposes approval lifecycle tools with explicit user decisions', async () => {
+  const tools = listTools().map((tool) => tool.name);
+  for (const toolName of [
+    'codex_chrome_approvals_list',
+    'codex_chrome_approval_approve',
+    'codex_chrome_approval_reject',
+    'codex_chrome_approval_run'
+  ]) {
+    assert.ok(tools.includes(toolName), `${toolName} should be exposed`);
+  }
+
+  assert.equal(validateToolInput('codex_chrome_approval_approve', {
+    approvalId: 'approval_1'
+  }).error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(validateToolInput('codex_chrome_approval_approve', {
+    approvalId: 'approval_1',
+    userDecision: 'approve'
+  }).ok, true);
+
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: { method: request.method, params: request.params }
+      };
+    }
+  });
+
+  const checks = [
+    ['codex_chrome_approvals_list', 'operator.approvals.list', { status: 'pending' }, { status: 'pending' }],
+    [
+      'codex_chrome_approval_approve',
+      'operator.approvals.approve',
+      { approvalId: 'approval_1', userDecision: 'approve' },
+      { approvalId: 'approval_1' }
+    ],
+    [
+      'codex_chrome_approval_reject',
+      'operator.approvals.reject',
+      { approvalId: 'approval_1', userDecision: 'reject' },
+      { approvalId: 'approval_1' }
+    ],
+    ['codex_chrome_approval_run', 'operator.approvals.run', { approvalId: 'approval_1' }, { approvalId: 'approval_1' }]
+  ];
+
+  for (const [toolName, method, input, params] of checks) {
+    const response = await adapter.executeTool({ toolName, input });
+    assert.equal(response.ok, true);
+    assert.equal(response.result.method, method);
+    assert.deepEqual(response.result.params, params);
+  }
+  assert.deepEqual(calls.map((request) => request.method), checks.map(([, method]) => method));
+});
+
+test('CodexChromeToolAdapter refuses approval decision tools with mismatched decision text', async () => {
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async () => {
+      throw new Error('approval decision should not reach daemon');
+    }
+  });
+
+  const approve = await adapter.executeTool({
+    toolName: 'codex_chrome_approval_approve',
+    input: {
+      approvalId: 'approval_1',
+      userDecision: 'reject'
+    }
+  });
+  assert.equal(approve.ok, false);
+  assert.equal(approve.error.code, 'INVALID_TOOL_INPUT');
+
+  const reject = await adapter.executeTool({
+    toolName: 'codex_chrome_approval_reject',
+    input: {
+      approvalId: 'approval_1',
+      userDecision: 'approve'
+    }
+  });
+  assert.equal(reject.ok, false);
+  assert.equal(reject.error.code, 'INVALID_TOOL_INPUT');
+});
+
 test('validateToolInput enforces typed basic action parameters', () => {
   assert.equal(validateToolInput('codex_chrome_check', {
     origin: 'https://example.com',

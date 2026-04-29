@@ -167,6 +167,17 @@ function wrapToolResponse(toolName, response) {
   };
 }
 
+function invalidToolInput(toolName, message, details = {}) {
+  return wrapToolResponse(toolName, {
+    ok: false,
+    error: {
+      code: 'INVALID_TOOL_INPUT',
+      message,
+      ...details
+    }
+  });
+}
+
 function rpcRequest(method, params = {}) {
   return {
     id: `adapter_${Date.now()}_${Math.random().toString(16).slice(2)}`,
@@ -265,6 +276,40 @@ class CodexChromeToolAdapter {
         response = await this.sendRpc('page.click', {
           origin: input.origin,
           handle: input.handle
+        });
+        break;
+      case 'codex_chrome_approvals_list':
+        response = await this.sendRpc('operator.approvals.list', {
+          status: input.status
+        });
+        break;
+      case 'codex_chrome_approval_approve':
+        if (input.userDecision !== 'approve') {
+          return invalidToolInput(
+            toolName,
+            'codex_chrome_approval_approve requires userDecision: approve.',
+            { field: 'userDecision' }
+          );
+        }
+        response = await this.sendRpc('operator.approvals.approve', {
+          approvalId: input.approvalId
+        });
+        break;
+      case 'codex_chrome_approval_reject':
+        if (input.userDecision !== 'reject') {
+          return invalidToolInput(
+            toolName,
+            'codex_chrome_approval_reject requires userDecision: reject.',
+            { field: 'userDecision' }
+          );
+        }
+        response = await this.sendRpc('operator.approvals.reject', {
+          approvalId: input.approvalId
+        });
+        break;
+      case 'codex_chrome_approval_run':
+        response = await this.sendRpc('operator.approvals.run', {
+          approvalId: input.approvalId
         });
         break;
       case 'codex_chrome_emergency_stop':

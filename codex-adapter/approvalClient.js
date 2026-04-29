@@ -26,6 +26,11 @@ function buildApprovalHints(error = {}) {
         approvalId,
         operatorCli: ['approval-approve', approvalId],
         operatorRpc: 'operator.approvals.approve',
+        toolName: 'codex_chrome_approval_approve',
+        arguments: {
+          approvalId,
+          userDecision: 'approve'
+        },
         requiresUserDecision: true
       },
       {
@@ -33,6 +38,11 @@ function buildApprovalHints(error = {}) {
         approvalId,
         operatorCli: ['approval-reject', approvalId],
         operatorRpc: 'operator.approvals.reject',
+        toolName: 'codex_chrome_approval_reject',
+        arguments: {
+          approvalId,
+          userDecision: 'reject'
+        },
         requiresUserDecision: true
       },
       {
@@ -40,6 +50,10 @@ function buildApprovalHints(error = {}) {
         approvalId,
         operatorCli: ['approval-run', approvalId],
         operatorRpc: 'operator.approvals.run',
+        toolName: 'codex_chrome_approval_run',
+        arguments: {
+          approvalId
+        },
         requiresPriorApproval: true
       }
     );
