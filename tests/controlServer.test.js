@@ -317,3 +317,129 @@ test('successful page command clears stale lastError', async () => {
     assert.equal(statusAfterSuccess.body.result.lastError, null);
   });
 });
+
+test('local high-risk click can be approved and replayed once', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+        profileBindingVersion: 3,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'http://127.0.0.1:18888'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'http://127.0.0.1:18888'
+    });
+
+    const clickPromise = postJson(baseUrl, 'page.click', {
+      origin: 'http://127.0.0.1:18888',
+      handle: 'el_3'
+    });
+    const blockedCommand = await postJson(baseUrl, 'bridge.poll');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: blockedCommand.body.result.command.commandId,
+      response: {
+        ok: false,
+        error: {
+          code: ERROR_CODES.HIGH_RISK_BLOCKED,
+          approvalKind: 'publish',
+          targetSummary: 'button: Publish'
+        }
+      }
+    });
+
+    const blocked = await clickPromise;
+    assert.equal(blocked.body.ok, false);
+    assert.equal(blocked.body.error.code, ERROR_CODES.HIGH_RISK_BLOCKED);
+    assert.match(blocked.body.error.approvalId, /^approval_/);
+
+    const approvals = await postJson(baseUrl, 'operator.approvals.list');
+    assert.equal(approvals.body.result.approvals.length, 1);
+    assert.equal(approvals.body.result.approvals[0].status, 'pending');
+
+    const approvalId = blocked.body.error.approvalId;
+    const approved = await postJson(baseUrl, 'operator.approvals.approve', { approvalId });
+    assert.equal(approved.body.ok, true);
+    assert.equal(approved.body.result.status, 'approved');
+
+    const runPromise = postJson(baseUrl, 'operator.approvals.run', { approvalId });
+    const replayCommand = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(replayCommand.body.result.command.method, 'page.click');
+    assert.deepEqual(replayCommand.body.result.command.params.approval, {
+      approvalId,
+      allowHighRisk: true,
+      approvalKind: 'publish'
+    });
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: replayCommand.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: { action: 'clicked' }
+      }
+    });
+
+    const replayed = await runPromise;
+    assert.equal(replayed.body.ok, true);
+    assert.equal(replayed.body.result.action, 'clicked');
+  });
+});
+
+test('real-origin high-risk approval replay is blocked in M1', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+        profileBindingVersion: 3,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://example.com'
+    });
+
+    const clickPromise = postJson(baseUrl, 'page.click', {
+      origin: 'https://example.com',
+      handle: 'el_3'
+    });
+    const blockedCommand = await postJson(baseUrl, 'bridge.poll');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: blockedCommand.body.result.command.commandId,
+      response: {
+        ok: false,
+        error: {
+          code: ERROR_CODES.HIGH_RISK_BLOCKED,
+          approvalKind: 'publish',
+          targetSummary: 'button: Publish'
+        }
+      }
+    });
+    const blocked = await clickPromise;
+    const approved = await postJson(baseUrl, 'operator.approvals.approve', {
+      approvalId: blocked.body.error.approvalId
+    });
+    assert.equal(approved.body.ok, false);
+    assert.equal(approved.body.error.code, ERROR_CODES.HIGH_RISK_BLOCKED);
+  });
+});

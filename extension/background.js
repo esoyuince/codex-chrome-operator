@@ -295,7 +295,8 @@ async function handleOperatorCommand(command) {
       checked: params.checked,
       deltaX: params.deltaX,
       deltaY: params.deltaY,
-      key: params.key
+      key: params.key,
+      approval: params.approval
     });
   } catch (error) {
     return {

@@ -392,8 +392,28 @@ async function runCleanSmoke(options = {}) {
     runCliJson(['fill', config.origin, 'el_1', 'Single command smoke test.'], settings);
     runCliJson(['click', config.origin, 'el_2'], settings);
     const highRiskClick = runCliJson(['click', config.origin, 'el_3'], settings);
-    if (highRiskClick.ok || highRiskClick.error.code !== 'HIGH_RISK_BLOCKED') {
+    if (highRiskClick.ok || highRiskClick.error.code !== 'HIGH_RISK_BLOCKED' || !highRiskClick.error.approvalId) {
       throw new Error(`Expected HIGH_RISK_BLOCKED for publish click: ${JSON.stringify(highRiskClick)}`);
+    }
+    const blockedStatus = await withCdp(await pageTarget(config), async (send) => {
+      const result = await send('Runtime.evaluate', {
+        expression: "document.getElementById('status').textContent",
+        returnByValue: true
+      });
+      return result.result.result.value;
+    });
+    if (blockedStatus !== 'Draft saved') {
+      throw new Error(`High-risk click changed fixture before approval: ${blockedStatus}`);
+    }
+
+    const approvalId = highRiskClick.error.approvalId;
+    const approvedHighRisk = runCliJson(['approval-approve', approvalId], settings);
+    if (!approvedHighRisk.ok) {
+      throw new Error(`High-risk approval failed: ${JSON.stringify(approvedHighRisk)}`);
+    }
+    const replayedHighRisk = runCliJson(['approval-run', approvalId], settings);
+    if (!replayedHighRisk.ok) {
+      throw new Error(`High-risk approval replay failed: ${JSON.stringify(replayedHighRisk)}`);
     }
 
     const dom = await withCdp(await pageTarget(config), async (send) => {
@@ -408,7 +428,7 @@ async function runCleanSmoke(options = {}) {
       return result.result.result.value;
     });
 
-    if (dom.status !== 'Draft saved') {
+    if (dom.status !== 'Published') {
       throw new Error(`Unexpected fixture status: ${JSON.stringify(dom)}`);
     }
 
@@ -423,6 +443,7 @@ async function runCleanSmoke(options = {}) {
       visualObservedTitle: visualObservation.result.title,
       visualScreenshotBytes: visualObservation.result.screenshot.bytesApprox,
       highRiskBlocked: highRiskClick.error.code,
+      highRiskApprovalReplay: replayedHighRisk.result.action,
       dom,
       finalStatus: finalStatus.result
     };

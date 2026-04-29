@@ -40,8 +40,20 @@ function clearsLastErrorOnSuccess(method) {
     'operator.profile.bind',
     'operator.profile.verify',
     'operator.profiles.discover',
-    'extension.hostPermissionsSynced'
+    'extension.hostPermissionsSynced',
+    'operator.approvals.approve',
+    'operator.approvals.reject',
+    'operator.approvals.run'
   ].includes(method) || method.startsWith('page.');
+}
+
+function isLocalMockOrigin(origin) {
+  try {
+    const url = new URL(origin);
+    return url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 class SessionManager {
@@ -69,6 +81,8 @@ class SessionManager {
     this.commandQueue = [];
     this.pendingCommands = new Map();
     this.nextCommandId = 1;
+    this.pendingApprovals = new Map();
+    this.nextApprovalId = 1;
   }
 
   status() {
@@ -80,6 +94,7 @@ class SessionManager {
       hostPermissionOrigins: [...this.hostPermissions],
       domainApprovals: this.stateStore.listDomainApprovals(),
       configuredProfile: this.stateStore.getConfiguredProfile(),
+      pendingApprovals: this.listApprovalRecords({ status: 'pending' }),
       auditLogPath: this.config.auditLogPath,
       lastError: this.lastError
     };
@@ -124,6 +139,18 @@ class SessionManager {
         break;
       case 'operator.verifyReadiness':
         response = this.verifyReadiness(id, params);
+        break;
+      case 'operator.approvals.list':
+        response = this.listApprovals(id, params);
+        break;
+      case 'operator.approvals.approve':
+        response = this.approveApproval(id, params);
+        break;
+      case 'operator.approvals.reject':
+        response = this.rejectApproval(id, params);
+        break;
+      case 'operator.approvals.run':
+        response = await this.runApproval(id, params);
         break;
       case 'page.observe':
       case 'page.visualObserve':
@@ -382,8 +409,136 @@ class SessionManager {
       origin
     });
     if (!extensionResponse.ok) {
+      return rpcError(id, this.attachApprovalRequest(method, { ...params, origin }, extensionResponse.error));
+    }
+    return rpcOk(id, extensionResponse.result);
+  }
+
+  attachApprovalRequest(method, params, error) {
+    if (!error || ![
+      ERROR_CODES.HIGH_RISK_BLOCKED,
+      ERROR_CODES.APPROVAL_REQUIRED
+    ].includes(error.code)) {
+      return error;
+    }
+
+    const approvalId = `approval_${this.nextApprovalId++}`;
+    const record = {
+      approvalId,
+      status: 'pending',
+      method,
+      origin: params.origin,
+      params,
+      approvalKind: error.approvalKind || 'high-risk-action',
+      targetSummary: error.targetSummary || null,
+      createdAt: new Date().toISOString()
+    };
+    this.pendingApprovals.set(approvalId, record);
+
+    return {
+      ...error,
+      approvalId,
+      approvalStatus: 'pending'
+    };
+  }
+
+  approvalRecord(id) {
+    const approvalId = id && id.approvalId ? id.approvalId : id;
+    return approvalId ? this.pendingApprovals.get(approvalId) || null : null;
+  }
+
+  listApprovalRecords({ status } = {}) {
+    return [...this.pendingApprovals.values()]
+      .filter((record) => !status || record.status === status)
+      .map((record) => ({ ...record }));
+  }
+
+  listApprovals(id, params) {
+    return rpcOk(id, {
+      approvals: this.listApprovalRecords({ status: params.status })
+    });
+  }
+
+  approveApproval(id, params) {
+    const record = this.approvalRecord(params);
+    if (!record) {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_REQUEST,
+        message: 'Approval request not found.'
+      });
+    }
+    if (record.status !== 'pending') {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_REQUEST,
+        message: `Approval request is ${record.status}.`
+      });
+    }
+    if (!isLocalMockOrigin(record.origin)) {
+      return rpcError(id, {
+        code: ERROR_CODES.HIGH_RISK_BLOCKED,
+        message: 'M1 manual approval replay is enabled only for local mock origins.'
+      });
+    }
+
+    record.status = 'approved';
+    record.approvedAt = new Date().toISOString();
+    return rpcOk(id, { ...record });
+  }
+
+  rejectApproval(id, params) {
+    const record = this.approvalRecord(params);
+    if (!record) {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_REQUEST,
+        message: 'Approval request not found.'
+      });
+    }
+    record.status = 'rejected';
+    record.rejectedAt = new Date().toISOString();
+    return rpcOk(id, { ...record });
+  }
+
+  async runApproval(id, params) {
+    const record = this.approvalRecord(params);
+    if (!record) {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_REQUEST,
+        message: 'Approval request not found.'
+      });
+    }
+    if (record.status !== 'approved') {
+      return rpcError(id, {
+        code: ERROR_CODES.APPROVAL_REQUIRED,
+        message: 'Approval request must be approved before replay.'
+      });
+    }
+
+    const readiness = assertReadyForRealSiteAction({
+      profileVerified: this.profileVerified,
+      domainApproved: this.approvedOrigins.has(record.origin),
+      hostPermissionGranted: this.hasHostPermission(record.origin)
+    });
+    if (!readiness.ok) {
+      return rpcError(id, readiness.error);
+    }
+
+    record.status = 'running';
+    const extensionResponse = await this.enqueueExtensionCommand(record.method, {
+      ...record.params,
+      approval: {
+        approvalId: record.approvalId,
+        allowHighRisk: true,
+        approvalKind: record.approvalKind
+      }
+    });
+    if (!extensionResponse.ok) {
+      record.status = 'failed';
+      record.error = extensionResponse.error;
       return rpcError(id, extensionResponse.error);
     }
+
+    record.status = 'completed';
+    record.completedAt = new Date().toISOString();
     return rpcOk(id, extensionResponse.result);
   }
 

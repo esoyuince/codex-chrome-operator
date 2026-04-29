@@ -19,6 +19,10 @@ function usage() {
   node scripts/operator-cli.js profile-bind <userDataDir> <profileDirectory> [profileLabel]
   node scripts/operator-cli.js profile-verify
   node scripts/operator-cli.js readiness <origin-or-url>
+  node scripts/operator-cli.js approvals
+  node scripts/operator-cli.js approval-approve <approvalId>
+  node scripts/operator-cli.js approval-reject <approvalId>
+  node scripts/operator-cli.js approval-run <approvalId>
   node scripts/operator-cli.js approve <origin>
   node scripts/operator-cli.js observe <origin>
   node scripts/operator-cli.js visual-observe <origin>
@@ -95,6 +99,17 @@ function buildRpcRequest(argv) {
           origin: new URL(args[0]).origin
         }
       };
+    case 'approvals':
+      return { method: 'operator.approvals.list', params: {} };
+    case 'approval-approve':
+      requireArgs(args, 1);
+      return { method: 'operator.approvals.approve', params: { approvalId: args[0] } };
+    case 'approval-reject':
+      requireArgs(args, 1);
+      return { method: 'operator.approvals.reject', params: { approvalId: args[0] } };
+    case 'approval-run':
+      requireArgs(args, 1);
+      return { method: 'operator.approvals.run', params: { approvalId: args[0] } };
     case 'approve':
       requireArgs(args, 1);
       return { method: 'operator.approveDomain', params: { origin: args[0] } };

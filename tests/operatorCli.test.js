@@ -82,10 +82,30 @@ test('buildRpcRequest maps profile and readiness commands', () => {
   });
 });
 
+test('buildRpcRequest maps approval lifecycle commands', () => {
+  assert.deepEqual(buildRpcRequest(['approvals']), {
+    method: 'operator.approvals.list',
+    params: {}
+  });
+  assert.deepEqual(buildRpcRequest(['approval-approve', 'approval_1']), {
+    method: 'operator.approvals.approve',
+    params: { approvalId: 'approval_1' }
+  });
+  assert.deepEqual(buildRpcRequest(['approval-reject', 'approval_1']), {
+    method: 'operator.approvals.reject',
+    params: { approvalId: 'approval_1' }
+  });
+  assert.deepEqual(buildRpcRequest(['approval-run', 'approval_1']), {
+    method: 'operator.approvals.run',
+    params: { approvalId: 'approval_1' }
+  });
+});
+
 test('buildRpcRequest rejects incomplete commands with usage error', () => {
   assert.throws(() => buildRpcRequest([]), /Usage:/);
   assert.throws(() => buildRpcRequest(['fill', 'https://example.com', 'el_0']), /Usage:/);
   assert.throws(() => buildRpcRequest(['profile-bind', 'C:/Chrome/User Data']), /Usage:/);
+  assert.throws(() => buildRpcRequest(['approval-run']), /Usage:/);
   assert.throws(() => buildRpcRequest(['wat']), /Usage:/);
 });
 

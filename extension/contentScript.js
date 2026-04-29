@@ -84,7 +84,10 @@ async function runAction(message) {
       action: 'click',
       target: elementSummary(element, message.handle)
     });
-    if (risk) {
+    const approvedHighRisk = message.approval &&
+      message.approval.allowHighRisk === true &&
+      message.approval.approvalKind === (risk && risk.approvalKind);
+    if (risk && !approvedHighRisk) {
       return { ok: false, error: risk };
     }
     element.click();
