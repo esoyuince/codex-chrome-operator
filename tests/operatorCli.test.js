@@ -7,6 +7,7 @@ const path = require('node:path');
 const {
   buildRpcRequest,
   ensureStarted,
+  prepareOrigin,
   resolveCliSettings
 } = require('../scripts/operator-cli');
 
@@ -292,6 +293,96 @@ test('ensureStarted reports target readiness diagnostic for missing gates', asyn
     response.result.diagnostic.nextActions[2].url,
     'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html?origin=https%3A%2F%2Fexample.com'
   );
+});
+
+test('buildRpcRequest maps prepare-origin to operator.ensureStarted', () => {
+  assert.deepEqual(buildRpcRequest(['prepare-origin', 'https://example.com/path']), {
+    method: 'operator.ensureStarted',
+    params: {
+      origin: 'https://example.com'
+    },
+    cliAction: 'prepareOrigin'
+  });
+});
+
+test('prepareOrigin approves domain and returns permission URL when host permission is missing', async () => {
+  const calls = [];
+  const bootstrapUrl = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/bootstrap.html?session=boot';
+  const response = await prepareOrigin({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    request: {
+      id: 'prep_1',
+      method: 'operator.ensureStarted',
+      params: {
+        origin: 'https://example.com'
+      }
+    },
+    ensureStartedFn: async () => {
+      calls.push('ensure');
+      return {
+        ok: true,
+        result: {
+          extensionConnected: true,
+          bootstrapRequired: false,
+          bootstrapUrl,
+          readiness: {
+            origin: 'https://example.com',
+            ready: false,
+            profileVerified: true,
+            domainApproved: false,
+            hostPermissionGranted: false,
+            missing: ['domainApproval', 'hostPermission']
+          },
+          diagnostic: {
+            code: 'READINESS_INCOMPLETE'
+          }
+        }
+      };
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(`${request.method}:${request.params.origin}`);
+      if (request.method === 'operator.approveDomain') {
+        return {
+          ok: true,
+          result: {
+            origin: request.params.origin,
+            approved: true
+          }
+        };
+      }
+      if (request.method === 'operator.verifyReadiness') {
+        return {
+          ok: true,
+          result: {
+            origin: request.params.origin,
+            ready: false,
+            profileVerified: true,
+            domainApproved: true,
+            hostPermissionGranted: false,
+            missing: ['hostPermission']
+          }
+        };
+      }
+      throw new Error(`unexpected method ${request.method}`);
+    }
+  });
+
+  assert.deepEqual(calls, [
+    'ensure',
+    'operator.approveDomain:https://example.com',
+    'operator.verifyReadiness:https://example.com'
+  ]);
+  assert.equal(response.ok, true);
+  assert.equal(response.result.origin, 'https://example.com');
+  assert.equal(response.result.applied.domainApproval, true);
+  assert.equal(response.result.ready, false);
+  assert.equal(response.result.permissionUrl, 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html?origin=https%3A%2F%2Fexample.com');
+  assert.equal(response.result.requiresUserGesture, true);
+  assert.equal(response.result.nextAction.kind, 'hostPermission');
 });
 
 test('buildRpcRequest maps approval and page commands', () => {

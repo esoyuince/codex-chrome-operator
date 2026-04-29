@@ -20,6 +20,7 @@ function usage() {
   return `Usage:
   node scripts/operator-cli.js status
   node scripts/operator-cli.js ensure-started [origin-or-url]
+  node scripts/operator-cli.js prepare-origin <origin-or-url>
   node scripts/operator-cli.js profiles [userDataDir]
   node scripts/operator-cli.js profile-bind <userDataDir> <profileDirectory> [profileLabel]
   node scripts/operator-cli.js profile-verify
@@ -104,6 +105,15 @@ function buildRpcRequest(argv) {
       return {
         method: 'operator.ensureStarted',
         params: args[0] ? { origin: new URL(args[0]).origin } : {}
+      };
+    case 'prepare-origin':
+      requireArgs(args, 1);
+      return {
+        method: 'operator.ensureStarted',
+        params: {
+          origin: new URL(args[0]).origin
+        },
+        cliAction: 'prepareOrigin'
       };
     case 'profiles':
       return {
@@ -714,14 +724,122 @@ async function ensureStarted({
   return response;
 }
 
+async function prepareOrigin({
+  settings,
+  request,
+  sendRpcFn = sendRpc,
+  ensureStartedFn = ensureStarted,
+  openBootstrap = true
+}) {
+  const origin = request && request.params && request.params.origin;
+  if (!origin) {
+    return {
+      id: request && request.id,
+      ok: false,
+      error: {
+        code: 'INVALID_REQUEST',
+        message: 'prepare-origin requires an origin or URL.'
+      }
+    };
+  }
+
+  const ensureResponse = await ensureStartedFn({
+    settings,
+    request,
+    sendRpcFn,
+    openBootstrap
+  });
+  if (!ensureResponse || !ensureResponse.ok) {
+    return ensureResponse;
+  }
+
+  let readiness = normalizeReadiness(ensureResponse.result && ensureResponse.result.readiness);
+  const applied = {
+    domainApproval: false
+  };
+  let approval = null;
+
+  if (readiness && readiness.missing.includes('domainApproval')) {
+    const approvalResponse = await sendRpcFn({
+      baseUrl: settings.baseUrl,
+      token: settings.token,
+      request: {
+        id: `${request.id}_approve_domain`,
+        method: 'operator.approveDomain',
+        params: { origin }
+      }
+    });
+    if (!approvalResponse || !approvalResponse.ok) {
+      return approvalResponse;
+    }
+    approval = approvalResponse.result;
+    applied.domainApproval = true;
+
+    const readinessResponse = await sendRpcFn({
+      baseUrl: settings.baseUrl,
+      token: settings.token,
+      request: {
+        id: `${request.id}_verify_readiness`,
+        method: 'operator.verifyReadiness',
+        params: { origin }
+      }
+    });
+    if (!readinessResponse || !readinessResponse.ok) {
+      return readinessResponse;
+    }
+    readiness = normalizeReadiness(readinessResponse.result);
+  }
+
+  const bootstrapUrl = ensureResponse.result && (
+    ensureResponse.result.bootstrapUrl ||
+    (ensureResponse.result.bootstrapLaunch && ensureResponse.result.bootstrapLaunch.bootstrapUrl)
+  );
+  const nextActions = readiness ? readinessNextActions(readiness, ensureResponse.result.status, bootstrapUrl) : [];
+  const nextAction = nextActions.find((action) => action.requiresUserGesture) || nextActions[0] || null;
+  const permissionAction = nextActions.find((action) => action.kind === 'hostPermission') || null;
+
+  return {
+    id: request.id,
+    ok: true,
+    result: {
+      origin,
+      ready: readiness ? readiness.ready : false,
+      readiness,
+      applied,
+      approval,
+      ensureStarted: ensureResponse.result,
+      nextActions,
+      nextAction,
+      permissionUrl: permissionAction ? permissionAction.url : null,
+      requiresUserGesture: Boolean(nextAction && nextAction.requiresUserGesture),
+      diagnostic: readiness && !readiness.ready
+        ? {
+          code: 'READINESS_INCOMPLETE',
+          origin,
+          missing: readiness.missing,
+          nextActions
+        }
+        : null
+    }
+  };
+}
+
 async function run(argv = process.argv.slice(2), output = process.stdout) {
   const { options } = splitOptions(argv);
+  const builtRequest = buildRpcRequest(argv);
+  const { cliAction, ...rpcRequest } = builtRequest;
   const request = {
     id: `cli_${Date.now()}`,
-    ...buildRpcRequest(argv)
+    ...rpcRequest
   };
   const settings = resolveCliSettings(options);
-  const response = request.method === 'operator.ensureStarted'
+  const response = cliAction === 'prepareOrigin'
+    ? await prepareOrigin({
+      settings,
+      request,
+      openBootstrap: options.openBootstrap !== false
+    })
+    : request.method === 'operator.ensureStarted'
     ? await ensureStarted({
       settings,
       request,
@@ -753,6 +871,7 @@ module.exports = {
   ensureStarted,
   findChromeForBootstrap,
   launchBootstrapChrome,
+  prepareOrigin,
   resolveCliSettings,
   run,
   startDaemonProcess,

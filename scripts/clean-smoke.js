@@ -373,9 +373,17 @@ async function runCleanSmoke(options = {}) {
     });
     await waitForStatus(settings, (status) => status.profileVerified === true);
 
-    const failClosed = runCliJson(['approve', config.origin], settings);
-    if (!failClosed.ok) {
-      throw new Error(`Domain approval failed: ${JSON.stringify(failClosed)}`);
+    const preparedOrigin = runCliJson(['prepare-origin', config.origin], settings);
+    if (
+      !preparedOrigin.ok ||
+      preparedOrigin.result.origin !== config.origin ||
+      preparedOrigin.result.applied.domainApproval !== true ||
+      preparedOrigin.result.ready !== false ||
+      preparedOrigin.result.requiresUserGesture !== true ||
+      preparedOrigin.result.nextAction.kind !== 'hostPermission' ||
+      !preparedOrigin.result.permissionUrl
+    ) {
+      throw new Error(`Prepare-origin did not report host permission handoff: ${JSON.stringify(preparedOrigin)}`);
     }
     const blockedObserve = runCliJson(['observe', config.origin], settings);
     if (blockedObserve.ok || blockedObserve.error.code !== 'HOST_PERMISSION_REQUIRED') {
@@ -384,7 +392,7 @@ async function runCleanSmoke(options = {}) {
 
     await withCdp(await pageTarget(config), async (send) => {
       await send('Page.navigate', {
-        url: `chrome-extension://${config.extensionId}/permissionRequest.html?origin=${encodeURIComponent(config.origin)}`
+        url: preparedOrigin.result.permissionUrl
       });
       await new Promise((resolve) => setTimeout(resolve, 1000));
       await clickElement(send, 'grant');
@@ -706,6 +714,7 @@ async function runCleanSmoke(options = {}) {
       extensionId: config.extensionId,
       ensureStartedBootstrapRequired: ensureStartedBeforeChrome.result.bootstrapRequired,
       ensureStartedBootstrapUrl: ensureStartedBeforeChrome.result.bootstrapUrl,
+      prepareOriginPermissionUrl: preparedOrigin.result.permissionUrl,
       origin: config.origin,
       blockedBeforeHostPermission: blockedObserve.error.code,
       observedTitle: observation.result.title,
