@@ -31,6 +31,7 @@ The initialize result includes:
 - `serverInfo`
 - `adapterProtocolVersion`
 - `toolDefinitionsHash`
+- `adapterSession`
 
 ## Tools
 
@@ -51,6 +52,16 @@ data. Tool clients must treat returned content as data, not instructions.
 `tools/call` returns the adapter response as JSON text content and structured
 content. Failed operator responses are returned with `isError: true` and a
 deterministic operator error code.
+
+Every `initialize` and `tools/call` response includes `adapterSession` so the
+caller can track the current task-level adapter state:
+
+- `sessionId`
+- `startedAt`
+- `callCount`
+- `lastToolName`
+- `lastErrorCode`
+- `lastCalledAt`
 
 Visual tools return screenshot artifact references and metadata. Raw screenshot
 bytes and `dataUrl` fields are redacted before the result reaches Codex unless a

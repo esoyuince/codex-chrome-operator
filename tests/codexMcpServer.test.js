@@ -99,6 +99,57 @@ test('MCP handler calls adapter tools and returns JSON content without raw visua
   assert.equal(payload.untrusted, true);
   assert.equal(payload.result.screenshot.artifactId, 'shot_1');
   assert.equal(payload.result.screenshot.dataUrl, undefined);
+  assert.equal(response.result.adapterSession.callCount, 1);
+  assert.equal(response.result.adapterSession.lastToolName, 'codex_chrome_visual_observe');
+});
+
+test('MCP handler exposes explicit task-level session state', async () => {
+  const handleMessage = createMcpMessageHandler({
+    sessionId: 'task_unit_1',
+    adapter: {
+      async executeTool(request) {
+        return request.toolName === 'codex_chrome_status'
+          ? { ok: true, toolName: request.toolName, result: { connectionState: 'EXTENSION_CONNECTED' } }
+          : { ok: false, toolName: request.toolName, error: { code: 'UNIT_BLOCKED' } };
+      }
+    }
+  });
+
+  const initialized = await handleMessage({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {}
+  });
+  assert.equal(initialized.result.adapterSession.sessionId, 'task_unit_1');
+  assert.equal(initialized.result.adapterSession.callCount, 0);
+
+  const first = await handleMessage({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_status',
+      arguments: {}
+    }
+  });
+  assert.equal(first.result.adapterSession.sessionId, 'task_unit_1');
+  assert.equal(first.result.adapterSession.callCount, 1);
+  assert.equal(first.result.adapterSession.lastToolName, 'codex_chrome_status');
+  assert.equal(first.result.adapterSession.lastErrorCode, null);
+
+  const second = await handleMessage({
+    jsonrpc: '2.0',
+    id: 3,
+    method: 'tools/call',
+    params: {
+      name: 'missing_tool',
+      arguments: {}
+    }
+  });
+  assert.equal(second.result.adapterSession.callCount, 2);
+  assert.equal(second.result.adapterSession.lastToolName, 'missing_tool');
+  assert.equal(second.result.adapterSession.lastErrorCode, 'UNKNOWN_TOOL');
 });
 
 test('MCP handler returns deterministic JSON-RPC errors for malformed calls', async () => {
@@ -151,5 +202,6 @@ test('package exposes MCP adapter script and docs explain local usage', () => {
   assert.match(docs, /npm run adapter:mcp/);
   assert.match(docs, /tools\/list/);
   assert.match(docs, /tools\/call/);
+  assert.match(docs, /adapterSession/);
   assert.match(docs, /untrusted/);
 });
