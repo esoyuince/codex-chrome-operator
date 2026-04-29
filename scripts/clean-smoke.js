@@ -508,12 +508,45 @@ async function runCleanSmoke(options = {}) {
     if (!postReconnectObserve.ok) {
       throw new Error(`Observe failed after reconnect: ${JSON.stringify(postReconnectObserve)}`);
     }
+    const boundedFullAutoContract = {
+      mode: 'bounded-full-auto-v1',
+      approvedOrigins: [config.origin],
+      taskScope: 'Clean smoke bounded non-final fixture editing',
+      allowedActionKinds: ['fill', 'click'],
+      blockedActionKinds: ['publish', 'payment', 'checkout', 'order-placement', 'delete'],
+      limits: {
+        expiresInMinutes: 30,
+        maxBrowserActions: 4,
+        maxScreenshots: 0,
+        maxOriginChanges: 0
+      },
+      auditRequired: true,
+      emergencyStopRequired: true
+    };
+    const boundedFullAutoStart = runCliJson([
+      'full-auto-start',
+      JSON.stringify(boundedFullAutoContract)
+    ], settings);
+    if (!boundedFullAutoStart.ok || boundedFullAutoStart.result.active !== true) {
+      throw new Error(`Bounded Full Auto start failed: ${JSON.stringify(boundedFullAutoStart)}`);
+    }
     runCliJson(['fill', config.origin, 'el_0', 'Clean Smoke App'], settings);
     runCliJson(['fill', config.origin, 'el_1', 'Single command smoke test.'], settings);
     runCliJson(['click', config.origin, 'el_2'], settings);
     const highRiskClick = runCliJson(['click', config.origin, 'el_3'], settings);
     if (highRiskClick.ok || highRiskClick.error.code !== 'HIGH_RISK_BLOCKED' || !highRiskClick.error.approvalId) {
       throw new Error(`Expected HIGH_RISK_BLOCKED for publish click: ${JSON.stringify(highRiskClick)}`);
+    }
+    const boundedFullAutoAfterHighRisk = runCliJson(['full-auto-status'], settings);
+    if (
+      !boundedFullAutoAfterHighRisk.ok ||
+      boundedFullAutoAfterHighRisk.result.counters.browserActions !== 4
+    ) {
+      throw new Error(`Bounded Full Auto counters did not track browser actions: ${JSON.stringify(boundedFullAutoAfterHighRisk)}`);
+    }
+    const boundedFullAutoStop = runCliJson(['full-auto-stop', 'manual high-risk replay'], settings);
+    if (!boundedFullAutoStop.ok || boundedFullAutoStop.result.active !== false) {
+      throw new Error(`Bounded Full Auto stop failed: ${JSON.stringify(boundedFullAutoStop)}`);
     }
     const blockedStatus = await withCdp(await pageTarget(config), async (send) => {
       const result = await send('Runtime.evaluate', {
@@ -587,6 +620,9 @@ async function runCleanSmoke(options = {}) {
       reconnectRecoveredTitle: postReconnectObserve.result.title,
       gateHandoffBlocked: gatedClick.error.code,
       gateHandoffResume: gateDom.gateStatus,
+      boundedFullAutoStarted: boundedFullAutoStart.result.active,
+      boundedFullAutoActions: boundedFullAutoAfterHighRisk.result.counters.browserActions,
+      boundedFullAutoStopped: boundedFullAutoStop.result.active === false,
       highRiskBlocked: highRiskClick.error.code,
       highRiskApprovalReplay: replayedHighRisk.result.action,
       screenshotCleanupRemoved: screenshotRemoved,

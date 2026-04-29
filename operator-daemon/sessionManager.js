@@ -5,7 +5,8 @@ const path = require('node:path');
 const {
   ERROR_CODES,
   validateHello,
-  assertReadyForRealSiteAction
+  assertReadyForRealSiteAction,
+  validateBoundedFullAutoContract
 } = require('./protocol');
 const { AuditLog } = require('./auditLog');
 const {
@@ -49,10 +50,47 @@ function clearsLastErrorOnSuccess(method) {
     'operator.screenshots.cleanup',
     'operator.emergencyStop',
     'operator.emergencyClear',
+    'operator.fullAuto.start',
+    'operator.fullAuto.stop',
+    'operator.fullAuto.status',
     'operator.approvals.approve',
     'operator.approvals.reject',
     'operator.approvals.run'
   ].includes(method) || method.startsWith('page.');
+}
+
+const PAGE_ACTION_KINDS = Object.freeze({
+  'page.observe': 'observe',
+  'page.visualObserve': 'screenshot',
+  'page.click': 'click',
+  'page.type': 'type',
+  'page.fill': 'fill',
+  'page.clear': 'clear',
+  'page.focus': 'focus',
+  'page.select': 'select',
+  'page.check': 'check',
+  'page.scroll': 'scroll',
+  'page.pressKey': 'pressKey',
+  'page.navigate': 'navigate'
+});
+
+function cloneJson(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function guardOk(extra = {}) {
+  return { ok: true, ...extra };
+}
+
+function guardError(code, message, extra = {}) {
+  return {
+    ok: false,
+    error: {
+      code,
+      message,
+      ...extra
+    }
+  };
 }
 
 function isLocalMockOrigin(origin) {
@@ -112,6 +150,7 @@ class SessionManager {
       stoppedAt: null,
       clearedAt: null
     };
+    this.boundedFullAuto = this.defaultBoundedFullAutoState();
   }
 
   status() {
@@ -128,6 +167,7 @@ class SessionManager {
       configuredProfile: this.stateStore.getConfiguredProfile(),
       pendingApprovals: this.listApprovalRecords({ status: 'pending' }),
       emergencyStop: { ...this.emergencyStop },
+      boundedFullAuto: this.boundedFullAutoStatus(),
       version: {
         protocolVersion: this.config.expectedProtocolVersion,
         extensionVersion: this.config.expectedExtensionVersion,
@@ -210,6 +250,15 @@ class SessionManager {
         break;
       case 'operator.emergencyClear':
         response = this.clearEmergencyStop(id);
+        break;
+      case 'operator.fullAuto.start':
+        response = this.startBoundedFullAuto(id, params);
+        break;
+      case 'operator.fullAuto.stop':
+        response = this.stopBoundedFullAuto(id, params);
+        break;
+      case 'operator.fullAuto.status':
+        response = rpcOk(id, this.boundedFullAutoStatus());
         break;
       case 'page.observe':
       case 'page.visualObserve':
@@ -518,6 +567,178 @@ class SessionManager {
     });
   }
 
+  defaultBoundedFullAutoState(overrides = {}) {
+    return {
+      active: false,
+      contract: null,
+      startedAt: null,
+      expiresAt: null,
+      stoppedAt: null,
+      stopReason: null,
+      counters: {
+        browserActions: 0,
+        screenshots: 0,
+        originChanges: 0
+      },
+      lastOrigin: null,
+      ...overrides
+    };
+  }
+
+  boundedFullAutoStatus() {
+    return cloneJson(this.boundedFullAuto);
+  }
+
+  startBoundedFullAuto(id, params = {}) {
+    const contract = params.contract;
+    const validation = validateBoundedFullAutoContract(contract);
+    if (!validation.ok) {
+      return rpcError(id, validation.error);
+    }
+
+    if (
+      contract.profileBindingId &&
+      contract.profileBindingId !== this.config.expectedProfileBindingId
+    ) {
+      return rpcError(id, {
+        code: ERROR_CODES.BOUNDED_FULL_AUTO_PROFILE_MISMATCH,
+        message: 'Bounded Full Auto contract profile binding does not match configured profile.',
+        expectedProfileBindingId: this.config.expectedProfileBindingId,
+        actualProfileBindingId: contract.profileBindingId
+      });
+    }
+
+    if (
+      contract.profileBindingVersion !== undefined &&
+      contract.profileBindingVersion !== this.config.expectedProfileBindingVersion
+    ) {
+      return rpcError(id, {
+        code: ERROR_CODES.BOUNDED_FULL_AUTO_PROFILE_MISMATCH,
+        message: 'Bounded Full Auto contract profile binding version does not match configured profile.',
+        expectedProfileBindingVersion: this.config.expectedProfileBindingVersion,
+        actualProfileBindingVersion: contract.profileBindingVersion
+      });
+    }
+
+    const startedAtMs = Date.now();
+    const expiresAtMs = startedAtMs + (contract.limits.expiresInMinutes * 60 * 1000);
+    this.boundedFullAuto = this.defaultBoundedFullAutoState({
+      active: true,
+      contract: cloneJson(contract),
+      startedAt: new Date(startedAtMs).toISOString(),
+      expiresAt: new Date(expiresAtMs).toISOString()
+    });
+
+    return rpcOk(id, this.boundedFullAutoStatus());
+  }
+
+  stopBoundedFullAuto(id, params = {}) {
+    this.boundedFullAuto = {
+      ...this.boundedFullAuto,
+      active: false,
+      stoppedAt: new Date().toISOString(),
+      stopReason: typeof params.reason === 'string' && params.reason.trim()
+        ? params.reason.trim()
+        : 'Bounded Full Auto stopped.'
+    };
+    return rpcOk(id, this.boundedFullAutoStatus());
+  }
+
+  enforceBoundedFullAuto(method, origin) {
+    if (!this.boundedFullAuto.active) {
+      return guardOk();
+    }
+
+    const actionKind = PAGE_ACTION_KINDS[method];
+    const contract = this.boundedFullAuto.contract || {};
+    const limits = contract.limits || {};
+    const expiresAt = Date.parse(this.boundedFullAuto.expiresAt);
+    if (Number.isFinite(expiresAt) && Date.now() > expiresAt) {
+      this.boundedFullAuto = {
+        ...this.boundedFullAuto,
+        active: false,
+        stoppedAt: new Date().toISOString(),
+        stopReason: 'Bounded Full Auto expired.'
+      };
+      return guardError(
+        ERROR_CODES.BOUNDED_FULL_AUTO_EXPIRED,
+        'Bounded Full Auto session expired.',
+        { boundedFullAuto: this.boundedFullAutoStatus() }
+      );
+    }
+
+    const approvedOrigins = Array.isArray(contract.approvedOrigins)
+      ? contract.approvedOrigins
+      : [];
+    if (!origin || !approvedOrigins.includes(origin)) {
+      return guardError(
+        ERROR_CODES.BOUNDED_FULL_AUTO_SCOPE_MISMATCH,
+        'Origin is outside the Bounded Full Auto contract scope.',
+        { origin, approvedOrigins }
+      );
+    }
+
+    const allowedActionKinds = new Set(Array.isArray(contract.allowedActionKinds)
+      ? contract.allowedActionKinds
+      : []);
+    if (!actionKind || !allowedActionKinds.has(actionKind)) {
+      return guardError(
+        ERROR_CODES.BOUNDED_FULL_AUTO_ACTION_NOT_ALLOWED,
+        'Action kind is not allowed by the Bounded Full Auto contract.',
+        { actionKind, allowedActionKinds: [...allowedActionKinds] }
+      );
+    }
+
+    const counters = this.boundedFullAuto.counters;
+    const originChangeIncrement = this.boundedFullAuto.lastOrigin &&
+      this.boundedFullAuto.lastOrigin !== origin
+      ? 1
+      : 0;
+
+    if (
+      Number.isFinite(limits.maxBrowserActions) &&
+      counters.browserActions + 1 > limits.maxBrowserActions
+    ) {
+      return guardError(
+        ERROR_CODES.BOUNDED_FULL_AUTO_LIMIT_EXCEEDED,
+        'Bounded Full Auto browser action limit exceeded.',
+        { limit: limits.maxBrowserActions, counter: counters.browserActions }
+      );
+    }
+
+    if (
+      actionKind === 'screenshot' &&
+      Number.isFinite(limits.maxScreenshots) &&
+      counters.screenshots + 1 > limits.maxScreenshots
+    ) {
+      return guardError(
+        ERROR_CODES.BOUNDED_FULL_AUTO_LIMIT_EXCEEDED,
+        'Bounded Full Auto screenshot limit exceeded.',
+        { limit: limits.maxScreenshots, counter: counters.screenshots }
+      );
+    }
+
+    if (
+      Number.isFinite(limits.maxOriginChanges) &&
+      counters.originChanges + originChangeIncrement > limits.maxOriginChanges
+    ) {
+      return guardError(
+        ERROR_CODES.BOUNDED_FULL_AUTO_LIMIT_EXCEEDED,
+        'Bounded Full Auto origin-change limit exceeded.',
+        { limit: limits.maxOriginChanges, counter: counters.originChanges }
+      );
+    }
+
+    counters.browserActions += 1;
+    if (actionKind === 'screenshot') {
+      counters.screenshots += 1;
+    }
+    counters.originChanges += originChangeIncrement;
+    this.boundedFullAuto.lastOrigin = origin;
+
+    return guardOk({ boundedFullAuto: this.boundedFullAutoStatus() });
+  }
+
   async routePageCommand(id, method, params) {
     if (this.emergencyStop.active) {
       return rpcError(id, this.emergencyStopError());
@@ -540,6 +761,11 @@ class SessionManager {
 
     if (!readiness.ok) {
       return rpcError(id, readiness.error);
+    }
+
+    const boundedFullAuto = this.enforceBoundedFullAuto(method, origin);
+    if (!boundedFullAuto.ok) {
+      return rpcError(id, boundedFullAuto.error);
     }
 
     const extensionResponse = await this.enqueueExtensionCommand(method, {

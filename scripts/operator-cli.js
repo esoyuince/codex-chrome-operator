@@ -28,6 +28,9 @@ function usage() {
   node scripts/operator-cli.js screenshots-cleanup [olderThanMs]
   node scripts/operator-cli.js emergency-stop [reason]
   node scripts/operator-cli.js emergency-clear
+  node scripts/operator-cli.js full-auto-start <contract-json>
+  node scripts/operator-cli.js full-auto-status
+  node scripts/operator-cli.js full-auto-stop [reason]
   node scripts/operator-cli.js disconnect [reason]
   node scripts/operator-cli.js observe <origin>
   node scripts/operator-cli.js visual-observe <origin>
@@ -69,6 +72,14 @@ function splitOptions(argv) {
 function requireArgs(args, count) {
   if (args.length < count) {
     throw usageError();
+  }
+}
+
+function parseJsonArg(value, label) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error(`${label} must be valid JSON.\n\n${usage()}`);
   }
 }
 
@@ -137,6 +148,23 @@ function buildRpcRequest(argv) {
       };
     case 'emergency-clear':
       return { method: 'operator.emergencyClear', params: {} };
+    case 'full-auto-start':
+      requireArgs(args, 1);
+      return {
+        method: 'operator.fullAuto.start',
+        params: {
+          contract: parseJsonArg(args.join(' '), 'full-auto-start contract')
+        }
+      };
+    case 'full-auto-status':
+      return { method: 'operator.fullAuto.status', params: {} };
+    case 'full-auto-stop':
+      return {
+        method: 'operator.fullAuto.stop',
+        params: {
+          reason: args.join(' ') || undefined
+        }
+      };
     case 'disconnect':
       return {
         method: 'bridge.disconnected',

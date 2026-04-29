@@ -44,6 +44,61 @@ async function postJson(baseUrl, method, params = {}, token = 'test-token') {
   return { status: response.status, body: await response.json() };
 }
 
+function verifiedHello(capabilities = ['observe.v1', 'visualObserve.v1']) {
+  return {
+    type: 'HELLO',
+    protocolVersion: '1.0',
+    extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+    extensionVersion: '0.1.0',
+    bridgeVersion: '0.1.0',
+    sessionBootstrapId: `boot_${Date.now()}`,
+    profileBindingState: 'bound',
+    profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+    profileBindingVersion: 3,
+    profileBindingSource: 'chrome.storage.local',
+    capabilities
+  };
+}
+
+function boundedFullAutoContract(overrides = {}) {
+  return {
+    mode: 'bounded-full-auto-v1',
+    approvedOrigins: ['https://example.com'],
+    taskScope: 'unit bounded task',
+    allowedActionKinds: ['observe', 'fill', 'screenshot'],
+    blockedActionKinds: ['publish', 'payment'],
+    limits: {
+      expiresInMinutes: 30,
+      maxBrowserActions: 5,
+      maxScreenshots: 1,
+      maxOriginChanges: 0,
+      ...(overrides.limits || {})
+    },
+    auditRequired: true,
+    emergencyStopRequired: true,
+    ...overrides
+  };
+}
+
+async function connectAndAuthorize(baseUrl, origin = 'https://example.com') {
+  await postJson(baseUrl, 'extension.hello', {
+    hello: verifiedHello()
+  });
+  await postJson(baseUrl, 'operator.approveDomain', { origin });
+  await postJson(baseUrl, 'extension.hostPermissionGranted', { origin });
+}
+
+async function deliverNextCommand(baseUrl, response) {
+  const command = await postJson(baseUrl, 'bridge.poll');
+  assert.equal(command.body.ok, true);
+  assert.ok(command.body.result.command);
+  await postJson(baseUrl, 'bridge.deliver', {
+    commandId: command.body.result.command.commandId,
+    response
+  });
+  return command.body.result.command;
+}
+
 test('control server rejects GET and wrong bearer token', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     const getResponse = await fetch(`${baseUrl}/v1/rpc`);
@@ -62,6 +117,124 @@ test('operator.status returns disconnected state before HELLO', async () => {
     assert.equal(result.status, 200);
     assert.equal(result.body.ok, true);
     assert.equal(result.body.result.connectionState, 'DAEMON_RUNNING_EXTENSION_DISCONNECTED');
+  });
+});
+
+test('operator.fullAuto.start validates and exposes bounded session status', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const contract = boundedFullAutoContract({
+      limits: {
+        expiresInMinutes: 30,
+        maxBrowserActions: 2,
+        maxScreenshots: 1,
+        maxOriginChanges: 0
+      }
+    });
+    const started = await postJson(baseUrl, 'operator.fullAuto.start', { contract });
+
+    assert.equal(started.status, 200);
+    assert.equal(started.body.ok, true);
+    assert.equal(started.body.result.active, true);
+    assert.equal(started.body.result.contract.taskScope, 'unit bounded task');
+    assert.equal(started.body.result.counters.browserActions, 0);
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.equal(status.body.result.boundedFullAuto.active, true);
+    assert.equal(status.body.result.boundedFullAuto.contract.mode, 'bounded-full-auto-v1');
+    assert.equal(status.body.result.boundedFullAuto.counters.screenshots, 0);
+  });
+});
+
+test('bounded full auto enforces action and browser limits', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+    await postJson(baseUrl, 'operator.fullAuto.start', {
+      contract: boundedFullAutoContract({
+        allowedActionKinds: ['observe'],
+        limits: {
+          expiresInMinutes: 30,
+          maxBrowserActions: 1,
+          maxScreenshots: 0,
+          maxOriginChanges: 0
+        }
+      })
+    });
+
+    const disallowed = await postJson(baseUrl, 'page.click', {
+      origin: 'https://example.com',
+      handle: 'el_1'
+    });
+    assert.equal(disallowed.body.ok, false);
+    assert.equal(disallowed.body.error.code, ERROR_CODES.BOUNDED_FULL_AUTO_ACTION_NOT_ALLOWED);
+
+    const observePromise = postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    const command = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: {
+        origin: 'https://example.com',
+        title: 'Bounded',
+        elements: []
+      }
+    });
+    assert.equal(command.method, 'page.observe');
+    const observed = await observePromise;
+    assert.equal(observed.body.ok, true);
+    assert.equal(observed.body.result.title, 'Bounded');
+
+    const limited = await postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    assert.equal(limited.body.ok, false);
+    assert.equal(limited.body.error.code, ERROR_CODES.BOUNDED_FULL_AUTO_LIMIT_EXCEEDED);
+
+    await postJson(baseUrl, 'operator.fullAuto.start', {
+      contract: boundedFullAutoContract({
+        allowedActionKinds: ['screenshot'],
+        limits: {
+          expiresInMinutes: 30,
+          maxBrowserActions: 5,
+          maxScreenshots: 0,
+          maxOriginChanges: 0
+        }
+      })
+    });
+    const screenshotLimited = await postJson(baseUrl, 'page.visualObserve', {
+      origin: 'https://example.com'
+    });
+    assert.equal(screenshotLimited.body.ok, false);
+    assert.equal(screenshotLimited.body.error.code, ERROR_CODES.BOUNDED_FULL_AUTO_LIMIT_EXCEEDED);
+  });
+});
+
+test('bounded full auto blocks out-of-scope and expired sessions', async () => {
+  await withServer(makeSession(), async (baseUrl, session) => {
+    await connectAndAuthorize(baseUrl);
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://other.example'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://other.example'
+    });
+    await postJson(baseUrl, 'operator.fullAuto.start', {
+      contract: boundedFullAutoContract()
+    });
+
+    const outOfScope = await postJson(baseUrl, 'page.observe', {
+      origin: 'https://other.example'
+    });
+    assert.equal(outOfScope.body.ok, false);
+    assert.equal(outOfScope.body.error.code, ERROR_CODES.BOUNDED_FULL_AUTO_SCOPE_MISMATCH);
+
+    session.boundedFullAuto.expiresAt = new Date(Date.now() - 1000).toISOString();
+    const expired = await postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    assert.equal(expired.body.ok, false);
+    assert.equal(expired.body.error.code, ERROR_CODES.BOUNDED_FULL_AUTO_EXPIRED);
   });
 });
 

@@ -124,12 +124,38 @@ test('buildRpcRequest maps approval lifecycle commands', () => {
   });
 });
 
+test('buildRpcRequest maps bounded full-auto commands', () => {
+  const contract = {
+    mode: 'bounded-full-auto-v1',
+    approvedOrigins: ['https://example.com'],
+    taskScope: 'unit bounded task',
+    allowedActionKinds: ['observe'],
+    limits: { expiresInMinutes: 30 },
+    auditRequired: true,
+    emergencyStopRequired: true
+  };
+
+  assert.deepEqual(buildRpcRequest(['full-auto-start', JSON.stringify(contract)]), {
+    method: 'operator.fullAuto.start',
+    params: { contract }
+  });
+  assert.deepEqual(buildRpcRequest(['full-auto-status']), {
+    method: 'operator.fullAuto.status',
+    params: {}
+  });
+  assert.deepEqual(buildRpcRequest(['full-auto-stop', 'done']), {
+    method: 'operator.fullAuto.stop',
+    params: { reason: 'done' }
+  });
+});
+
 test('buildRpcRequest rejects incomplete commands with usage error', () => {
   assert.throws(() => buildRpcRequest([]), /Usage:/);
   assert.throws(() => buildRpcRequest(['revoke']), /Usage:/);
   assert.throws(() => buildRpcRequest(['fill', 'https://example.com', 'el_0']), /Usage:/);
   assert.throws(() => buildRpcRequest(['profile-bind', 'C:/Chrome/User Data']), /Usage:/);
   assert.throws(() => buildRpcRequest(['approval-run']), /Usage:/);
+  assert.throws(() => buildRpcRequest(['full-auto-start']), /Usage:/);
   assert.throws(() => buildRpcRequest(['wat']), /Usage:/);
 });
 
