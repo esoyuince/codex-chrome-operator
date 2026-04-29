@@ -395,6 +395,62 @@ test('local high-risk click can be approved and replayed once', async () => {
   });
 });
 
+test('gate handoff errors pause actions without creating approval requests', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+        profileBindingVersion: 3,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1', 'gateHandoff.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'http://127.0.0.1:18888'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'http://127.0.0.1:18888'
+    });
+
+    const clickPromise = postJson(baseUrl, 'page.click', {
+      origin: 'http://127.0.0.1:18888',
+      handle: 'el_1'
+    });
+    const command = await postJson(baseUrl, 'bridge.poll');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: false,
+        error: {
+          code: 'PASSWORD_REQUIRED',
+          message: 'A password gate is visible. Please complete it in Chrome; the operator will resume after the page changes.',
+          gateType: 'PASSWORD_REQUIRED',
+          resumePolicy: 'wait-and-reobserve',
+          timeoutMs: 300000,
+          taskStatePreserved: true,
+          freshObservationRequired: true
+        }
+      }
+    });
+
+    const blocked = await clickPromise;
+    assert.equal(blocked.body.ok, false);
+    assert.equal(blocked.body.error.code, 'PASSWORD_REQUIRED');
+    assert.equal(blocked.body.error.resumePolicy, 'wait-and-reobserve');
+    assert.equal(blocked.body.error.approvalId, undefined);
+
+    const approvals = await postJson(baseUrl, 'operator.approvals.list');
+    assert.deepEqual(approvals.body.result.approvals, []);
+  });
+});
+
 test('real-origin high-risk approval replay is blocked in M1', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {

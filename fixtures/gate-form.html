@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Codex Operator Gate Fixture</title>
+</head>
+<body>
+  <main>
+    <h1>Gate Handoff Fixture</h1>
+    <section id="gate">
+      <p>Sign in to continue. Enter your password to unlock this test page.</p>
+      <label>
+        Password
+        <input id="password" name="password" type="password" autocomplete="current-password">
+      </label>
+      <button id="completeGate" type="button">I completed sign in</button>
+    </section>
+    <section id="postGate" hidden>
+      <label>
+        Post-gate value
+        <input name="postGateValue" placeholder="Post-gate value">
+      </label>
+      <button id="safeAfterGate" type="button">Save After Gate</button>
+      <p id="gateStatus" aria-live="polite"></p>
+    </section>
+  </main>
+  <script>
+    document.getElementById('completeGate').addEventListener('click', () => {
+      document.getElementById('gate').hidden = true;
+      document.getElementById('postGate').hidden = false;
+    });
+    document.getElementById('safeAfterGate').addEventListener('click', () => {
+      document.getElementById('gateStatus').textContent = 'Gate resumed';
+    });
+  </script>
+</body>
+</html>

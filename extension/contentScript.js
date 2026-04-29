@@ -42,12 +42,16 @@ function collectObservation() {
   const candidates = [...document.querySelectorAll(
     'a,button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]'
   )].filter(isVisible).slice(0, 200);
+  const detectedGates = globalThis.CodexGateDetector
+    ? globalThis.CodexGateDetector.detectGates(document)
+    : [];
 
   return {
     url: location.href,
     origin: location.origin,
     title: document.title,
     visibleTextSummary: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 2000),
+    detectedGates,
     elements: candidates.map(elementSummary),
     focusedElement: document.activeElement ? elementSummary(document.activeElement, 'focused') : null,
     viewport: {
@@ -74,6 +78,16 @@ function resolveHandle(handle) {
 }
 
 async function runAction(message) {
+  const detectedGates = globalThis.CodexGateDetector
+    ? globalThis.CodexGateDetector.detectGates(document)
+    : [];
+  const gateError = globalThis.CodexGateDetector
+    ? globalThis.CodexGateDetector.firstGateError(detectedGates)
+    : null;
+  if (gateError) {
+    return { ok: false, error: gateError };
+  }
+
   const element = resolveHandle(message.handle);
   if (!element) {
     return { ok: false, error: { code: 'STALE_HANDLE' } };

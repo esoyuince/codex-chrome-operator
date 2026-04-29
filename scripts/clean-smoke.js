@@ -373,6 +373,72 @@ async function runCleanSmoke(options = {}) {
     acceptPermissionPrompt(config.profileDir);
 
     await withCdp(await pageTarget(config), async (send) => {
+      await send('Page.navigate', { url: `${config.origin}/gate-form.html` });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    });
+    const gateObservation = runCliJson(['observe', config.origin], settings);
+    if (!gateObservation.ok) {
+      throw new Error(`Gate observe failed: ${JSON.stringify(gateObservation)}`);
+    }
+    const gateTypes = (gateObservation.result.detectedGates || []).map((gate) => gate.type);
+    if (!gateTypes.includes('PASSWORD_REQUIRED')) {
+      throw new Error(`Expected PASSWORD_REQUIRED gate: ${JSON.stringify(gateObservation)}`);
+    }
+    const gatedClick = runCliJson(['click', config.origin, 'el_1'], settings);
+    if (
+      gatedClick.ok ||
+      gatedClick.error.code !== 'PASSWORD_REQUIRED' ||
+      gatedClick.error.resumePolicy !== 'wait-and-reobserve'
+    ) {
+      throw new Error(`Expected password gate handoff before action: ${JSON.stringify(gatedClick)}`);
+    }
+    const gateBlockedState = await withCdp(await pageTarget(config), async (send) => {
+      const result = await send('Runtime.evaluate', {
+        expression: `({
+          gateHidden: document.getElementById('gate').hidden,
+          postGateHidden: document.getElementById('postGate').hidden,
+          gateStatus: document.getElementById('gateStatus').textContent
+        })`,
+        returnByValue: true
+      });
+      return result.result.result.value;
+    });
+    if (gateBlockedState.gateHidden || !gateBlockedState.postGateHidden) {
+      throw new Error(`Gate action was not paused: ${JSON.stringify(gateBlockedState)}`);
+    }
+
+    await withCdp(await pageTarget(config), async (send) => {
+      await clickElement(send, 'completeGate');
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    });
+    const resumedGateObservation = runCliJson(['observe', config.origin], settings);
+    if (!resumedGateObservation.ok) {
+      throw new Error(`Gate resume observe failed: ${JSON.stringify(resumedGateObservation)}`);
+    }
+    const resumedGateTypes = (resumedGateObservation.result.detectedGates || []).map((gate) => gate.type);
+    if (resumedGateTypes.length !== 0) {
+      throw new Error(`Expected gate to clear after manual completion: ${JSON.stringify(resumedGateObservation)}`);
+    }
+    const gateFill = runCliJson(['fill', config.origin, 'el_0', 'Manual gate complete'], settings);
+    const gateSafeClick = runCliJson(['click', config.origin, 'el_1'], settings);
+    if (!gateFill.ok || !gateSafeClick.ok) {
+      throw new Error(`Post-gate action failed: ${JSON.stringify({ gateFill, gateSafeClick })}`);
+    }
+    const gateDom = await withCdp(await pageTarget(config), async (send) => {
+      const result = await send('Runtime.evaluate', {
+        expression: `({
+          postGateValue: document.querySelector('[name=postGateValue]').value,
+          gateStatus: document.getElementById('gateStatus').textContent
+        })`,
+        returnByValue: true
+      });
+      return result.result.result.value;
+    });
+    if (gateDom.gateStatus !== 'Gate resumed') {
+      throw new Error(`Gate did not resume after manual completion: ${JSON.stringify(gateDom)}`);
+    }
+
+    await withCdp(await pageTarget(config), async (send) => {
       await send('Page.navigate', { url: `${config.origin}/basic-form.html` });
       await new Promise((resolve) => setTimeout(resolve, 1000));
     });
@@ -451,6 +517,8 @@ async function runCleanSmoke(options = {}) {
       observedTitle: observation.result.title,
       visualObservedTitle: visualObservation.result.title,
       visualScreenshotBytes: visualObservation.result.screenshot.bytesApprox,
+      gateHandoffBlocked: gatedClick.error.code,
+      gateHandoffResume: gateDom.gateStatus,
       highRiskBlocked: highRiskClick.error.code,
       highRiskApprovalReplay: replayedHighRisk.result.action,
       postRevokeBlocked: postRevokeObserve.error.code,
