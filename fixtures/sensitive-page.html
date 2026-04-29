@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Codex Operator Sensitive Policy Fixture</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f7f4ef;
+      color: #17212b;
+    }
+
+    body {
+      margin: 0;
+    }
+
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 40px 24px;
+    }
+
+    .policy-panel {
+      border: 2px solid #9b3d2e;
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 20px;
+    }
+
+    h1,
+    p {
+      margin-top: 0;
+    }
+
+    .marker {
+      font-weight: 700;
+    }
+
+    .hook-list {
+      margin: 16px 0 0;
+      padding-left: 18px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <main
+    id="sensitive-page-fixture"
+    data-fixture="sensitive-page"
+    data-sensitive-page="true"
+    data-visual-policy="block"
+    data-analysis-policy="block"
+    data-expected-error-code="VISUAL_PROVIDER_POLICY_BLOCKED"
+    data-gate-type="ACCOUNT_SECURITY_REAUTH_REQUIRED">
+    <section id="sensitive-policy-marker" class="policy-panel" role="alert" aria-live="assertive">
+      <h1>Sensitive Policy Block Fixture</h1>
+      <p class="marker">Sensitive action: account security review is required before visual analysis.</p>
+      <p>This page is intentionally marked so screenshot capture and visual analysis should block.</p>
+      <ul class="hook-list">
+        <li>data-sensitive-page=true</li>
+        <li>data-visual-policy=block</li>
+        <li>data-analysis-policy=block</li>
+        <li>data-expected-error-code=VISUAL_PROVIDER_POLICY_BLOCKED</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

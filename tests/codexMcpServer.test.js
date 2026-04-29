@@ -46,12 +46,22 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   });
 
   const openObserve = response.result.tools.find((tool) => tool.name === 'codex_chrome_open_observe');
+  const visualAnalyze = response.result.tools.find((tool) => tool.name === 'codex_chrome_visual_analyze');
   const profileDoctor = response.result.tools.find((tool) => tool.name === 'codex_chrome_profile_doctor');
   const profileOnboard = response.result.tools.find((tool) => tool.name === 'codex_chrome_profile_onboard');
   assert.ok(openObserve);
   assert.equal(openObserve.inputSchema.additionalProperties, false);
   assert.deepEqual(openObserve.inputSchema.required, ['url']);
   assert.equal(openObserve.adapterProtocolVersion, '1.0');
+  assert.ok(visualAnalyze);
+  assert.equal(visualAnalyze.inputSchema.additionalProperties, false);
+  assert.deepEqual(visualAnalyze.inputSchema.required, ['origin']);
+  assert.deepEqual(visualAnalyze.inputSchema.properties, {
+    origin: { type: 'string' },
+    provider: { type: 'string' },
+    maxBytes: { type: 'number' },
+    allowSensitive: { type: 'boolean' }
+  });
   assert.ok(profileDoctor);
   assert.equal(profileDoctor.inputSchema.additionalProperties, false);
   assert.deepEqual(profileDoctor.inputSchema.required, []);
@@ -303,6 +313,8 @@ test('package exposes MCP adapter script and docs explain local usage', () => {
   assert.match(docs, /adapterSession/);
   assert.match(docs, /adapterHints/);
   assert.match(docs, /codex_chrome_readiness/);
+  assert.match(docs, /codex_chrome_visual_analyze/);
+  assert.match(docs, /page\.visualAnalyze/);
   assert.match(docs, /codex_chrome_profile_doctor/);
   assert.match(docs, /codex_chrome_profile_onboard/);
   assert.match(docs, /codex_chrome_approval_approve/);

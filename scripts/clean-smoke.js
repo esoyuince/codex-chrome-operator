@@ -580,6 +580,52 @@ async function runCleanSmoke(options = {}) {
     ) {
       throw new Error(`Visual observe did not return a stored screenshot artifact: ${JSON.stringify(visualObservation)}`);
     }
+
+    await withCdp(await pageTarget(config), async (send) => {
+      await send('Page.navigate', { url: `${config.origin}/visual-cards.html` });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    });
+    const visualAnalysis = runCliJson(['visual-analyze', config.origin, 'local-basic'], settings);
+    const analysis = visualAnalysis.result &&
+      visualAnalysis.result.visual &&
+      visualAnalysis.result.visual.analysis;
+    const visualRegionKinds = analysis && Array.isArray(analysis.regions)
+      ? analysis.regions.map((region) => region.kind)
+      : [];
+    if (
+      !visualAnalysis.ok ||
+      !analysis ||
+      analysis.provider !== 'local-basic' ||
+      analysis.status !== 'analyzed' ||
+      !visualRegionKinds.includes('product-card') ||
+      !visualRegionKinds.includes('rating-stars') ||
+      !Array.isArray(analysis.handleCorrelations) ||
+      analysis.handleCorrelations.length === 0 ||
+      !visualAnalysis.result.screenshot ||
+      visualAnalysis.result.screenshot.dataUrl ||
+      !visualAnalysis.result.screenshot.artifactId
+    ) {
+      throw new Error(`Visual analysis did not return expected fixture regions: ${JSON.stringify(visualAnalysis)}`);
+    }
+
+    await withCdp(await pageTarget(config), async (send) => {
+      await send('Page.navigate', { url: `${config.origin}/sensitive-page.html` });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    });
+    const sensitiveVisualAnalyze = runCliJson(['visual-analyze', config.origin, 'local-basic'], settings);
+    if (
+      sensitiveVisualAnalyze.ok ||
+      sensitiveVisualAnalyze.error.code !== 'VISUAL_PROVIDER_POLICY_BLOCKED' ||
+      sensitiveVisualAnalyze.error.reason !== 'SENSITIVE_VISUAL_CONTENT'
+    ) {
+      throw new Error(`Expected sensitive visual policy block: ${JSON.stringify(sensitiveVisualAnalyze)}`);
+    }
+
+    await withCdp(await pageTarget(config), async (send) => {
+      await send('Page.navigate', { url: `${config.origin}/basic-form.html` });
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    });
+
     const emergencyStop = runCliJson(['emergency-stop', 'clean smoke stop'], settings);
     if (!emergencyStop.ok || emergencyStop.result.active !== true) {
       throw new Error(`Emergency stop failed: ${JSON.stringify(emergencyStop)}`);
@@ -834,6 +880,13 @@ async function runCleanSmoke(options = {}) {
       visualScreenshotArtifactId: screenshotArtifact.artifactId,
       visualScreenshotBytes: screenshotArtifact.bytes,
       visualScreenshotSha256: screenshotArtifact.sha256,
+      visualAnalyzeProvider: analysis.provider,
+      visualAnalyzeStatus: analysis.status,
+      visualAnalyzeArtifactId: analysis.artifactId,
+      visualAnalyzeRegions: visualRegionKinds,
+      visualAnalyzeCorrelations: analysis.handleCorrelations.length,
+      sensitiveVisualBlocked: sensitiveVisualAnalyze.error.code,
+      sensitiveVisualReason: sensitiveVisualAnalyze.error.reason,
       gatedVisualBlocked: gatedVisualObserve.error.code,
       emergencyBlocked: emergencyBlockedObserve.error.code,
       emergencyCleared: emergencyClear.result.active === false,

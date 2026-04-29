@@ -16,6 +16,7 @@ const REQUIRED_MCP_SMOKE_TOOLS = [
   'codex_chrome_open_observe',
   'codex_chrome_observe',
   'codex_chrome_visual_observe',
+  'codex_chrome_visual_analyze',
   'codex_chrome_click',
   'codex_chrome_approval_approve',
   'codex_chrome_emergency_stop'

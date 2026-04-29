@@ -763,6 +763,111 @@ test('page.visualObserve queues extension command and resolves from bridge deliv
   });
 });
 
+test('page.visualAnalyze stores screenshot artifact and returns local-basic analysis', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const analyzePromise = postJson(baseUrl, 'page.visualAnalyze', {
+      origin: 'https://example.com',
+      provider: 'local-basic',
+      policy: {
+        maxBytes: 4096
+      }
+    });
+
+    const command = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(command.body.ok, true);
+    assert.equal(command.body.result.command.method, 'page.visualObserve');
+    assert.equal(command.body.result.command.params.origin, 'https://example.com');
+
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          title: 'Visual Cards Fixture',
+          visibleTextSummary: 'Product Alpha Seller rating 4.5 of 5',
+          viewport: {
+            width: 1280,
+            height: 900,
+            devicePixelRatio: 1
+          },
+          screenshot: {
+            mimeType: 'image/png',
+            dataUrl: 'data:image/png;base64,abc',
+            width: 1280,
+            height: 900
+          },
+          elements: [
+            {
+              handle: 'el_0',
+              tag: 'article',
+              label: 'Product Alpha',
+              visualRole: 'product-card',
+              productId: 'alpha',
+              bbox: { x: 40, y: 80, width: 320, height: 220 }
+            },
+            {
+              handle: 'el_1',
+              tag: 'span',
+              label: 'Seller rating 4.5 of 5',
+              visualRole: 'rating-stars',
+              ratingValue: 4.5,
+              bbox: { x: 80, y: 170, width: 120, height: 24 }
+            }
+          ]
+        }
+      }
+    });
+
+    const result = await analyzePromise;
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.visual.provider, 'chrome.tabs.captureVisibleTab');
+    assert.equal(result.body.result.visual.analysis.provider, 'local-basic');
+    assert.equal(result.body.result.visual.analysis.status, 'analyzed');
+    assert.equal(result.body.result.visual.analysis.artifactId, result.body.result.screenshot.artifactId);
+    assert.deepEqual(result.body.result.visual.analysis.regions.map((region) => region.kind), [
+      'product-card',
+      'rating-stars'
+    ]);
+    assert.equal(result.body.result.visual.analysis.handleCorrelations.length, 2);
+    assert.equal(result.body.result.screenshot.dataUrl, undefined);
+    assert.equal(fs.existsSync(result.body.result.screenshot.path), true);
+  });
+});
+
+test('page.visualAnalyze blocks sensitive visual observations before provider analysis', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const analyzePromise = postJson(baseUrl, 'page.visualAnalyze', {
+      origin: 'https://example.com'
+    });
+    const command = await postJson(baseUrl, 'bridge.poll');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          sensitiveVisualContent: true,
+          screenshot: {
+            mimeType: 'image/png',
+            dataUrl: 'data:image/png;base64,abc'
+          },
+          elements: []
+        }
+      }
+    });
+
+    const result = await analyzePromise;
+    assert.equal(result.body.ok, false);
+    assert.equal(result.body.error.code, ERROR_CODES.VISUAL_PROVIDER_POLICY_BLOCKED);
+    assert.equal(result.body.error.reason, 'SENSITIVE_VISUAL_CONTENT');
+  });
+});
+
 test('operator.screenshots.cleanup removes stored visual artifacts', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {

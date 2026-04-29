@@ -77,6 +77,13 @@ function extractCleanSmokeEvidence(stdout) {
   addDefined(evidence, 'openObserveTitle', smoke.openObserveTitle);
   addDefined(evidence, 'visualScreenshotArtifactId', smoke.visualScreenshotArtifactId);
   addDefined(evidence, 'visualScreenshotBytes', smoke.visualScreenshotBytes);
+  addDefined(evidence, 'visualAnalyzeProvider', smoke.visualAnalyzeProvider);
+  addDefined(evidence, 'visualAnalyzeStatus', smoke.visualAnalyzeStatus);
+  addDefined(evidence, 'visualAnalyzeArtifactId', smoke.visualAnalyzeArtifactId);
+  addDefined(evidence, 'visualAnalyzeRegions', smoke.visualAnalyzeRegions);
+  addDefined(evidence, 'visualAnalyzeCorrelations', smoke.visualAnalyzeCorrelations);
+  addDefined(evidence, 'sensitiveVisualBlocked', smoke.sensitiveVisualBlocked);
+  addDefined(evidence, 'sensitiveVisualReason', smoke.sensitiveVisualReason);
   addDefined(evidence, 'gatedVisualBlocked', smoke.gatedVisualBlocked);
   addDefined(evidence, 'gateHandoffBlocked', smoke.gateHandoffBlocked);
   addDefined(evidence, 'gateHandoffResume', smoke.gateHandoffResume);

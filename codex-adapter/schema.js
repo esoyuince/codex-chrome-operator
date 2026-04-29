@@ -137,6 +137,25 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'codex_chrome_visual_analyze',
+    description: 'Analyze the approved active tab visually through the daemon, returning untrusted structured analysis.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        provider: { type: 'string' },
+        maxBytes: { type: 'number' },
+        allowSensitive: { type: 'boolean' }
+      },
+      required: ['origin']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
     name: 'codex_chrome_fill',
     description: 'Fill an approved page element handle.',
     inputSchema: {

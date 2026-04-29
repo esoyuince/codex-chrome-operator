@@ -110,9 +110,13 @@ Policy hints are returned for blockers such as `HOST_PERMISSION_REQUIRED`,
 emergency stop. Host permission hints include the permission page URL when the
 daemon provides it and mark the step as requiring a user gesture.
 
-Visual tools return screenshot artifact references and metadata. Raw screenshot
-bytes and `dataUrl` fields are redacted before the result reaches Codex unless a
-future policy explicitly allows a different handoff.
+Visual tools return screenshot artifact references, metadata, or structured
+analysis. `codex_chrome_visual_analyze` routes to `page.visualAnalyze` with a
+required `origin` plus optional `provider`, `maxBytes`, and `allowSensitive`
+arguments; the adapter normalizes URL-like origin inputs to an origin before the
+daemon call. Raw screenshot bytes and `dataUrl` fields are redacted before the
+result reaches Codex unless a future policy explicitly allows a different
+handoff.
 
 High-risk browser actions cannot be bypassed through this adapter. The operator
 daemon still controls guarded mode, approval prompts, profile binding, host

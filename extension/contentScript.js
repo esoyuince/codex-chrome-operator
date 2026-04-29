@@ -9,6 +9,44 @@ function isVisible(element) {
     rect.height > 0;
 }
 
+function dataAttributes(element) {
+  return Object.entries(element.dataset || {}).reduce((data, [key, value]) => {
+    data[key] = value;
+    return data;
+  }, {});
+}
+
+function numericAttribute(element, name) {
+  const value = Number(element.getAttribute(name));
+  return Number.isFinite(value) ? value : null;
+}
+
+function visualRoleForElement(element) {
+  if (element.getAttribute('data-visual-card') === 'product') {
+    return 'product-card';
+  }
+  const analyzerField = element.getAttribute('data-analyzer-field');
+  if (analyzerField === 'seller-rating') {
+    return 'rating-stars';
+  }
+  if (analyzerField) {
+    return analyzerField;
+  }
+  if (element.classList && element.classList.contains('price')) {
+    return 'price';
+  }
+  return null;
+}
+
+function isSensitiveElement(element) {
+  return Boolean(
+    element.matches('input[type="password"], [autocomplete="one-time-code"]') ||
+    element.getAttribute('data-sensitive-page') === 'true' ||
+    element.getAttribute('data-visual-policy') === 'block' ||
+    element.getAttribute('data-analysis-policy') === 'block'
+  );
+}
+
 function elementSummary(element, handle) {
   const rect = element.getBoundingClientRect();
   const dataRisk = element.getAttribute('data-risk') || null;
@@ -19,6 +57,8 @@ function elementSummary(element, handle) {
     element.getAttribute('name') ||
     '';
 
+  const visualRole = visualRoleForElement(element);
+  const ratingValue = numericAttribute(element, 'data-rating');
   return {
     handle,
     tag: element.tagName.toLowerCase(),
@@ -27,6 +67,12 @@ function elementSummary(element, handle) {
     name: element.getAttribute('name') || null,
     id: element.id || null,
     dataRisk,
+    data: dataAttributes(element),
+    visualRole,
+    productId: element.getAttribute('data-product-id') || null,
+    analyzerField: element.getAttribute('data-analyzer-field') || null,
+    ratingValue,
+    sensitive: isSensitiveElement(element),
     label: String(label).trim().slice(0, 200),
     disabled: Boolean(element.disabled),
     bbox: {
@@ -44,8 +90,48 @@ function collectInteractiveElements() {
   )].filter(isVisible).slice(0, 200);
 }
 
+function collectVisualElements() {
+  return [...document.querySelectorAll([
+    '[data-visual-card]',
+    '[data-analyzer-field]',
+    '[data-sensitive-page]',
+    '[data-visual-policy]',
+    '[data-analysis-policy]',
+    '[data-rating]',
+    '[data-product-id]',
+    '[role="dialog"]',
+    '[role="status"]',
+    '[role="alert"]'
+  ].join(','))].filter(isVisible).slice(0, 200);
+}
+
+function collectObservedElements() {
+  return [...new Set([...collectInteractiveElements(), ...collectVisualElements()])].slice(0, 300);
+}
+
+function collectSensitiveFields() {
+  return [...document.querySelectorAll('input[type="password"], [autocomplete="one-time-code"], [data-sensitive-page="true"], [data-visual-policy="block"], [data-analysis-policy="block"]')]
+    .filter(isVisible)
+    .map((element) => ({
+      tag: element.tagName.toLowerCase(),
+      type: element.getAttribute('type') || null,
+      id: element.id || null,
+      name: element.getAttribute('name') || null,
+      reason: element.getAttribute('data-visual-policy') === 'block' ||
+        element.getAttribute('data-analysis-policy') === 'block'
+        ? 'visual-policy-block'
+        : 'sensitive-field'
+    }));
+}
+
+function hasExplicitVisualPolicyBlock() {
+  return Boolean(document.querySelector(
+    '[data-sensitive-page="true"], [data-visual-policy="block"], [data-analysis-policy="block"]'
+  ));
+}
+
 function collectObservation() {
-  const candidates = collectInteractiveElements();
+  const candidates = collectObservedElements();
   const described = globalThis.CodexPageHandles.describeElements(candidates, {
     location,
     document,
@@ -54,6 +140,9 @@ function collectObservation() {
   const detectedGates = globalThis.CodexGateDetector
     ? globalThis.CodexGateDetector.detectGates(document)
     : [];
+  const sensitiveFields = collectSensitiveFields();
+  const sensitiveVisualContent = sensitiveFields.length > 0;
+  const explicitVisualPolicyBlock = hasExplicitVisualPolicyBlock();
 
   return {
     url: location.href,
@@ -62,6 +151,17 @@ function collectObservation() {
     pageStateId: described.pageStateId,
     visibleTextSummary: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 2000),
     detectedGates,
+    sensitiveVisualContent,
+    visualPolicy: {
+      sensitive: sensitiveVisualContent,
+      explicitBlock: explicitVisualPolicyBlock,
+      screenshot: sensitiveVisualContent ? 'blocked' : 'allowed'
+    },
+    riskSummary: {
+      detectedHighRiskControls: [],
+      detectedSensitiveFields: sensitiveFields.map((field) => field.reason),
+      detectedGates: detectedGates.map((gate) => gate.type)
+    },
     elements: candidates.map((element, index) => elementSummary(element, described.items[index].handle)),
     focusedElement: document.activeElement ? elementSummary(document.activeElement, null) : null,
     viewport: {
@@ -75,7 +175,7 @@ function collectObservation() {
 }
 
 function resolveHandle(handle) {
-  const candidates = collectInteractiveElements();
+  const candidates = collectObservedElements();
   return globalThis.CodexPageHandles.resolveVersionedHandle({
     handle,
     elements: candidates,

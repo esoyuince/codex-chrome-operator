@@ -51,6 +51,7 @@ async function buildHello() {
     capabilities: [
       'observe.v1',
       'visualObserve.v1',
+      'visualAnalyze.v1',
       'screenshots.v1',
       'actions.basic.v1',
       'guarded.v1',
@@ -189,20 +190,51 @@ function estimateDataUrlBytes(dataUrl) {
 }
 
 function visualPolicyErrorForObservation(observation) {
+  if (
+    observation &&
+    observation.visualPolicy &&
+    observation.visualPolicy.explicitBlock === true
+  ) {
+    return {
+      code: 'VISUAL_PROVIDER_POLICY_BLOCKED',
+      message: 'Screenshot capture is blocked because sensitive page content was detected.',
+      reason: 'SENSITIVE_VISUAL_CONTENT',
+      resumePolicy: 'manual-sensitive-review',
+      freshObservationRequired: true
+    };
+  }
+
   const gates = observation && Array.isArray(observation.detectedGates)
     ? observation.detectedGates
     : [];
-  if (gates.length === 0) {
-    return null;
+  if (gates.length > 0) {
+    const gate = gates[0];
+    return {
+      code: 'VISUAL_PROVIDER_POLICY_BLOCKED',
+      message: 'Screenshot capture is blocked while an authentication or anti-abuse gate is visible.',
+      gateType: gate.type || gate.code,
+      resumePolicy: 'wait-and-reobserve',
+      freshObservationRequired: true
+    };
   }
-  const gate = gates[0];
-  return {
-    code: 'VISUAL_PROVIDER_POLICY_BLOCKED',
-    message: 'Screenshot capture is blocked while an authentication or anti-abuse gate is visible.',
-    gateType: gate.type || gate.code,
-    resumePolicy: 'wait-and-reobserve',
-    freshObservationRequired: true
-  };
+
+  if (
+    observation &&
+    (
+      observation.sensitiveVisualContent === true ||
+      (observation.visualPolicy && observation.visualPolicy.sensitive === true)
+    )
+  ) {
+    return {
+      code: 'VISUAL_PROVIDER_POLICY_BLOCKED',
+      message: 'Screenshot capture is blocked because sensitive page content was detected.',
+      reason: 'SENSITIVE_VISUAL_CONTENT',
+      resumePolicy: 'manual-sensitive-review',
+      freshObservationRequired: true
+    };
+  }
+
+  return null;
 }
 
 async function syncPermissionsAfterChange() {

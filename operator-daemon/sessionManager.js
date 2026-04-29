@@ -18,6 +18,11 @@ const {
   ScreenshotStore,
   defaultScreenshotDir
 } = require('./screenshotStore');
+const {
+  analyzeVisualObservation,
+  createVisualAnalyzerRegistry,
+  visualPolicyBlockIfNeeded
+} = require('./visualAnalyzer');
 const { OperatorStateStore } = require('./stateStore');
 
 function defaultAuditPath() {
@@ -64,6 +69,7 @@ function clearsLastErrorOnSuccess(method) {
 const PAGE_ACTION_KINDS = Object.freeze({
   'page.observe': 'observe',
   'page.visualObserve': 'screenshot',
+  'page.visualAnalyze': 'screenshot',
   'page.click': 'click',
   'page.type': 'type',
   'page.fill': 'fill',
@@ -226,12 +232,14 @@ class SessionManager {
       expectedBridgeVersion: config.expectedBridgeVersion || '0.1.0',
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
+      visualAnalyzerRegistry: config.visualAnalyzerRegistry || createVisualAnalyzerRegistry(),
       token: config.token || process.env.CODEX_CHROME_OPERATOR_TOKEN || 'dev-token'
     };
     this.audit = new AuditLog(this.config.auditLogPath);
     this.screenshotStore = config.screenshotStore || new ScreenshotStore({
       rootDir: this.config.screenshotDir
     });
+    this.visualAnalyzerRegistry = this.config.visualAnalyzerRegistry;
     this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
     this.profileVerified = false;
     this.profileBindingStatus = 'unverified';
@@ -376,6 +384,7 @@ class SessionManager {
         break;
       case 'page.observe':
       case 'page.visualObserve':
+      case 'page.visualAnalyze':
         response = await this.routePageCommand(id, request.method, params);
         break;
       case 'page.click':
@@ -996,7 +1005,8 @@ class SessionManager {
       return rpcError(id, boundedFullAuto.error);
     }
 
-    const extensionResponse = await this.enqueueExtensionCommand(method, {
+    const extensionMethod = method === 'page.visualAnalyze' ? 'page.visualObserve' : method;
+    const extensionResponse = await this.enqueueExtensionCommand(extensionMethod, {
       ...params,
       ...(target ? { url: target.url } : {}),
       origin
@@ -1004,10 +1014,35 @@ class SessionManager {
     if (!extensionResponse.ok) {
       return rpcError(id, this.attachApprovalRequest(method, { ...params, origin }, extensionResponse.error));
     }
-    if (method === 'page.visualObserve') {
-      const materialized = this.materializeVisualObservation(extensionResponse.result, origin);
+    if (method === 'page.visualObserve' || method === 'page.visualAnalyze') {
+      const materialized = this.materializeVisualObservation(extensionResponse.result, origin, {
+        policy: params.policy || {},
+        allowSensitive: params.allowSensitive
+      });
       if (!materialized.ok) {
         return rpcError(id, materialized.error);
+      }
+      if (method === 'page.visualAnalyze') {
+        const analysis = analyzeVisualObservation({
+          provider: params.provider,
+          observation: materialized.result,
+          screenshot: materialized.result.screenshot,
+          policy: {
+            ...(params.policy || {}),
+            ...(params.maxBytes === undefined ? {} : { maxBytes: params.maxBytes }),
+            ...(params.allowSensitive === undefined ? {} : { allowSensitive: params.allowSensitive })
+          }
+        }, this.visualAnalyzerRegistry);
+        if (!analysis.ok) {
+          return rpcError(id, analysis.error);
+        }
+        return rpcOk(id, {
+          ...materialized.result,
+          visual: {
+            ...(materialized.result.visual || {}),
+            analysis
+          }
+        });
       }
       return rpcOk(id, materialized.result);
     }
@@ -1030,7 +1065,7 @@ class SessionManager {
     return rpcOk(id, extensionResponse.result);
   }
 
-  materializeVisualObservation(result, origin) {
+  materializeVisualObservation(result, origin, { policy = {}, allowSensitive } = {}) {
     const screenshot = result && result.screenshot;
     if (!screenshot || !screenshot.dataUrl) {
       return rpcOk(null, result);
@@ -1038,6 +1073,18 @@ class SessionManager {
 
     try {
       const { dataUrl, ...screenshotSummary } = screenshot;
+      const policyBlock = visualPolicyBlockIfNeeded({
+        observation: result,
+        screenshot: screenshotSummary,
+        policy: {
+          allowSensitive: allowSensitive === true || policy.allowSensitive === true,
+          allowExternal: false,
+          maxBytes: Number.isFinite(policy.maxBytes) ? policy.maxBytes : 5 * 1024 * 1024
+        }
+      });
+      if (policyBlock) {
+        return policyBlock;
+      }
       const artifact = this.screenshotStore.saveDataUrl({
         dataUrl,
         origin,
@@ -1047,6 +1094,9 @@ class SessionManager {
         ...result,
         visual: {
           ...(result.visual || {}),
+          provider: result.visual && result.visual.provider
+            ? result.visual.provider
+            : 'chrome.tabs.captureVisibleTab',
           artifactBacked: true
         },
         screenshot: {

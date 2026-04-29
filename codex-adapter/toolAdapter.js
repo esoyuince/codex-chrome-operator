@@ -251,6 +251,14 @@ class CodexChromeToolAdapter {
       case 'codex_chrome_visual_observe':
         response = await this.sendRpc('page.visualObserve', { origin: input.origin });
         break;
+      case 'codex_chrome_visual_analyze':
+        response = await this.sendRpc('page.visualAnalyze', {
+          origin: normalizeOrigin(input.origin),
+          ...(input.provider === undefined ? {} : { provider: input.provider }),
+          ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }),
+          ...(input.allowSensitive === undefined ? {} : { allowSensitive: input.allowSensitive })
+        });
+        break;
       case 'codex_chrome_fill':
         response = await this.sendRpc('page.fill', {
           origin: input.origin,

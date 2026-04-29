@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Codex Operator Visual Cards Fixture</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f4f7f9;
+      color: #15202b;
+    }
+
+    body {
+      margin: 0;
+    }
+
+    main {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 32px 24px 48px;
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .product-card {
+      min-height: 250px;
+      border: 1px solid #c7d4dd;
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 16px;
+      box-shadow: 0 1px 2px rgba(21, 32, 43, 0.08);
+    }
+
+    .product-card h2 {
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+
+    .product-card dl {
+      margin: 14px 0 0;
+    }
+
+    .product-card dt {
+      font-weight: 700;
+      margin-top: 10px;
+    }
+
+    .product-card dd {
+      margin: 4px 0 0;
+    }
+
+    .rating-stars {
+      color: #8a5a00;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .price {
+      font-weight: 700;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+      gap: 16px;
+      margin-top: 24px;
+    }
+
+    .panel,
+    .dialog {
+      border: 1px solid #b7c5cf;
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 16px;
+    }
+
+    .editor {
+      min-height: 96px;
+      border: 1px solid #7b8b98;
+      border-radius: 6px;
+      padding: 12px;
+      background: #fbfdff;
+    }
+
+    .hook-list {
+      margin: 12px 0 0;
+      padding-left: 18px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <main id="visual-cards-fixture" data-fixture="visual-cards" data-analyzer-surface="product-cards">
+    <header>
+      <h1>Visual Product Cards Fixture</h1>
+      <p id="fixture-purpose">Analyzer hook: product-card surfaces deterministic product, seller, rating, and validation data.</p>
+    </header>
+
+    <section id="product-card-grid" class="grid" aria-label="Product cards">
+      <article
+        id="product-card-coastal-lamp"
+        class="product-card"
+        data-visual-card="product"
+        data-product-id="sku-coastal-lamp"
+        data-product-name="Coastal Signal Lamp"
+        data-seller-id="seller-harbor-works"
+        data-price="79.00"
+        data-currency="USD"
+        data-analyzer-label="primary-product-card">
+        <h2>Coastal Signal Lamp</h2>
+        <p>Compact deck lamp with a fixed warm beam and brass latch.</p>
+        <dl>
+          <dt>Seller</dt>
+          <dd>Harbor Works</dd>
+          <dt>Seller rating</dt>
+          <dd
+            id="seller-rating-coastal-lamp"
+            class="rating-stars"
+            data-analyzer-field="seller-rating"
+            data-rating="4.8"
+            aria-label="Seller rating 4.8 out of 5">&#9733;&#9733;&#9733;&#9733;&#9733;</dd>
+          <dt>Price</dt>
+          <dd class="price">$79.00</dd>
+        </dl>
+      </article>
+
+      <article
+        id="product-card-field-notebook"
+        class="product-card"
+        data-visual-card="product"
+        data-product-id="sku-field-notebook"
+        data-product-name="Tidal Field Notebook"
+        data-seller-id="seller-chart-room"
+        data-price="18.50"
+        data-currency="USD"
+        data-analyzer-label="secondary-product-card">
+        <h2>Tidal Field Notebook</h2>
+        <p>Water-resistant notebook with numbered pages and inspection tabs.</p>
+        <dl>
+          <dt>Seller</dt>
+          <dd>Chart Room Supply</dd>
+          <dt>Seller rating</dt>
+          <dd
+            id="seller-rating-field-notebook"
+            class="rating-stars"
+            data-analyzer-field="seller-rating"
+            data-rating="4.6"
+            aria-label="Seller rating 4.6 out of 5">&#9733;&#9733;&#9733;&#9733;&#9734;</dd>
+          <dt>Price</dt>
+          <dd class="price">$18.50</dd>
+        </dl>
+      </article>
+
+      <article
+        id="product-card-thermal-mug"
+        class="product-card"
+        data-visual-card="product"
+        data-product-id="sku-thermal-mug"
+        data-product-name="Compact Thermal Mug"
+        data-seller-id="seller-galley-direct"
+        data-price="24.00"
+        data-currency="USD"
+        data-analyzer-label="tertiary-product-card">
+        <h2>Compact Thermal Mug</h2>
+        <p>Low-profile mug with a spill-resistant lid and matte finish.</p>
+        <dl>
+          <dt>Seller</dt>
+          <dd>Galley Direct</dd>
+          <dt>Seller rating</dt>
+          <dd
+            id="seller-rating-thermal-mug"
+            class="rating-stars"
+            data-analyzer-field="seller-rating"
+            data-rating="4.9"
+            aria-label="Seller rating 4.9 out of 5">&#9733;&#9733;&#9733;&#9733;&#9733;</dd>
+          <dt>Price</dt>
+          <dd class="price">$24.00</dd>
+        </dl>
+      </article>
+    </section>
+
+    <section class="workspace" aria-label="Review workspace">
+      <div
+        id="validation-panel"
+        class="panel"
+        data-validation-state="needs-review"
+        data-analyzer-field="validation-summary"
+        role="status"
+        aria-live="polite">
+        <h2>Validation</h2>
+        <p id="validation-message">Three product cards are ready for visual analyzer validation.</p>
+        <ul id="visible-data-attributes" class="hook-list">
+          <li>data-visual-card=product</li>
+          <li>data-product-id=sku-coastal-lamp</li>
+          <li>data-analyzer-field=seller-rating</li>
+          <li>data-analyzer-field=merchant-note</li>
+        </ul>
+      </div>
+
+      <aside
+        id="validation-dialog"
+        class="dialog"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="validation-dialog-title"
+        data-dialog-state="open"
+        data-analyzer-field="validation-dialog">
+        <h2 id="validation-dialog-title">Review Dialog</h2>
+        <p id="dialog-message">The expected top product is Coastal Signal Lamp from Harbor Works.</p>
+        <div
+          id="merchant-note-editor"
+          class="editor"
+          contenteditable="true"
+          role="textbox"
+          aria-label="Merchant note"
+          data-analyzer-field="merchant-note"
+          data-editable-field="merchant-note">Replace this merchant note during visual smoke.</div>
+      </aside>
+    </section>
+  </main>
+</body>
+</html>

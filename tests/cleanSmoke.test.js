@@ -11,6 +11,18 @@ const {
   resolveSmokeConfig
 } = require('../scripts/clean-smoke');
 
+function readFixture(name) {
+  const file = path.join(__dirname, '..', 'fixtures', name);
+  assert.equal(fs.existsSync(file), true, `${name} should exist`);
+  return fs.readFileSync(file, 'utf8');
+}
+
+function assertIncludesAll(content, expectedSubstrings) {
+  for (const expected of expectedSubstrings) {
+    assert.match(content, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+}
+
 test('assertPathInside accepts child paths and rejects traversal', () => {
   const root = path.join(os.tmpdir(), 'codex-smoke-root');
 
@@ -74,4 +86,51 @@ test('clickElement can fall back to a DOM click for fixture-only controls', asyn
   assert.equal(calls.at(-1).method, 'Runtime.evaluate');
   assert.match(calls.at(-1).params.expression, /completeGate/);
   assert.match(calls.at(-1).params.expression, /\.click\(\)/);
+});
+
+test('visual cards fixture exposes product card and analyzer hooks', () => {
+  const html = readFixture('visual-cards.html');
+
+  assertIncludesAll(html, [
+    '<title>Codex Operator Visual Cards Fixture</title>',
+    'id="visual-cards-fixture"',
+    'data-fixture="visual-cards"',
+    'data-analyzer-surface="product-cards"',
+    'id="product-card-coastal-lamp"',
+    'data-visual-card="product"',
+    'data-product-id="sku-coastal-lamp"',
+    'data-seller-id="seller-harbor-works"',
+    'id="seller-rating-coastal-lamp"',
+    'data-analyzer-field="seller-rating"',
+    'data-rating="4.8"',
+    'aria-label="Seller rating 4.8 out of 5"',
+    'Analyzer hook: product-card',
+    'id="validation-panel"',
+    'data-validation-state="needs-review"',
+    'id="validation-dialog"',
+    'role="dialog"',
+    'id="merchant-note-editor"',
+    'contenteditable="true"',
+    'data-analyzer-field="merchant-note"'
+  ]);
+  assert.equal((html.match(/data-visual-card="product"/g) || []).length, 3);
+});
+
+test('sensitive page fixture exposes a visual policy block marker', () => {
+  const html = readFixture('sensitive-page.html');
+
+  assertIncludesAll(html, [
+    '<title>Codex Operator Sensitive Policy Fixture</title>',
+    'id="sensitive-page-fixture"',
+    'data-fixture="sensitive-page"',
+    'id="sensitive-policy-marker"',
+    'data-sensitive-page="true"',
+    'data-visual-policy="block"',
+    'data-analysis-policy="block"',
+    'data-expected-error-code="VISUAL_PROVIDER_POLICY_BLOCKED"',
+    'data-gate-type="ACCOUNT_SECURITY_REAUTH_REQUIRED"',
+    'role="alert"',
+    'Sensitive action',
+    'account security'
+  ]);
 });

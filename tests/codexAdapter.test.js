@@ -55,6 +55,83 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   );
 });
 
+test('CodexChromeToolAdapter exposes strict visual analyze schema and validation', () => {
+  const visualAnalyze = listTools().find((tool) => tool.name === 'codex_chrome_visual_analyze');
+
+  assert.ok(visualAnalyze);
+  assert.equal(visualAnalyze.inputSchema.type, 'object');
+  assert.equal(visualAnalyze.inputSchema.additionalProperties, false);
+  assert.deepEqual(visualAnalyze.inputSchema.required, ['origin']);
+  assert.deepEqual(visualAnalyze.inputSchema.properties, {
+    origin: { type: 'string' },
+    provider: { type: 'string' },
+    maxBytes: { type: 'number' },
+    allowSensitive: { type: 'boolean' }
+  });
+  assert.equal(
+    validateToolInput('codex_chrome_visual_analyze', {}).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_visual_analyze', {
+      origin: 'https://example.com',
+      extra: true
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_visual_analyze', {
+      origin: 'https://example.com/path',
+      provider: 'local',
+      maxBytes: 120000,
+      allowSensitive: false
+    }).ok,
+    true
+  );
+});
+
+test('CodexChromeToolAdapter routes visual analyze with normalized origin and options', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          method: request.method,
+          params: request.params
+        }
+      };
+    }
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_visual_analyze',
+    input: {
+      origin: 'https://example.com/deep/path?x=1#section',
+      provider: 'local',
+      maxBytes: 120000,
+      allowSensitive: false
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.method, 'page.visualAnalyze');
+  assert.deepEqual(response.result.params, {
+    origin: 'https://example.com',
+    provider: 'local',
+    maxBytes: 120000,
+    allowSensitive: false
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'page.visualAnalyze');
+});
+
 test('CodexChromeToolAdapter executes open observe through the orchestration path', async () => {
   const calls = [];
   const adapter = new CodexChromeToolAdapter({
