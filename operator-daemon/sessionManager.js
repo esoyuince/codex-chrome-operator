@@ -36,6 +36,7 @@ function clearsLastErrorOnSuccess(method) {
   return [
     'extension.hello',
     'operator.approveDomain',
+    'operator.revokeDomain',
     'extension.hostPermissionGranted',
     'operator.profile.bind',
     'operator.profile.verify',
@@ -75,7 +76,7 @@ class SessionManager {
     this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
     this.profileVerified = false;
     this.profileBindingStatus = 'unverified';
-    this.approvedOrigins = new Set(Object.keys(this.stateStore.listDomainApprovals()));
+    this.approvedOrigins = new Set(this.activeDomainApprovalOrigins());
     this.hostPermissions = new Set(this.activeHostPermissionOrigins());
     this.lastError = null;
     this.commandQueue = [];
@@ -90,7 +91,7 @@ class SessionManager {
       connectionState: this.connectionState,
       profileVerified: this.profileVerified,
       profileBindingStatus: this.profileBindingStatus,
-      approvedOrigins: [...this.approvedOrigins],
+      approvedOrigins: this.activeDomainApprovalOrigins(),
       hostPermissionOrigins: [...this.hostPermissions],
       domainApprovals: this.stateStore.listDomainApprovals(),
       configuredProfile: this.stateStore.getConfiguredProfile(),
@@ -121,6 +122,9 @@ class SessionManager {
         break;
       case 'operator.approveDomain':
         response = this.approveDomain(id, params);
+        break;
+      case 'operator.revokeDomain':
+        response = this.revokeDomain(id, params);
         break;
       case 'extension.hostPermissionGranted':
         response = this.hostPermissionGranted(id, params);
@@ -241,8 +245,29 @@ class SessionManager {
       taskScope: params.taskScope,
       expiresAt: params.expiresAt
     });
-    this.approvedOrigins.add(origin);
+    this.approvedOrigins = new Set(this.activeDomainApprovalOrigins());
     return rpcOk(id, { ...approval, approved: true });
+  }
+
+  revokeDomain(id, params) {
+    const origin = params && params.origin;
+    if (!origin || typeof origin !== 'string') {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_SCHEMA,
+        message: 'origin is required.'
+      });
+    }
+    const revoked = this.stateStore.revokeDomain(origin);
+    this.approvedOrigins = new Set(this.activeDomainApprovalOrigins());
+    return rpcOk(id, { origin, revoked });
+  }
+
+  activeDomainApprovalOrigins() {
+    return Object.keys(this.stateStore.listActiveDomainApprovals());
+  }
+
+  hasDomainApproval(origin) {
+    return this.stateStore.isDomainApproved(origin);
   }
 
   hostPermissionGranted(id, params) {
@@ -364,7 +389,7 @@ class SessionManager {
   verifyReadiness(id, params) {
     const origin = params.origin || (params.url ? new URL(params.url).origin : undefined);
     const profileVerified = this.profileVerified;
-    const domainApproved = this.approvedOrigins.has(origin);
+    const domainApproved = this.hasDomainApproval(origin);
     const hostPermissionGranted = this.hasHostPermission(origin);
     const readiness = assertReadyForRealSiteAction({
       profileVerified,
@@ -396,7 +421,7 @@ class SessionManager {
     const origin = params.origin || (params.url ? new URL(params.url).origin : undefined);
     const readiness = assertReadyForRealSiteAction({
       profileVerified: this.profileVerified,
-      domainApproved: this.approvedOrigins.has(origin),
+      domainApproved: this.hasDomainApproval(origin),
       hostPermissionGranted: this.hasHostPermission(origin)
     });
 

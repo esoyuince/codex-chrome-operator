@@ -24,6 +24,7 @@ function usage() {
   node scripts/operator-cli.js approval-reject <approvalId>
   node scripts/operator-cli.js approval-run <approvalId>
   node scripts/operator-cli.js approve <origin>
+  node scripts/operator-cli.js revoke <origin>
   node scripts/operator-cli.js observe <origin>
   node scripts/operator-cli.js visual-observe <origin>
   node scripts/operator-cli.js navigate <url>
@@ -113,6 +114,9 @@ function buildRpcRequest(argv) {
     case 'approve':
       requireArgs(args, 1);
       return { method: 'operator.approveDomain', params: { origin: args[0] } };
+    case 'revoke':
+      requireArgs(args, 1);
+      return { method: 'operator.revokeDomain', params: { origin: args[0] } };
     case 'observe':
       requireArgs(args, 1);
       return { method: 'page.observe', params: { origin: args[0] } };

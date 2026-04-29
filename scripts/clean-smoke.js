@@ -433,6 +433,15 @@ async function runCleanSmoke(options = {}) {
     }
 
     const finalStatus = runCliJson(['status'], settings);
+    const revoke = runCliJson(['revoke', config.origin], settings);
+    if (!revoke.ok || revoke.result.revoked !== true) {
+      throw new Error(`Domain approval revoke failed: ${JSON.stringify(revoke)}`);
+    }
+    const postRevokeObserve = runCliJson(['observe', config.origin], settings);
+    if (postRevokeObserve.ok || postRevokeObserve.error.code !== 'DOMAIN_NOT_APPROVED') {
+      throw new Error(`Expected DOMAIN_NOT_APPROVED after domain revoke: ${JSON.stringify(postRevokeObserve)}`);
+    }
+    const postRevokeStatus = runCliJson(['status'], settings);
     return {
       ok: true,
       chromePid,
@@ -444,8 +453,10 @@ async function runCleanSmoke(options = {}) {
       visualScreenshotBytes: visualObservation.result.screenshot.bytesApprox,
       highRiskBlocked: highRiskClick.error.code,
       highRiskApprovalReplay: replayedHighRisk.result.action,
+      postRevokeBlocked: postRevokeObserve.error.code,
       dom,
-      finalStatus: finalStatus.result
+      finalStatus: finalStatus.result,
+      postRevokeStatus: postRevokeStatus.result
     };
   } finally {
     if (chromeStarted && !options.keepBrowser) {

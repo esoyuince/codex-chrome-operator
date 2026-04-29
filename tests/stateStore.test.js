@@ -18,7 +18,7 @@ test('OperatorStateStore persists domain approvals and host permissions', () => 
   first.approveDomain('https://example.com', {
     mode: 'guarded',
     taskScope: 'fixture test',
-    expiresAt: '2026-04-30T00:00:00.000Z'
+    expiresAt: '2999-01-01T00:00:00.000Z'
   });
   first.grantHostPermission('https://example.com', {
     profileBindingId: 'profbind_test',
@@ -30,7 +30,7 @@ test('OperatorStateStore persists domain approvals and host permissions', () => 
     origin: 'https://example.com',
     mode: 'guarded',
     taskScope: 'fixture test',
-    expiresAt: '2026-04-30T00:00:00.000Z'
+    expiresAt: '2999-01-01T00:00:00.000Z'
   });
   assert.deepEqual(second.getHostPermission('https://example.com'), {
     origin: 'https://example.com',
@@ -91,4 +91,26 @@ test('OperatorStateStore syncs host permissions for one profile binding', () => 
   assert.equal(store.getHostPermission('https://remove.example'), null);
   assert.equal(store.getHostPermission('https://other.example').profileBindingId, 'profbind_other');
   assert.equal(store.getHostPermission('https://new.example').profileBindingId, 'profbind_current');
+});
+
+test('OperatorStateStore filters expired approvals and revokes approval state', () => {
+  const statePath = tempStatePath();
+  const store = new OperatorStateStore({ statePath });
+  const now = new Date('2026-04-29T12:00:00.000Z');
+
+  store.approveDomain('https://active.example', {
+    expiresAt: '2999-01-01T00:00:00.000Z'
+  });
+  store.approveDomain('https://expired.example', {
+    expiresAt: '2020-01-01T00:00:00.000Z'
+  });
+
+  assert.equal(store.isDomainApproved('https://active.example', { now }), true);
+  assert.equal(store.isDomainApproved('https://expired.example', { now }), false);
+  assert.deepEqual(Object.keys(store.listActiveDomainApprovals({ now })), ['https://active.example']);
+
+  const revoked = store.revokeDomain('https://active.example');
+  assert.equal(revoked, true);
+  assert.equal(store.getDomainApproval('https://active.example'), null);
+  assert.equal(store.isDomainApproved('https://active.example', { now }), false);
 });

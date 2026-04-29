@@ -55,7 +55,7 @@ test('domain approval and host permission survive daemon session restart', async
       origin: 'https://example.com',
       mode: 'guarded',
       taskScope: 'fixture test',
-      expiresAt: '2026-04-30T00:00:00.000Z'
+      expiresAt: '2999-01-01T00:00:00.000Z'
     });
     assert.equal(approval.ok, true);
 
@@ -74,7 +74,7 @@ test('domain approval and host permission survive daemon session restart', async
       origin: 'https://example.com',
       mode: 'guarded',
       taskScope: 'fixture test',
-      expiresAt: '2026-04-30T00:00:00.000Z'
+      expiresAt: '2999-01-01T00:00:00.000Z'
     });
   });
 });
@@ -264,5 +264,93 @@ test('readiness ignores host permission that does not match expected binding bef
     assert.equal(readiness.ok, true);
     assert.equal(readiness.result.ready, false);
     assert.deepEqual(readiness.result.missing, ['hostPermission']);
+  });
+});
+
+test('expired domain approval is not ready even when host permission exists', async () => {
+  const paths = tempPaths();
+
+  await withServer(makeSession(paths), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_developmentBinding01',
+        profileBindingVersion: 1,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://expired.example',
+      expiresAt: '2020-01-01T00:00:00.000Z'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://expired.example',
+      profileBindingId: 'profbind_developmentBinding01'
+    });
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.deepEqual(status.result.approvedOrigins, []);
+    assert.deepEqual(Object.keys(status.result.domainApprovals), ['https://expired.example']);
+
+    const readiness = await postJson(baseUrl, 'operator.verifyReadiness', {
+      origin: 'https://expired.example'
+    });
+    assert.equal(readiness.ok, true);
+    assert.equal(readiness.result.ready, false);
+    assert.deepEqual(readiness.result.missing, ['domainApproval']);
+    assert.equal(readiness.result.error.code, ERROR_CODES.DOMAIN_NOT_APPROVED);
+  });
+});
+
+test('operator.revokeDomain removes approval but keeps host permission metadata', async () => {
+  const paths = tempPaths();
+
+  await withServer(makeSession(paths), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_developmentBinding01',
+        profileBindingVersion: 1,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://example.com',
+      profileBindingId: 'profbind_developmentBinding01'
+    });
+
+    const revoked = await postJson(baseUrl, 'operator.revokeDomain', {
+      origin: 'https://example.com'
+    });
+    assert.equal(revoked.ok, true);
+    assert.equal(revoked.result.revoked, true);
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.deepEqual(status.result.approvedOrigins, []);
+    assert.deepEqual(status.result.hostPermissionOrigins, ['https://example.com']);
+
+    const readiness = await postJson(baseUrl, 'operator.verifyReadiness', {
+      origin: 'https://example.com'
+    });
+    assert.equal(readiness.ok, true);
+    assert.equal(readiness.result.ready, false);
+    assert.deepEqual(readiness.result.missing, ['domainApproval']);
   });
 });

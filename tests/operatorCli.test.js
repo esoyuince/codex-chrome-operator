@@ -21,6 +21,10 @@ test('buildRpcRequest maps approval and page commands', () => {
     method: 'operator.approveDomain',
     params: { origin: 'https://example.com' }
   });
+  assert.deepEqual(buildRpcRequest(['revoke', 'https://example.com']), {
+    method: 'operator.revokeDomain',
+    params: { origin: 'https://example.com' }
+  });
   assert.deepEqual(buildRpcRequest(['observe', 'https://example.com']), {
     method: 'page.observe',
     params: { origin: 'https://example.com' }
@@ -103,6 +107,7 @@ test('buildRpcRequest maps approval lifecycle commands', () => {
 
 test('buildRpcRequest rejects incomplete commands with usage error', () => {
   assert.throws(() => buildRpcRequest([]), /Usage:/);
+  assert.throws(() => buildRpcRequest(['revoke']), /Usage:/);
   assert.throws(() => buildRpcRequest(['fill', 'https://example.com', 'el_0']), /Usage:/);
   assert.throws(() => buildRpcRequest(['profile-bind', 'C:/Chrome/User Data']), /Usage:/);
   assert.throws(() => buildRpcRequest(['approval-run']), /Usage:/);

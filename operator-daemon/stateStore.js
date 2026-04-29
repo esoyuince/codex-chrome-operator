@@ -68,6 +68,35 @@ class OperatorStateStore {
     return { ...this.state.domainApprovals };
   }
 
+  isDomainApproved(origin, { now = new Date() } = {}) {
+    const approval = this.getDomainApproval(origin);
+    if (!approval) {
+      return false;
+    }
+    if (!approval.expiresAt) {
+      return true;
+    }
+
+    const expiresAtMs = Date.parse(approval.expiresAt);
+    return Number.isFinite(expiresAtMs) && expiresAtMs > now.getTime();
+  }
+
+  listActiveDomainApprovals({ now = new Date() } = {}) {
+    return Object.fromEntries(
+      Object.entries(this.state.domainApprovals)
+        .filter(([origin]) => this.isDomainApproved(origin, { now }))
+    );
+  }
+
+  revokeDomain(origin) {
+    if (!this.state.domainApprovals[origin]) {
+      return false;
+    }
+    delete this.state.domainApprovals[origin];
+    this.save();
+    return true;
+  }
+
   grantHostPermission(origin, metadata = {}) {
     const permission = {
       origin,
