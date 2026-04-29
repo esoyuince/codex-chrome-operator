@@ -70,6 +70,19 @@ test('validateHello accepts unbound setup hello only for setup flows', () => {
   assert.equal(result.profileBindingStatus, 'setup-unbound');
 });
 
+test('validateHello rejects unbound setup hello carrying binding fields', () => {
+  const result = validateHello(boundHello({
+    profileBindingState: 'missing'
+  }), {
+    expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
+    allowUnboundSetup: true,
+    allowDevUnbound: false
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, ERROR_CODES.INVALID_SCHEMA);
+});
+
 test('validateHello rejects stale profile binding version', () => {
   const result = validateHello(boundHello({ profileBindingVersion: 2 }), {
     expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',

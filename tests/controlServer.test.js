@@ -266,6 +266,46 @@ test('extension.hello verifies profile binding and updates status', async () => 
   });
 });
 
+test('extension.hello accepts unbound setup state without unlocking page work', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    const result = await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_setup',
+        profileBindingState: 'missing',
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['profileSetup.v1']
+      }
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.connectionState, 'EXTENSION_CONNECTED_SETUP_ONLY');
+    assert.equal(result.body.result.profileBindingStatus, 'setup-unbound');
+
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://example.com'
+    });
+
+    const blocked = await postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    assert.equal(blocked.body.ok, false);
+    assert.equal(blocked.body.error.code, ERROR_CODES.PROFILE_BINDING_MISSING);
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.equal(status.body.result.profileVerified, false);
+    assert.equal(status.body.result.profileBindingStatus, 'setup-unbound');
+  });
+});
+
 test('extension.hello rejects daemon extension bridge version mismatch', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     const result = await postJson(baseUrl, 'extension.hello', {
