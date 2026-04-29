@@ -76,6 +76,9 @@ class SessionManager {
       expectedProfileBindingVersion: (configuredProfile && configuredProfile.profileBindingVersion)
         || config.expectedProfileBindingVersion
         || 1,
+      expectedProtocolVersion: config.expectedProtocolVersion || '1.0',
+      expectedExtensionVersion: config.expectedExtensionVersion || '0.1.0',
+      expectedBridgeVersion: config.expectedBridgeVersion || '0.1.0',
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       token: config.token || process.env.CODEX_CHROME_OPERATOR_TOKEN || 'dev-token'
@@ -95,6 +98,7 @@ class SessionManager {
     this.nextCommandId = 1;
     this.pendingApprovals = new Map();
     this.nextApprovalId = 1;
+    this.lastVersionMismatch = null;
     this.emergencyStop = {
       active: false,
       reason: null,
@@ -114,6 +118,12 @@ class SessionManager {
       configuredProfile: this.stateStore.getConfiguredProfile(),
       pendingApprovals: this.listApprovalRecords({ status: 'pending' }),
       emergencyStop: { ...this.emergencyStop },
+      version: {
+        protocolVersion: this.config.expectedProtocolVersion,
+        extensionVersion: this.config.expectedExtensionVersion,
+        bridgeVersion: this.config.expectedBridgeVersion,
+        lastMismatch: this.lastVersionMismatch
+      },
       auditLogPath: this.config.auditLogPath,
       screenshotDir: this.config.screenshotDir,
       lastError: this.lastError
@@ -235,6 +245,9 @@ class SessionManager {
   handleHello(id, hello) {
     const result = validateHello(hello, {
       expectedExtensionId: this.config.expectedExtensionId,
+      expectedProtocolVersion: this.config.expectedProtocolVersion,
+      expectedExtensionVersion: this.config.expectedExtensionVersion,
+      expectedBridgeVersion: this.config.expectedBridgeVersion,
       expectedProfileBindingId: this.config.expectedProfileBindingId,
       expectedProfileBindingVersion: this.config.expectedProfileBindingVersion,
       allowUnboundSetup: true,
@@ -245,9 +258,17 @@ class SessionManager {
       this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
       this.profileVerified = false;
       this.profileBindingStatus = 'rejected';
+      this.lastVersionMismatch = [
+        ERROR_CODES.PROTOCOL_VERSION_MISMATCH,
+        ERROR_CODES.EXTENSION_VERSION_MISMATCH,
+        ERROR_CODES.BRIDGE_VERSION_MISMATCH
+      ].includes(result.error.code)
+        ? result.error
+        : this.lastVersionMismatch;
       return rpcError(id, result.error);
     }
 
+    this.lastVersionMismatch = null;
     this.profileBindingStatus = result.profileBindingStatus;
     this.profileVerified = result.profileBindingStatus === 'verified';
     this.connectionState = this.profileVerified

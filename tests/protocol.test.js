@@ -83,6 +83,23 @@ test('validateHello rejects stale profile binding version', () => {
   assert.equal(result.error.code, ERROR_CODES.PROFILE_BINDING_STALE);
 });
 
+test('validateHello rejects protocol extension and bridge version mismatch', () => {
+  const commonOptions = {
+    expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
+    expectedProtocolVersion: '1.0',
+    expectedExtensionVersion: '0.1.0',
+    expectedBridgeVersion: '0.1.0',
+    expectedProfileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+    expectedProfileBindingVersion: 3,
+    allowUnboundSetup: false,
+    allowDevUnbound: false
+  };
+
+  assert.equal(validateHello(boundHello({ protocolVersion: '2.0' }), commonOptions).error.code, ERROR_CODES.PROTOCOL_VERSION_MISMATCH);
+  assert.equal(validateHello(boundHello({ extensionVersion: '0.2.0' }), commonOptions).error.code, ERROR_CODES.EXTENSION_VERSION_MISMATCH);
+  assert.equal(validateHello(boundHello({ bridgeVersion: '0.2.0' }), commonOptions).error.code, ERROR_CODES.BRIDGE_VERSION_MISMATCH);
+});
+
 test('assertReadyForRealSiteAction fails closed without profile or host permission', () => {
   assert.equal(assertReadyForRealSiteAction({
     profileVerified: false,

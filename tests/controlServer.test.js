@@ -93,6 +93,36 @@ test('extension.hello verifies profile binding and updates status', async () => 
   });
 });
 
+test('extension.hello rejects daemon extension bridge version mismatch', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    const result = await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.2.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+        profileBindingVersion: 3,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+
+    assert.equal(result.body.ok, false);
+    assert.equal(result.body.error.code, ERROR_CODES.EXTENSION_VERSION_MISMATCH);
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.equal(status.body.result.connectionState, 'DAEMON_RUNNING_EXTENSION_DISCONNECTED');
+    assert.equal(status.body.result.version.protocolVersion, '1.0');
+    assert.equal(status.body.result.version.extensionVersion, '0.1.0');
+    assert.equal(status.body.result.version.bridgeVersion, '0.1.0');
+    assert.equal(status.body.result.version.lastMismatch.code, ERROR_CODES.EXTENSION_VERSION_MISMATCH);
+  });
+});
+
 test('page.observe fails closed before host permission is granted', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {

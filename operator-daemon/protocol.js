@@ -17,6 +17,9 @@ const ERROR_CODES = Object.freeze({
   EXTENSION_NOT_INSTALLED: 'EXTENSION_NOT_INSTALLED',
   EXTENSION_DISABLED_OR_UNREACHABLE: 'EXTENSION_DISABLED_OR_UNREACHABLE',
   EXTENSION_ID_MISMATCH: 'EXTENSION_ID_MISMATCH',
+  PROTOCOL_VERSION_MISMATCH: 'PROTOCOL_VERSION_MISMATCH',
+  EXTENSION_VERSION_MISMATCH: 'EXTENSION_VERSION_MISMATCH',
+  BRIDGE_VERSION_MISMATCH: 'BRIDGE_VERSION_MISMATCH',
   NATIVE_HOST_NOT_REGISTERED: 'NATIVE_HOST_NOT_REGISTERED',
   NATIVE_BRIDGE_FAILED: 'NATIVE_BRIDGE_FAILED',
   BRIDGE_DISCONNECTED: 'BRIDGE_DISCONNECTED',
@@ -145,6 +148,18 @@ function validateHello(hello, options = {}) {
 
   if (options.expectedExtensionId && hello.extensionId !== options.expectedExtensionId) {
     return fail(ERROR_CODES.EXTENSION_ID_MISMATCH, 'Extension id does not match configured extension.');
+  }
+
+  if (options.expectedProtocolVersion && hello.protocolVersion !== options.expectedProtocolVersion) {
+    return fail(ERROR_CODES.PROTOCOL_VERSION_MISMATCH, 'Protocol version does not match daemon.');
+  }
+
+  if (options.expectedExtensionVersion && hello.extensionVersion !== options.expectedExtensionVersion) {
+    return fail(ERROR_CODES.EXTENSION_VERSION_MISMATCH, 'Extension version does not match daemon.');
+  }
+
+  if (options.expectedBridgeVersion && hello.bridgeVersion !== options.expectedBridgeVersion) {
+    return fail(ERROR_CODES.BRIDGE_VERSION_MISMATCH, 'Bridge version does not match daemon.');
   }
 
   if (!Array.isArray(hello.capabilities) || hello.capabilities.length === 0) {
