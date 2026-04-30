@@ -12,6 +12,7 @@
     "operator:cli": "node scripts/operator-cli.js",
     "adapter:mcp": "node codex-adapter/mcpServer.js",
     "release:m1": "node scripts/m1-release-check.js",
+    "release:m6": "node scripts/m6-final-check.js",
     "smoke:clean": "node scripts/clean-smoke.js",
     "smoke:mcp": "node scripts/mcp-smoke.js",
     "daemon": "node operator-daemon/daemon.js",
