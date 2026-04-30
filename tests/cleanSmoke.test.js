@@ -165,19 +165,53 @@ test('mock Play Console fixture exposes upload targets and release controls', ()
   ]);
 });
 
-test('extension wires the upload helper into background and content scripts', () => {
+test('mock commerce fixture exposes product cards, cart, and blocked checkout controls', () => {
+  const html = readFixture('mock-commerce.html');
+
+  assertIncludesAll(html, [
+    '<title>Codex Operator Mock Commerce Fixture</title>',
+    'id="mock-commerce-fixture"',
+    'data-fixture="mock-commerce"',
+    'data-commerce-search',
+    'data-commerce-sort',
+    'data-visual-card="product"',
+    'data-product-id="mac-mini-budget-low-rating"',
+    'data-product-id="mac-mini-eligible-base"',
+    'data-product-id="mac-mini-pro-rated"',
+    'data-product-id="mac-mini-out-of-stock"',
+    'data-price="24.999 TL"',
+    'data-currency="TRY"',
+    'data-seller-name=',
+    'data-seller-rating=',
+    'data-availability=',
+    'data-shipping=',
+    'data-cart-action="add"',
+    'data-cart-count',
+    'data-detail-recheck',
+    'data-risk="checkout"'
+  ]);
+  assert.equal((html.match(/<article[\s\S]*?data-visual-card="product"/g) || []).length, 4);
+});
+
+test('extension wires upload and cart helpers into background and content scripts', () => {
   const background = fs.readFileSync(path.join(__dirname, '..', 'extension', 'background.js'), 'utf8');
   const contentScript = fs.readFileSync(path.join(__dirname, '..', 'extension', 'contentScript.js'), 'utf8');
 
   assertIncludesAll(background, [
-    "importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js')",
+    "importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js', 'cartWorkflow.js')",
     "'fileUpload.v1'",
+    "'cartPreparation.v1'",
     "'fileUpload.js'",
+    "'cartWorkflow.js'",
     "'page.uploadFile'",
-    "type: 'content.uploadFile'"
+    "'page.prepareCart'",
+    "type: 'content.uploadFile'",
+    "type: 'content.prepareCart'"
   ]);
   assertIncludesAll(contentScript, [
     "message.type === 'content.uploadFile'",
-    'globalThis.CodexFileUpload.uploadFiles'
+    'globalThis.CodexFileUpload.uploadFiles',
+    "message.type === 'content.prepareCart'",
+    'globalThis.CodexCartWorkflow.prepareCart'
   ]);
 });

@@ -72,6 +72,7 @@ const PAGE_ACTION_KINDS = Object.freeze({
   'page.visualObserve': 'screenshot',
   'page.visualAnalyze': 'screenshot',
   'page.uploadFile': 'upload',
+  'page.prepareCart': 'cart-preparation',
   'page.click': 'click',
   'page.type': 'type',
   'page.fill': 'fill',
@@ -125,6 +126,10 @@ function isLocalMockOrigin(origin) {
   } catch {
     return false;
   }
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function makeConnectionId() {
@@ -404,6 +409,7 @@ class SessionManager {
       case 'page.visualObserve':
       case 'page.visualAnalyze':
       case 'page.uploadFile':
+      case 'page.prepareCart':
         response = await this.routePageCommand(id, request.method, params);
         break;
       case 'page.click':
@@ -1062,6 +1068,83 @@ class SessionManager {
     });
   }
 
+  validatePrepareCartCommandParams(params = {}) {
+    const origin = typeof params.origin === 'string' ? params.origin.trim() : '';
+    if (!origin) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'origin is required.');
+    }
+
+    try {
+      const parsedOrigin = new URL(origin);
+      if (parsedOrigin.origin !== origin) {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, 'origin must be a URL origin.');
+      }
+    } catch {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'origin must be a URL origin.');
+    }
+
+    const profileId = params.profileId === undefined
+      ? 'mock-commerce.v1'
+      : (typeof params.profileId === 'string' ? params.profileId.trim() : '');
+    if (!profileId) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'profileId must be a non-empty string when provided.');
+    }
+
+    const query = typeof params.query === 'string' ? params.query.trim() : '';
+    if (!query) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'query is required.');
+    }
+
+    if (!isPlainObject(params.criteria)) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'criteria must be an object.');
+    }
+
+    if (typeof params.cartActionAllowed !== 'boolean') {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'cartActionAllowed must be a boolean.');
+    }
+
+    const criteria = {};
+    if (params.criteria.minSellerRating === undefined) {
+      criteria.minSellerRating = 4;
+    } else if (Number.isFinite(params.criteria.minSellerRating)) {
+      criteria.minSellerRating = params.criteria.minSellerRating;
+    } else {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'criteria.minSellerRating must be a number.');
+    }
+
+    if (params.criteria.maxPrice !== undefined) {
+      if (!Number.isFinite(params.criteria.maxPrice)) {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, 'criteria.maxPrice must be a number.');
+      }
+      criteria.maxPrice = params.criteria.maxPrice;
+    }
+
+    if (params.criteria.currency !== undefined) {
+      if (typeof params.criteria.currency !== 'string') {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, 'criteria.currency must be a string.');
+      }
+      criteria.currency = params.criteria.currency.trim();
+    }
+
+    if (params.criteria.sort !== undefined) {
+      if (typeof params.criteria.sort !== 'string') {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, 'criteria.sort must be a string.');
+      }
+      criteria.sort = params.criteria.sort.trim();
+    }
+
+    return guardOk({
+      origin,
+      commandParams: {
+        origin,
+        profileId,
+        query,
+        criteria,
+        cartActionAllowed: params.cartActionAllowed
+      }
+    });
+  }
+
   async routePageCommand(id, method, params) {
     if (this.emergencyStop.active) {
       return rpcError(id, this.emergencyStopError());
@@ -1075,12 +1158,19 @@ class SessionManager {
       });
     }
 
+    const prepareCart = method === 'page.prepareCart'
+      ? this.validatePrepareCartCommandParams(params)
+      : null;
+    if (prepareCart && !prepareCart.ok) {
+      return rpcError(id, prepareCart.error);
+    }
+
     const previousOrigin = this.activeTab && this.activeTab.origin;
     const target = method === 'page.navigate' ? navigationTarget(params.url) : null;
     if (target && !target.ok) {
       return rpcError(id, target.error);
     }
-    const origin = target ? target.origin : originFromParams(params);
+    const origin = prepareCart ? prepareCart.origin : (target ? target.origin : originFromParams(params));
     const readiness = assertReadyForRealSiteAction({
       profileVerified: this.profileVerified,
       domainApproved: this.hasDomainApproval(origin),
@@ -1121,6 +1211,23 @@ class SessionManager {
       return rpcOk(id, {
         ...extensionResponse.result,
         assetValidation: upload.assetValidation
+      });
+    }
+
+    if (method === 'page.prepareCart') {
+      const extensionResponse = await this.enqueueExtensionCommand(method, prepareCart.commandParams);
+      if (!extensionResponse.ok) {
+        return rpcError(id, this.attachApprovalRequest(method, prepareCart.commandParams, extensionResponse.error));
+      }
+      return rpcOk(id, {
+        ...extensionResponse.result,
+        policy: {
+          ...(extensionResponse.result && extensionResponse.result.policy ? extensionResponse.result.policy : {}),
+          actionKind: 'cart-preparation',
+          checkoutBlocked: true,
+          paymentBlocked: true,
+          orderPlacementBlocked: true
+        }
       });
     }
 

@@ -61,16 +61,61 @@ function validationError(message, details = {}) {
   };
 }
 
-function validateFieldType(name, value, schema) {
+function validateValue(name, value, schema) {
   if (schema.type === 'array') {
-    return Array.isArray(value);
+    if (!Array.isArray(value)) {
+      return validationError(`${name} must be array.`, { field: name });
+    }
+    if (schema.items) {
+      for (let index = 0; index < value.length; index += 1) {
+        const nested = validateValue(`${name}[${index}]`, value[index], schema.items);
+        if (!nested.ok) {
+          return nested;
+        }
+      }
+    }
+    return { ok: true };
   }
   if (schema.type === 'number') {
-    return typeof value === 'number' &&
+    const valid = typeof value === 'number' &&
       Number.isFinite(value) &&
       (schema.minimum === undefined || value >= schema.minimum);
+    return valid
+      ? { ok: true }
+      : validationError(`${name} must be number.`, { field: name });
   }
-  return typeof value === schema.type;
+  if (schema.type === 'object') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return validationError(`${name} must be object.`, { field: name });
+    }
+    const properties = schema.properties || {};
+    const required = schema.required || [];
+    for (const field of required) {
+      if (value[field] === undefined) {
+        return validationError(`${name} requires field: ${field}.`, { field: `${name}.${field}` });
+      }
+    }
+    if (schema.additionalProperties === false) {
+      for (const field of Object.keys(value)) {
+        if (!Object.prototype.hasOwnProperty.call(properties, field)) {
+          return validationError(`${name} does not accept field: ${field}.`, { field: `${name}.${field}` });
+        }
+      }
+    }
+    for (const [field, nestedValue] of Object.entries(value)) {
+      const fieldSchema = properties[field];
+      if (fieldSchema) {
+        const nested = validateValue(`${name}.${field}`, nestedValue, fieldSchema);
+        if (!nested.ok) {
+          return nested;
+        }
+      }
+    }
+    return { ok: true };
+  }
+  return typeof value === schema.type
+    ? { ok: true }
+    : validationError(`${name} must be ${schema.type}.`, { field: name });
 }
 
 function validateToolInput(toolName, input = {}) {
@@ -107,8 +152,11 @@ function validateToolInput(toolName, input = {}) {
 
   for (const [field, value] of Object.entries(input)) {
     const fieldSchema = properties[field];
-    if (fieldSchema && !validateFieldType(field, value, fieldSchema)) {
-      return validationError(`${toolName} field ${field} must be ${fieldSchema.type}.`, { field });
+    if (fieldSchema) {
+      const fieldValidation = validateValue(field, value, fieldSchema);
+      if (!fieldValidation.ok) {
+        return fieldValidation;
+      }
     }
     if (field === 'url') {
       try {
@@ -273,6 +321,15 @@ class CodexChromeToolAdapter {
           files: input.files,
           ...(input.ruleset === undefined ? {} : { ruleset: input.ruleset }),
           ...(input.verifyPreview === undefined ? {} : { verifyPreview: input.verifyPreview })
+        });
+        break;
+      case 'codex_chrome_cart_prepare':
+        response = await this.sendRpc('page.prepareCart', {
+          origin: normalizeOrigin(input.origin),
+          ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
+          query: input.query,
+          criteria: input.criteria || {},
+          cartActionAllowed: input.cartActionAllowed
         });
         break;
       case 'codex_chrome_fill':

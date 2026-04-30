@@ -390,6 +390,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message && message.type === 'content.prepareCart') {
+      sendResponse(await globalThis.CodexCartWorkflow.prepareCart(message, {
+        document,
+        location,
+        window,
+        Event
+      }));
+      return;
+    }
+
     if (message && message.type === 'content.action') {
       sendResponse(await runAction(message));
       return;

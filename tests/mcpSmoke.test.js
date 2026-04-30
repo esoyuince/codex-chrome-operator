@@ -35,6 +35,8 @@ test('buildMcpSmokeMessages sends initialize then tools/list over stdio JSON-RPC
 });
 
 test('buildMcpSmokeReport summarizes required adapter tool availability', () => {
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_cart_prepare'));
+
   const responses = [
     {
       jsonrpc: '2.0',

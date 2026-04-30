@@ -138,7 +138,7 @@ test('validateBoundedFullAutoContract allows bounded non-final cart preparation 
     mode: 'bounded-full-auto-v1',
     approvedOrigins: ['https://www.hepsiburada.com'],
     taskScope: 'Find eligible Mac mini, add to cart, stop before checkout',
-    allowedActionKinds: ['observe', 'add-to-cart', 'cart-verify'],
+    allowedActionKinds: ['observe', 'cart-preparation'],
     blockedActionKinds: ['checkout', 'payment', 'order-placement', 'publish'],
     limits: {
       expiresInMinutes: 30,
@@ -158,17 +158,19 @@ test('validateBoundedFullAutoContract allows bounded non-final cart preparation 
 });
 
 test('validateBoundedFullAutoContract rejects final high-impact allowed actions', () => {
-  const result = validateBoundedFullAutoContract({
-    mode: 'bounded-full-auto-v1',
-    approvedOrigins: ['https://play.google.com'],
-    taskScope: 'Publish app',
-    allowedActionKinds: ['observe', 'publish'],
-    blockedActionKinds: ['payment'],
-    limits: { expiresInMinutes: 30 },
-    auditRequired: true,
-    emergencyStopRequired: true
-  });
+  for (const action of ['checkout', 'payment', 'order-placement', 'publish']) {
+    const result = validateBoundedFullAutoContract({
+      mode: 'bounded-full-auto-v1',
+      approvedOrigins: ['https://play.google.com'],
+      taskScope: 'Publish app',
+      allowedActionKinds: ['observe', action],
+      blockedActionKinds: [],
+      limits: { expiresInMinutes: 30 },
+      auditRequired: true,
+      emergencyStopRequired: true
+    });
 
-  assert.equal(result.ok, false);
-  assert.equal(result.error.code, ERROR_CODES.BOUNDED_FULL_AUTO_ACTION_NOT_ALLOWED);
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, ERROR_CODES.BOUNDED_FULL_AUTO_ACTION_NOT_ALLOWED);
+  }
 });

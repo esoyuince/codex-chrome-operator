@@ -14,6 +14,7 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   const openObserve = tools.find((tool) => tool.name === 'codex_chrome_open_observe');
   const profileOnboard = tools.find((tool) => tool.name === 'codex_chrome_profile_onboard');
   const uploadFile = tools.find((tool) => tool.name === 'codex_chrome_upload_file');
+  const cartPrepare = tools.find((tool) => tool.name === 'codex_chrome_cart_prepare');
 
   assert.equal(ADAPTER_PROTOCOL_VERSION, '1.0');
   assert.ok(openObserve);
@@ -32,6 +33,14 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.equal(uploadFile.inputSchema.properties.files.type, 'array');
   assert.equal(uploadFile.inputSchema.properties.ruleset.type, 'string');
   assert.equal(uploadFile.inputSchema.properties.verifyPreview.type, 'boolean');
+  assert.ok(cartPrepare);
+  assert.equal(cartPrepare.inputSchema.type, 'object');
+  assert.equal(cartPrepare.inputSchema.additionalProperties, false);
+  assert.deepEqual(cartPrepare.inputSchema.required, ['origin', 'query', 'cartActionAllowed']);
+  assert.equal(cartPrepare.inputSchema.properties.criteria.additionalProperties, false);
+  assert.match(cartPrepare.description, /stop before checkout\/payment/i);
+  assert.equal(cartPrepare.outputContract.untrusted, true);
+  assert.equal(cartPrepare.outputContract.rawScreenshotBytes, false);
   assert.match(toolDefinitionsHash(), /^[a-f0-9]{64}$/);
   assert.equal(toolDefinitionsHash(), toolDefinitionsHash());
 });
@@ -78,6 +87,115 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     }).error.code,
     'INVALID_TOOL_INPUT'
   );
+  assert.equal(
+    validateToolInput('codex_chrome_cart_prepare', {
+      origin: 'https://shop.example',
+      query: 'portable charger'
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_cart_prepare', {
+      origin: 'https://shop.example',
+      query: 'portable charger',
+      cartActionAllowed: true,
+      checkoutAllowed: true
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_cart_prepare', {
+      origin: 'https://shop.example',
+      query: 'portable charger',
+      cartActionAllowed: true,
+      criteria: {
+        maxPrice: '50'
+      }
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_cart_prepare', {
+      origin: 'https://shop.example',
+      query: 'portable charger',
+      cartActionAllowed: true,
+      criteria: {
+        maxPrice: 50,
+        checkout: true
+      }
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_cart_prepare', {
+      origin: 'https://shop.example/path',
+      query: 'portable charger',
+      cartActionAllowed: true,
+      criteria: {
+        minSellerRating: 4.7,
+        maxPrice: 50,
+        currency: 'USD',
+        sort: 'price-asc'
+      }
+    }).ok,
+    true
+  );
+});
+
+test('CodexChromeToolAdapter routes cart preparation with normalized origin and safe defaults', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          method: request.method,
+          params: request.params,
+          screenshot: {
+            dataUrl: 'data:image/png;base64,rawbytes'
+          }
+        }
+      };
+    }
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_cart_prepare',
+    input: {
+      origin: 'https://shop.example/products?ref=codex',
+      profileId: 'profile_1',
+      query: 'portable charger',
+      cartActionAllowed: true
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.untrusted, true);
+  assert.equal(response.result.method, 'page.prepareCart');
+  assert.deepEqual(response.result.params, {
+    origin: 'https://shop.example',
+    profileId: 'profile_1',
+    query: 'portable charger',
+    criteria: {},
+    cartActionAllowed: true
+  });
+  assert.equal(response.result.screenshot.dataUrl, undefined);
+  assert.equal(response.result.screenshot.rawDataRedacted, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'page.prepareCart');
+  assert.deepEqual(calls[0].params, {
+    origin: 'https://shop.example',
+    profileId: 'profile_1',
+    query: 'portable charger',
+    criteria: {},
+    cartActionAllowed: true
+  });
 });
 
 test('CodexChromeToolAdapter routes upload file with normalized origin and optional controls', async () => {

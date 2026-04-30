@@ -1051,6 +1051,287 @@ test('page.uploadFile queues redacted validated file metadata and returns upload
   });
 });
 
+test('page.prepareCart fails closed before readiness gates complete', async () => {
+  await withServer(makeSession(), async (baseUrl, session) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: verifiedHello(['observe.v1', 'cartPreparation.v1'])
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://shop.example'
+    });
+
+    const result = await postJson(baseUrl, 'page.prepareCart', {
+      origin: 'https://shop.example',
+      query: 'mac mini',
+      criteria: {},
+      cartActionAllowed: true
+    });
+
+    assert.equal(result.body.ok, false);
+    assert.equal(result.body.error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+    assert.equal(session.pendingCommands.size, 0);
+  });
+});
+
+test('page.prepareCart rejects invalid params before queueing browser work', async () => {
+  await withServer(makeSession(), async (baseUrl, session) => {
+    await connectAndAuthorize(baseUrl, 'https://shop.example');
+
+    const invalidRequests = [
+      {
+        origin: '',
+        query: 'mac mini',
+        criteria: {},
+        cartActionAllowed: true
+      },
+      {
+        origin: 'https://shop.example',
+        query: '   ',
+        criteria: {},
+        cartActionAllowed: true
+      },
+      {
+        origin: 'https://shop.example',
+        query: 'mac mini',
+        criteria: null,
+        cartActionAllowed: true
+      },
+      {
+        origin: 'https://shop.example',
+        query: 'mac mini',
+        criteria: {},
+        cartActionAllowed: 'yes'
+      }
+    ];
+
+    for (const params of invalidRequests) {
+      const result = await postJson(baseUrl, 'page.prepareCart', params);
+      assert.equal(result.body.ok, false);
+      assert.equal(result.body.error.code, ERROR_CODES.INVALID_SCHEMA);
+      assert.equal(session.pendingCommands.size, 0);
+    }
+
+    const emptyQueue = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(emptyQueue.body.result.command, null);
+  });
+});
+
+test('page.prepareCart queues normalized cart params and returns verification evidence', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl, 'https://shop.example');
+
+    const preparePromise = postJson(baseUrl, 'page.prepareCart', {
+      origin: 'https://shop.example',
+      query: '  Mac mini M4  ',
+      criteria: {
+        maxPrice: 29999,
+        currency: 'try',
+        sort: 'price-asc'
+      },
+      cartActionAllowed: true
+    });
+
+    const command = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(command.body.ok, true);
+    assert.equal(command.body.result.command.method, 'page.prepareCart');
+    assert.deepEqual(command.body.result.command.params, {
+      origin: 'https://shop.example',
+      profileId: 'mock-commerce.v1',
+      query: 'Mac mini M4',
+      criteria: {
+        minSellerRating: 4,
+        maxPrice: 29999,
+        currency: 'try',
+        sort: 'price-asc'
+      },
+      cartActionAllowed: true
+    });
+
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          origin: 'https://shop.example',
+          selected: {
+            title: 'Mac mini M4',
+            sellerRating: 4.8,
+            price: 28999,
+            currency: 'TRY'
+          },
+          cart: {
+            verified: true,
+            itemCount: 1,
+            checkoutAttempted: false,
+            paymentAttempted: false
+          }
+        }
+      }
+    });
+
+    const result = await preparePromise;
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.selected.title, 'Mac mini M4');
+    assert.equal(result.body.result.cart.verified, true);
+    assert.equal(result.body.result.policy.actionKind, 'cart-preparation');
+    assert.equal(result.body.result.policy.checkoutBlocked, true);
+    assert.equal(result.body.result.policy.paymentBlocked, true);
+
+    const auditTail = await postJson(baseUrl, 'operator.audit.tail', { limit: 10 });
+    const cartEntry = auditTail.body.result.entries.find((entry) => entry.method === 'page.prepareCart');
+    assert.equal(cartEntry.actionKind, 'cart-preparation');
+    assert.equal(cartEntry.origin, 'https://shop.example');
+    assert.equal(cartEntry.result, 'ok');
+  });
+});
+
+test('bounded full auto allows explicitly listed cart preparation and blocks it otherwise', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl, 'https://shop.example');
+
+    await postJson(baseUrl, 'operator.fullAuto.start', {
+      contract: boundedFullAutoContract({
+        approvedOrigins: ['https://shop.example'],
+        allowedActionKinds: ['observe', 'cart-preparation'],
+        limits: {
+          expiresInMinutes: 30,
+          maxBrowserActions: 2,
+          maxScreenshots: 0,
+          maxOriginChanges: 0
+        }
+      })
+    });
+
+    const preparePromise = postJson(baseUrl, 'page.prepareCart', {
+      origin: 'https://shop.example',
+      profileId: 'storefront-a',
+      query: 'keyboard',
+      criteria: { minSellerRating: 4.5 },
+      cartActionAllowed: true
+    });
+    const command = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(command.body.result.command.method, 'page.prepareCart');
+    assert.equal(command.body.result.command.params.criteria.minSellerRating, 4.5);
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          selected: { title: 'Keyboard' },
+          cart: { verified: true }
+        }
+      }
+    });
+    const prepared = await preparePromise;
+    assert.equal(prepared.body.ok, true);
+
+    await postJson(baseUrl, 'operator.fullAuto.start', {
+      contract: boundedFullAutoContract({
+        approvedOrigins: ['https://shop.example'],
+        allowedActionKinds: ['observe'],
+        limits: {
+          expiresInMinutes: 30,
+          maxBrowserActions: 2,
+          maxScreenshots: 0,
+          maxOriginChanges: 0
+        }
+      })
+    });
+
+    const blocked = await postJson(baseUrl, 'page.prepareCart', {
+      origin: 'https://shop.example',
+      query: 'mouse',
+      criteria: {},
+      cartActionAllowed: true
+    });
+    assert.equal(blocked.body.ok, false);
+    assert.equal(blocked.body.error.code, ERROR_CODES.BOUNDED_FULL_AUTO_ACTION_NOT_ALLOWED);
+    assert.equal(blocked.body.error.actionKind, 'cart-preparation');
+  });
+});
+
+test('page.prepareCart returns checkout policy errors without approval replay', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl, 'https://shop.example');
+
+    const preparePromise = postJson(baseUrl, 'page.prepareCart', {
+      origin: 'https://shop.example',
+      query: 'laptop',
+      criteria: {},
+      cartActionAllowed: true
+    });
+    const command = await postJson(baseUrl, 'bridge.poll');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: false,
+        error: {
+          code: ERROR_CODES.CHECKOUT_BLOCKED,
+          message: 'Checkout is outside cart-preparation policy.',
+          actionKind: 'checkout'
+        }
+      }
+    });
+
+    const blocked = await preparePromise;
+    assert.equal(blocked.body.ok, false);
+    assert.equal(blocked.body.error.code, ERROR_CODES.CHECKOUT_BLOCKED);
+    assert.equal(blocked.body.error.approvalId, undefined);
+
+    const approvals = await postJson(baseUrl, 'operator.approvals.list');
+    assert.deepEqual(approvals.body.result.approvals, []);
+  });
+});
+
+test('page.click checkout and payment policy errors remain blocked without approval replay', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl, 'https://shop.example');
+
+    const blockedActions = [
+      {
+        handle: 'checkout_button',
+        error: {
+          code: ERROR_CODES.CHECKOUT_BLOCKED,
+          message: 'Checkout is outside cart-preparation policy.',
+          actionKind: 'checkout'
+        }
+      },
+      {
+        handle: 'payment_button',
+        error: {
+          code: ERROR_CODES.PAYMENT_AUTH_REQUIRED,
+          message: 'Payment authorization is outside cart-preparation policy.',
+          actionKind: 'payment'
+        }
+      }
+    ];
+
+    for (const action of blockedActions) {
+      const clickPromise = postJson(baseUrl, 'page.click', {
+        origin: 'https://shop.example',
+        handle: action.handle
+      });
+      const command = await postJson(baseUrl, 'bridge.poll');
+      assert.equal(command.body.result.command.method, 'page.click');
+      await postJson(baseUrl, 'bridge.deliver', {
+        commandId: command.body.result.command.commandId,
+        response: {
+          ok: false,
+          error: action.error
+        }
+      });
+
+      const blocked = await clickPromise;
+      assert.equal(blocked.body.ok, false);
+      assert.equal(blocked.body.error.code, action.error.code);
+      assert.equal(blocked.body.error.approvalId, undefined);
+    }
+
+    const approvals = await postJson(baseUrl, 'operator.approvals.list');
+    assert.deepEqual(approvals.body.result.approvals, []);
+  });
+});
+
 test('operator.emergencyStop cancels pending page actions and blocks new ones until cleared', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {

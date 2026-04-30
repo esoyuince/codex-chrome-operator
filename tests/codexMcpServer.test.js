@@ -48,6 +48,7 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   const openObserve = response.result.tools.find((tool) => tool.name === 'codex_chrome_open_observe');
   const visualAnalyze = response.result.tools.find((tool) => tool.name === 'codex_chrome_visual_analyze');
   const uploadFile = response.result.tools.find((tool) => tool.name === 'codex_chrome_upload_file');
+  const cartPrepare = response.result.tools.find((tool) => tool.name === 'codex_chrome_cart_prepare');
   const profileDoctor = response.result.tools.find((tool) => tool.name === 'codex_chrome_profile_doctor');
   const profileOnboard = response.result.tools.find((tool) => tool.name === 'codex_chrome_profile_onboard');
   assert.ok(openObserve);
@@ -67,12 +68,97 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   assert.equal(uploadFile.inputSchema.additionalProperties, false);
   assert.deepEqual(uploadFile.inputSchema.required, ['origin', 'handle', 'files']);
   assert.equal(uploadFile.inputSchema.properties.files.type, 'array');
+  assert.ok(cartPrepare);
+  assert.equal(cartPrepare.inputSchema.additionalProperties, false);
+  assert.deepEqual(cartPrepare.inputSchema.required, ['origin', 'query', 'cartActionAllowed']);
+  assert.deepEqual(cartPrepare.inputSchema.properties.criteria.properties, {
+    minSellerRating: { type: 'number' },
+    maxPrice: { type: 'number' },
+    currency: { type: 'string' },
+    sort: { type: 'string' }
+  });
+  assert.match(cartPrepare.description, /stop before checkout\/payment/i);
+  assert.equal(cartPrepare.outputContract.untrusted, true);
+  assert.equal(cartPrepare.outputContract.rawScreenshotBytes, false);
   assert.ok(profileDoctor);
   assert.equal(profileDoctor.inputSchema.additionalProperties, false);
   assert.deepEqual(profileDoctor.inputSchema.required, []);
   assert.ok(profileOnboard);
   assert.equal(profileOnboard.inputSchema.additionalProperties, false);
   assert.deepEqual(profileOnboard.inputSchema.required, []);
+});
+
+test('MCP handler calls cart preparation tool through the adapter and rejects extra fields', async () => {
+  const calls = [];
+  const handleMessage = createMcpMessageHandler({
+    adapter: {
+      async executeTool(request) {
+        calls.push(request);
+        return {
+          ok: true,
+          toolName: request.toolName,
+          protocolVersion: '1.0',
+          untrusted: true,
+          result: {
+            prepared: true
+          }
+        };
+      }
+    }
+  });
+
+  const response = await handleMessage({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_cart_prepare',
+      arguments: {
+        origin: 'https://shop.example/path',
+        query: 'portable charger',
+        criteria: {
+          maxPrice: 50,
+          currency: 'USD'
+        },
+        cartActionAllowed: true
+      }
+    }
+  });
+
+  assert.deepEqual(calls, [{
+    toolName: 'codex_chrome_cart_prepare',
+    input: {
+      origin: 'https://shop.example/path',
+      query: 'portable charger',
+      criteria: {
+        maxPrice: 50,
+        currency: 'USD'
+      },
+      cartActionAllowed: true
+    }
+  }]);
+  assert.equal(response.result.isError, false);
+  assert.equal(response.result.structuredContent.untrusted, true);
+  assert.equal(response.result.structuredContent.result.prepared, true);
+
+  const rejected = await handleMessage({
+    jsonrpc: '2.0',
+    id: 3,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_cart_prepare',
+      arguments: {
+        origin: 'https://shop.example',
+        query: 'portable charger',
+        cartActionAllowed: true,
+        checkoutAllowed: true
+      }
+    }
+  });
+
+  assert.equal(rejected.result.isError, true);
+  assert.equal(rejected.result.structuredContent.error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(calls.length, 1);
 });
 
 test('MCP handler calls adapter tools and returns JSON content without raw visual bytes', async () => {

@@ -1,6 +1,6 @@
 'use strict';
 
-importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js');
+importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js', 'cartWorkflow.js');
 
 const NATIVE_HOST = 'com.codex.chrome_operator';
 const PROFILE_BINDING_SOURCE = 'chrome.storage.local';
@@ -55,6 +55,7 @@ async function buildHello() {
       'screenshots.v1',
       'actions.basic.v1',
       'fileUpload.v1',
+      'cartPreparation.v1',
       'guarded.v1',
       'gateHandoff.v1'
     ]
@@ -253,7 +254,7 @@ async function syncPermissionsAfterChange() {
 async function ensureContentScript(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ['actionPolicy.js', 'gateDetector.js', 'pageHandles.js', 'pageWait.js', 'fileUpload.js', 'contentScript.js']
+    files: ['actionPolicy.js', 'gateDetector.js', 'pageHandles.js', 'pageWait.js', 'fileUpload.js', 'cartWorkflow.js', 'contentScript.js']
   });
 }
 
@@ -398,6 +399,17 @@ async function handleOperatorCommand(command) {
         ruleset: params.ruleset,
         verifyPreview: params.verifyPreview,
         files: params.files
+      });
+    }
+
+    if (command.method === 'page.prepareCart') {
+      return chrome.tabs.sendMessage(ready.tab.id, {
+        type: 'content.prepareCart',
+        origin: params.origin,
+        profileId: params.profileId,
+        query: params.query,
+        criteria: params.criteria,
+        cartActionAllowed: params.cartActionAllowed
       });
     }
 

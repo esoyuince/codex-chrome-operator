@@ -102,6 +102,13 @@ function extractCleanSmokeEvidence(stdout) {
   addDefined(evidence, 'mockPlayUploadRole', smoke.mockPlayUploadRole);
   addDefined(evidence, 'invalidAssetBlocked', smoke.invalidAssetBlocked);
   addDefined(evidence, 'mockPlaySendForReviewBlocked', smoke.mockPlaySendForReviewBlocked);
+  addDefined(evidence, 'mockCommerceSelectedProductId', smoke.mockCommerceSelectedProductId);
+  addDefined(evidence, 'mockCommerceSelectedPrice', smoke.mockCommerceSelectedPrice);
+  addDefined(evidence, 'mockCommerceSelectedSellerRating', smoke.mockCommerceSelectedSellerRating);
+  addDefined(evidence, 'mockCommerceCartVerified', smoke.mockCommerceCartVerified);
+  addDefined(evidence, 'mockCommerceStoppedBeforeCheckout', smoke.mockCommerceStoppedBeforeCheckout);
+  addDefined(evidence, 'mockCommerceCheckoutBlocked', smoke.mockCommerceCheckoutBlocked);
+  addDefined(evidence, 'mockCommerceExcludedReasons', smoke.mockCommerceExcludedReasons);
   addDefined(evidence, 'highRiskBlocked', smoke.highRiskBlocked);
   addDefined(evidence, 'highRiskApprovalReplay', smoke.highRiskApprovalReplay);
   addDefined(evidence, 'screenshotCleanupRemoved', smoke.screenshotCleanupRemoved);

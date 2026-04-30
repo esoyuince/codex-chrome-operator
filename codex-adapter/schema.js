@@ -179,6 +179,36 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'codex_chrome_cart_prepare',
+    description: 'Prepare an e-commerce cart from product search criteria only; stop before checkout/payment and never place orders.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        profileId: { type: 'string' },
+        query: { type: 'string' },
+        criteria: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            minSellerRating: { type: 'number' },
+            maxPrice: { type: 'number' },
+            currency: { type: 'string' },
+            sort: { type: 'string' }
+          },
+          required: []
+        },
+        cartActionAllowed: { type: 'boolean' }
+      },
+      required: ['origin', 'query', 'cartActionAllowed']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
     name: 'codex_chrome_fill',
     description: 'Fill an approved page element handle.',
     inputSchema: {

@@ -754,6 +754,58 @@ async function runCleanSmoke(options = {}) {
       throw new Error(`Expected mock Play send-for-review to be high-risk blocked: ${JSON.stringify(mockPlaySendForReview)}`);
     }
 
+    const mockCommerceObservation = await runCliJsonAsync([
+      'open-observe',
+      `${config.origin}/mock-commerce.html`,
+      '45000',
+      '1000'
+    ], settings);
+    if (
+      !mockCommerceObservation.ok ||
+      !mockCommerceObservation.result.observation ||
+      mockCommerceObservation.result.observation.title !== 'Codex Operator Mock Commerce Fixture'
+    ) {
+      throw new Error(`Mock commerce observation failed: ${JSON.stringify(mockCommerceObservation)}`);
+    }
+    const mockCommerceCart = runCliJson([
+      'cart-prepare',
+      config.origin,
+      'Mac mini',
+      JSON.stringify({
+        minSellerRating: 4,
+        currency: 'TRY',
+        sort: 'price-asc'
+      }),
+      'true'
+    ], settings);
+    if (
+      !mockCommerceCart.ok ||
+      !mockCommerceCart.result.selected ||
+      mockCommerceCart.result.selected.productId !== 'mac-mini-eligible-base' ||
+      mockCommerceCart.result.selected.price !== 24999 ||
+      !mockCommerceCart.result.cart ||
+      mockCommerceCart.result.cart.verified !== true ||
+      mockCommerceCart.result.cart.productId !== 'mac-mini-eligible-base' ||
+      mockCommerceCart.result.stoppedBeforeCheckout !== true ||
+      !mockCommerceCart.result.detailRecheck ||
+      mockCommerceCart.result.detailRecheck.ok !== true
+    ) {
+      throw new Error(`Mock commerce cart preparation failed: ${JSON.stringify(mockCommerceCart)}`);
+    }
+    const mockCommercePostObservation = runCliJson(['observe', config.origin], settings);
+    const checkoutHandle = findElementHandle(
+      mockCommercePostObservation,
+      (element) => element.id === 'checkoutButton',
+      'mock commerce checkout button'
+    );
+    const mockCommerceCheckoutClick = runCliJson(['click', config.origin, checkoutHandle], settings);
+    if (
+      mockCommerceCheckoutClick.ok ||
+      mockCommerceCheckoutClick.error.code !== 'HIGH_RISK_BLOCKED'
+    ) {
+      throw new Error(`Expected mock commerce checkout to be high-risk blocked: ${JSON.stringify(mockCommerceCheckoutClick)}`);
+    }
+
     await withCdp(await pageTarget(config), async (send) => {
       await send('Page.navigate', { url: `${config.origin}/basic-form.html` });
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -1043,6 +1095,13 @@ async function runCleanSmoke(options = {}) {
       mockPlayUploadDom: mockPlayDom,
       invalidAssetBlocked: invalidAssetUpload.error.code,
       mockPlaySendForReviewBlocked: mockPlaySendForReview.error.code,
+      mockCommerceSelectedProductId: mockCommerceCart.result.selected.productId,
+      mockCommerceSelectedPrice: mockCommerceCart.result.selected.price,
+      mockCommerceSelectedSellerRating: mockCommerceCart.result.selected.sellerRating,
+      mockCommerceCartVerified: mockCommerceCart.result.cart.verified,
+      mockCommerceStoppedBeforeCheckout: mockCommerceCart.result.stoppedBeforeCheckout,
+      mockCommerceCheckoutBlocked: mockCommerceCheckoutClick.error.code,
+      mockCommerceExcludedReasons: mockCommerceCart.result.excluded.map((item) => item.reason),
       basicDomActions,
       highRiskBlocked: highRiskClick.error.code,
       highRiskApprovalReplay: replayedHighRisk.result.action,

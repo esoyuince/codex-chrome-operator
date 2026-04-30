@@ -47,6 +47,7 @@ function usage() {
   node scripts/operator-cli.js visual-observe <origin>
   node scripts/operator-cli.js visual-analyze <origin> [provider]
   node scripts/operator-cli.js upload-file <origin> <handle> <ruleset> <files-json> [verifyPreview]
+  node scripts/operator-cli.js cart-prepare <origin-or-url> <query> <criteria-json> <cartActionAllowed> [profileId]
   node scripts/operator-cli.js navigate <url>
   node scripts/operator-cli.js wait-for <origin> <condition-json> [timeoutMs] [pollIntervalMs]
   node scripts/operator-cli.js fill <origin> <handle> <text>
@@ -307,6 +308,24 @@ function buildRpcRequest(argv) {
             ruleset: args[2],
             files: parseJsonArg(filesJson, 'files-json'),
             ...(verifyPreview === undefined ? {} : { verifyPreview })
+          }
+        };
+      }
+    case 'cart-prepare':
+      requireArgs(args, 4);
+      {
+        const criteria = parseJsonArg(args[2], 'criteria-json');
+        if (!criteria || typeof criteria !== 'object' || Array.isArray(criteria)) {
+          throw new Error(`criteria-json must be a JSON object.\n\n${usage()}`);
+        }
+        return {
+          method: 'page.prepareCart',
+          params: {
+            origin: new URL(args[0]).origin,
+            query: args[1],
+            criteria,
+            cartActionAllowed: parseBooleanArg(args[3]),
+            ...(args[4] === undefined ? {} : { profileId: args[4] })
           }
         };
       }

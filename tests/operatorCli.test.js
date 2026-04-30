@@ -340,6 +340,47 @@ test('buildRpcRequest maps open-observe to page.observe cli action', () => {
   });
 });
 
+test('buildRpcRequest maps cart-prepare to guarded page.prepareCart request', () => {
+  assert.deepEqual(buildRpcRequest([
+    'cart-prepare',
+    'https://shop.example/products?ref=codex',
+    'portable charger',
+    '{"minSellerRating":4.7,"maxPrice":50,"currency":"USD","sort":"price-asc"}',
+    'true',
+    'profile_1'
+  ]), {
+    method: 'page.prepareCart',
+    params: {
+      origin: 'https://shop.example',
+      query: 'portable charger',
+      criteria: {
+        minSellerRating: 4.7,
+        maxPrice: 50,
+        currency: 'USD',
+        sort: 'price-asc'
+      },
+      cartActionAllowed: true,
+      profileId: 'profile_1'
+    }
+  });
+
+  assert.deepEqual(buildRpcRequest([
+    'cart-prepare',
+    'https://shop.example/path',
+    'usb cable',
+    '{}',
+    'false'
+  ]), {
+    method: 'page.prepareCart',
+    params: {
+      origin: 'https://shop.example',
+      query: 'usb cable',
+      criteria: {},
+      cartActionAllowed: false
+    }
+  });
+});
+
 test('prepareOrigin approves domain and returns permission URL when host permission is missing', async () => {
   const calls = [];
   const bootstrapUrl = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/bootstrap.html?session=boot';
@@ -1063,6 +1104,9 @@ test('buildRpcRequest rejects incomplete commands with usage error', () => {
   assert.throws(() => buildRpcRequest([]), /Usage:/);
   assert.throws(() => buildRpcRequest(['revoke']), /Usage:/);
   assert.throws(() => buildRpcRequest(['fill', 'https://example.com', 'el_0']), /Usage:/);
+  assert.throws(() => buildRpcRequest(['cart-prepare', 'https://shop.example', 'query', '{}']), /Usage:/);
+  assert.throws(() => buildRpcRequest(['cart-prepare', 'https://shop.example', 'query', 'not-json', 'true']), /criteria-json must be valid JSON/);
+  assert.throws(() => buildRpcRequest(['cart-prepare', 'https://shop.example', 'query', '{}', 'yes']), /Usage:/);
   assert.throws(() => buildRpcRequest(['upload-file', 'https://example.com', 'el_0', 'ruleset']), /Usage:/);
   assert.throws(() => buildRpcRequest(['upload-file', 'https://example.com', 'el_0', 'ruleset', 'not-json']), /files-json must be valid JSON/);
   assert.throws(() => buildRpcRequest(['profile-bind', 'C:/Chrome/User Data']), /Usage:/);
