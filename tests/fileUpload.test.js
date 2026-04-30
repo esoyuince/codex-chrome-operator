@@ -10,7 +10,7 @@ class FakeEvent {
   }
 }
 
-function fakeElement({ tagName = 'div', id = '', attributes = {}, textContent = '' } = {}) {
+function fakeElement({ tagName = 'div', id = '', attributes = {}, textContent = '', rect = {} } = {}) {
   const attr = new Map(Object.entries(attributes));
   return {
     tagName: tagName.toUpperCase(),
@@ -35,6 +35,16 @@ function fakeElement({ tagName = 'div', id = '', attributes = {}, textContent = 
     dispatchEvent(event) {
       this.dispatched.push(event.type);
       return true;
+    },
+    getBoundingClientRect() {
+      return {
+        x: rect.x || 0,
+        y: rect.y || 0,
+        left: rect.x || 0,
+        top: rect.y || 0,
+        width: rect.width || 0,
+        height: rect.height || 0
+      };
     }
   };
 }
@@ -64,7 +74,13 @@ function fakeMockPlayConsoleDocument() {
   const preview = fakeElement({
     id: 'appIconPreview',
     attributes: { 'data-preview-role': 'playStoreAppIcon' },
-    textContent: 'waiting'
+    textContent: 'waiting',
+    rect: {
+      x: 40,
+      y: 90,
+      width: 180,
+      height: 120
+    }
   });
   const status = fakeElement({
     id: 'appIconStatus',
@@ -115,6 +131,17 @@ test('uploadFiles updates mock Play Console preview and validation status', asyn
   assert.equal(result.result.uploadTarget, 'el_app_icon');
   assert.match(document.preview.textContent, /icon\.png/);
   assert.match(document.status.textContent, /accepted/);
+  assert.equal(result.result.previewEvidence.method, 'dom-preview-snapshot');
+  assert.equal(result.result.previewEvidence.changed, true);
+  assert.equal(result.result.previewEvidence.role, 'playStoreAppIcon');
+  assert.equal(result.result.previewEvidence.before.textHash !== result.result.previewEvidence.after.textHash, true);
+  assert.deepEqual(result.result.previewEvidence.after.fileBasenames, ['icon.png']);
+  assert.deepEqual(result.result.previewEvidence.cropCandidate.bbox, {
+    x: 40,
+    y: 90,
+    width: 180,
+    height: 120
+  });
   assert.deepEqual(document.input.dispatched, ['input', 'change']);
   assert.equal(JSON.stringify(result).includes('C:\\'), false);
 });
@@ -145,6 +172,13 @@ test('uploadFiles returns manual handoff outside the mock fixture without raw pa
   assert.equal(result.ok, false);
   assert.equal(result.error.code, 'MANUAL_STEP_REQUIRED');
   assert.equal(result.error.resumePolicy, 'manual-file-picker');
+  assert.equal(result.error.manualStep.kind, 'file-picker');
+  assert.equal(result.error.manualStep.freshObservationRequired, true);
+  assert.deepEqual(result.error.manualStep.fileSummaries[0], {
+    role: 'playStoreAppIcon',
+    basename: 'icon.png',
+    sha256: 'a'.repeat(64)
+  });
   assert.equal(result.error.fileSummaries[0].basename, 'icon.png');
   assert.equal(Object.hasOwn(result.error.fileSummaries[0], 'path'), false);
   assert.equal(JSON.stringify(result).includes('C:\\Users\\example'), false);

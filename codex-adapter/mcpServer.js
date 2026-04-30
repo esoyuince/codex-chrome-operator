@@ -3,6 +3,7 @@
 const readline = require('node:readline');
 const { buildApprovalHints } = require('./approvalClient');
 const { buildGateHandoffHints } = require('./gateHandoffClient');
+const { buildManualHandoffHints } = require('./manualHandoffClient');
 const { buildPolicyHints } = require('./policyClient');
 const {
   ADAPTER_PROTOCOL_VERSION,
@@ -72,6 +73,7 @@ function buildAdapterHints(toolResponse) {
   }
   return buildApprovalHints(toolResponse.error) ||
     buildGateHandoffHints(toolResponse.error) ||
+    buildManualHandoffHints(toolResponse.error) ||
     buildPolicyHints(toolResponse.error);
 }
 

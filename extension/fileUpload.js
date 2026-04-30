@@ -31,6 +31,42 @@
     return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   }
 
+  function hashText(value) {
+    let hash = 2166136261;
+    const normalized = String(value || '');
+    for (let index = 0; index < normalized.length; index += 1) {
+      hash ^= normalized.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
+  function elementBbox(element) {
+    if (!element || typeof element.getBoundingClientRect !== 'function') {
+      return null;
+    }
+    const rect = element.getBoundingClientRect();
+    return {
+      x: Math.round(rect.x === undefined ? rect.left || 0 : rect.x),
+      y: Math.round(rect.y === undefined ? rect.top || 0 : rect.y),
+      width: Math.round(rect.width || 0),
+      height: Math.round(rect.height || 0)
+    };
+  }
+
+  function previewSnapshot(element, role, files = []) {
+    const textContent = element ? text(element.textContent) : '';
+    return {
+      role,
+      textHash: hashText(textContent),
+      textLength: textContent.length,
+      fileBasenames: files
+        .map((file) => file && file.basename)
+        .filter(Boolean),
+      bbox: elementBbox(element)
+    };
+  }
+
   function resolveHandleResult(target, context) {
     if (!target || !text(target.handle)) {
       return {
@@ -134,11 +170,13 @@
     const summaries = files.map(safeFileSummary);
     const roles = [...new Set(summaries.map((file) => file.role).filter(Boolean))];
     const validationMessages = [];
+    let previewEvidence = null;
 
     for (const role of roles) {
       const roleFiles = summaries.filter((file) => file.role === role);
       const names = roleFiles.map((file) => file.basename).filter(Boolean).join(', ');
       const preview = previewForRole(documentRef, role);
+      const beforeSnapshot = previewSnapshot(preview, role, []);
       if (preview) {
         preview.textContent = names
           ? `Preview updated: ${names}`
@@ -157,6 +195,21 @@
         }
       }
       validationMessages.push(message);
+
+      const afterSnapshot = previewSnapshot(preview, role, roleFiles);
+      if (!previewEvidence) {
+        previewEvidence = {
+          method: 'dom-preview-snapshot',
+          role,
+          changed: beforeSnapshot.textHash !== afterSnapshot.textHash,
+          before: beforeSnapshot,
+          after: afterSnapshot,
+          cropCandidate: {
+            role,
+            bbox: afterSnapshot.bbox
+          }
+        };
+      }
     }
 
     if (input && input.dataset) {
@@ -169,7 +222,8 @@
 
     return {
       validationMessages,
-      previewVerified: validationMessages.length > 0
+      previewVerified: validationMessages.length > 0,
+      previewEvidence
     };
   }
 
@@ -195,14 +249,24 @@
     }
 
     if (!isMockPlayConsole(documentRef)) {
+      const manualStep = {
+        kind: 'file-picker',
+        uploadTarget: message.target.handle,
+        resumePolicy: 'manual-file-picker',
+        freshObservationRequired: true,
+        instruction: 'Use the visible Chrome file picker or upload widget to select the listed files, then re-observe the page.',
+        fileSummaries: summaries
+      };
       return {
         ok: false,
         error: {
           code: 'MANUAL_STEP_REQUIRED',
           message: 'Browser security requires a manual file-picker handoff for this upload target.',
           resumePolicy: 'manual-file-picker',
+          origin: message.origin || null,
           uploadTarget: message.target.handle,
-          fileSummaries: summaries
+          fileSummaries: summaries,
+          manualStep
         }
       };
     }
@@ -220,6 +284,7 @@
         uploadTarget: message.target.handle,
         ruleset: message.ruleset || null,
         previewVerified: message.verifyPreview === true ? mockResult.previewVerified : false,
+        previewEvidence: message.verifyPreview === true ? mockResult.previewEvidence : null,
         validationMessages: mockResult.validationMessages,
         files: summaries
       }
@@ -228,6 +293,7 @@
 
   const api = {
     safeFileSummary,
+    previewSnapshot,
     resolveUploadInput,
     uploadFiles
   };

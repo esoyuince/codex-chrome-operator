@@ -393,6 +393,7 @@ async function handleOperatorCommand(command) {
     if (command.method === 'page.uploadFile') {
       return chrome.tabs.sendMessage(ready.tab.id, {
         type: 'content.uploadFile',
+        origin: params.origin,
         target: params.target,
         ruleset: params.ruleset,
         verifyPreview: params.verifyPreview,

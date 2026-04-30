@@ -175,7 +175,7 @@ test('MCP handler exposes explicit task-level session state', async () => {
   assert.equal(second.result.adapterSession.lastErrorCode, 'UNKNOWN_TOOL');
 });
 
-test('MCP handler enriches approval, gate, and policy tool errors with adapter hints', async () => {
+test('MCP handler enriches approval, gate, policy, and manual handoff tool errors with adapter hints', async () => {
   const responses = [
     {
       ok: false,
@@ -204,6 +204,21 @@ test('MCP handler enriches approval, gate, and policy tool errors with adapter h
         message: 'Chrome host permission is required before action.',
         origin: 'https://example.com',
         permissionUrl: 'chrome-extension://id/permissionRequest.html?origin=https%3A%2F%2Fexample.com'
+      }
+    },
+    {
+      ok: false,
+      error: {
+        code: 'MANUAL_STEP_REQUIRED',
+        message: 'Browser security requires a manual file-picker handoff.',
+        resumePolicy: 'manual-file-picker',
+        origin: 'https://play.google.com',
+        uploadTarget: 'el_upload',
+        fileSummaries: [{
+          role: 'playStoreAppIcon',
+          basename: 'icon.png',
+          sha256: 'a'.repeat(64)
+        }]
       }
     }
   ];
@@ -263,6 +278,24 @@ test('MCP handler enriches approval, gate, and policy tool errors with adapter h
   });
   assert.equal(policy.result.structuredContent.adapterHints.category, 'policy');
   assert.equal(policy.result.structuredContent.adapterHints.permissionUrl, 'chrome-extension://id/permissionRequest.html?origin=https%3A%2F%2Fexample.com');
+
+  const manual = await handleMessage({
+    jsonrpc: '2.0',
+    id: 4,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_upload_file',
+      arguments: {
+        origin: 'https://play.google.com',
+        handle: 'el_upload',
+        files: []
+      }
+    }
+  });
+  assert.equal(manual.result.structuredContent.adapterHints.category, 'manual-handoff');
+  assert.equal(manual.result.structuredContent.adapterHints.nextActions[0].kind, 'manual-file-picker');
+  assert.equal(manual.result.structuredContent.adapterHints.fileSummaries[0].basename, 'icon.png');
+  assert.equal(Object.hasOwn(manual.result.structuredContent.adapterHints.fileSummaries[0], 'path'), false);
 });
 
 test('MCP handler returns deterministic JSON-RPC errors for malformed calls', async () => {

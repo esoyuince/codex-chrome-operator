@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const { buildApprovalHints } = require('../codex-adapter/approvalClient');
 const { buildGateHandoffHints } = require('../codex-adapter/gateHandoffClient');
+const { buildManualHandoffHints } = require('../codex-adapter/manualHandoffClient');
 const { buildPolicyHints } = require('../codex-adapter/policyClient');
 
 test('buildApprovalHints turns high-risk approval errors into actionable handoff metadata', () => {
@@ -57,6 +58,34 @@ test('buildGateHandoffHints turns auth gates into resume-safe instructions', () 
     'manual-step',
     'reobserve'
   ]);
+});
+
+test('buildManualHandoffHints turns file picker pauses into safe user steps', () => {
+  const hints = buildManualHandoffHints({
+    code: 'MANUAL_STEP_REQUIRED',
+    message: 'Browser security requires a manual file-picker handoff.',
+    resumePolicy: 'manual-file-picker',
+    origin: 'https://play.google.com',
+    uploadTarget: 'el_upload',
+    fileSummaries: [{
+      role: 'playStoreAppIcon',
+      basename: 'icon.png',
+      sha256: 'a'.repeat(64)
+    }]
+  });
+
+  assert.equal(hints.category, 'manual-handoff');
+  assert.equal(hints.resumePolicy, 'manual-file-picker');
+  assert.equal(hints.uploadTarget, 'el_upload');
+  assert.equal(hints.fileSummaries[0].basename, 'icon.png');
+  assert.equal(Object.hasOwn(hints.fileSummaries[0], 'path'), false);
+  assert.deepEqual(hints.nextActions.map((action) => action.kind), [
+    'manual-file-picker',
+    'reobserve',
+    'retry-original-tool'
+  ]);
+  assert.equal(hints.nextActions[0].requiresUserGesture, true);
+  assert.deepEqual(hints.nextActions[1].operatorCli, ['observe', 'https://play.google.com']);
 });
 
 test('buildPolicyHints explains permission and profile blockers without bypass steps', () => {

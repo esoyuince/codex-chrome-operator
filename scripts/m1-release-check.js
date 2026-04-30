@@ -96,6 +96,8 @@ function extractCleanSmokeEvidence(stdout) {
   addDefined(evidence, 'boundedFullAutoStopped', smoke.boundedFullAutoStopped);
   addDefined(evidence, 'boundedFullAutoAudited', smoke.boundedFullAutoAudited);
   addDefined(evidence, 'mockPlayUploadPreviewVerified', smoke.mockPlayUploadPreviewVerified);
+  addDefined(evidence, 'mockPlayPreviewEvidenceChanged', smoke.mockPlayPreviewEvidenceChanged);
+  addDefined(evidence, 'mockPlayPreviewEvidenceMethod', smoke.mockPlayPreviewEvidenceMethod);
   addDefined(evidence, 'mockPlayUploadStatus', smoke.mockPlayUploadStatus);
   addDefined(evidence, 'mockPlayUploadRole', smoke.mockPlayUploadRole);
   addDefined(evidence, 'invalidAssetBlocked', smoke.invalidAssetBlocked);

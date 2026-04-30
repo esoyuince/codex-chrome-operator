@@ -691,6 +691,9 @@ async function runCleanSmoke(options = {}) {
       !mockPlayUpload.ok ||
       mockPlayUpload.result.action !== 'uploaded' ||
       mockPlayUpload.result.previewVerified !== true ||
+      !mockPlayUpload.result.previewEvidence ||
+      mockPlayUpload.result.previewEvidence.changed !== true ||
+      mockPlayUpload.result.previewEvidence.method !== 'dom-preview-snapshot' ||
       !Array.isArray(mockPlayUpload.result.files) ||
       mockPlayUpload.result.files[0].role !== 'playStoreAppIcon'
     ) {
@@ -1033,6 +1036,8 @@ async function runCleanSmoke(options = {}) {
       boundedFullAutoStopped: boundedFullAutoStop.result.active === false,
       boundedFullAutoAudited: auditedBoundedAction,
       mockPlayUploadPreviewVerified: mockPlayUpload.result.previewVerified,
+      mockPlayPreviewEvidenceChanged: mockPlayUpload.result.previewEvidence.changed,
+      mockPlayPreviewEvidenceMethod: mockPlayUpload.result.previewEvidence.method,
       mockPlayUploadStatus: mockPlayUpload.result.action,
       mockPlayUploadRole: mockPlayUpload.result.files[0].role,
       mockPlayUploadDom: mockPlayDom,
