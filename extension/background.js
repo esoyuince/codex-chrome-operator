@@ -45,7 +45,7 @@ async function buildHello() {
     protocolVersion: '1.0',
     extensionId: chrome.runtime.id,
     extensionVersion: chrome.runtime.getManifest().version,
-    bridgeVersion: '0.1.0',
+    bridgeVersion: '0.2.0',
     sessionBootstrapId: requestId('boot'),
     ...(await getProfileBinding()),
     capabilities: [

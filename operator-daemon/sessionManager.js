@@ -267,8 +267,8 @@ class SessionManager {
         || config.expectedProfileBindingVersion
         || 1,
       expectedProtocolVersion: config.expectedProtocolVersion || '1.0',
-      expectedExtensionVersion: config.expectedExtensionVersion || '0.1.0',
-      expectedBridgeVersion: config.expectedBridgeVersion || '0.1.0',
+      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.0',
+      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.0',
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       visualAnalyzerRegistry: config.visualAnalyzerRegistry || createVisualAnalyzerRegistry(),
