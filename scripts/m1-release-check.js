@@ -127,6 +127,30 @@ function extractCleanSmokeEvidence(stdout) {
   return Object.keys(evidence).length > 0 ? evidence : null;
 }
 
+function extractMcpSmokeEvidence(stdout) {
+  let smoke;
+  try {
+    smoke = JSON.parse(String(stdout || '').trim());
+  } catch {
+    return null;
+  }
+  if (!smoke || typeof smoke !== 'object' || Array.isArray(smoke)) {
+    return null;
+  }
+
+  const evidence = {};
+  addDefined(evidence, 'toolDefinitionsHash', smoke.toolDefinitionsHash);
+  addDefined(evidence, 'toolCount', smoke.toolCount);
+  addDefined(evidence, 'toolSchemaVersion', smoke.toolSchemaVersion);
+  addDefined(evidence, 'strictSchemaToolCount', smoke.strictSchemaToolCount);
+  if (Array.isArray(smoke.looseSchemaPaths) && smoke.looseSchemaPaths.length > 0) {
+    addDefined(evidence, 'looseSchemaPaths', smoke.looseSchemaPaths);
+  }
+  addDefined(evidence, 'contractPinned', smoke.contractPinned);
+
+  return Object.keys(evidence).length > 0 ? evidence : null;
+}
+
 function defaultRunner(check) {
   return childProcess.spawnSync(check.command, check.args, {
     cwd: ROOT,
@@ -171,6 +195,12 @@ function runReleaseCheck({
         checkReport.evidence = evidence;
       }
     }
+    if (check.name === 'mcp-smoke') {
+      const evidence = extractMcpSmokeEvidence(result.stdout);
+      if (evidence) {
+        checkReport.evidence = evidence;
+      }
+    }
     checks.push(checkReport);
   }
 
@@ -203,6 +233,7 @@ if (require.main === module) {
 module.exports = {
   buildReleaseChecks,
   extractCleanSmokeEvidence,
+  extractMcpSmokeEvidence,
   parseArgs,
   runReleaseCheck,
   tailText

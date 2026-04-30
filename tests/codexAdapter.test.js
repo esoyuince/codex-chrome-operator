@@ -88,6 +88,30 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     'INVALID_TOOL_INPUT'
   );
   assert.equal(
+    validateToolInput('codex_chrome_upload_file', {
+      origin: 'https://example.com',
+      handle: 'el_file',
+      files: [{
+        role: 'playStoreAppIcon',
+        path: 'C:/tmp/icon.png',
+        unexpected: true
+      }]
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_upload_file', {
+      origin: 'https://example.com',
+      handle: 'el_file',
+      files: [{
+        role: 'playStoreAppIcon',
+        path: 'C:/tmp/icon.png',
+        expectedSha256: 'abc123'
+      }]
+    }).ok,
+    true
+  );
+  assert.equal(
     validateToolInput('codex_chrome_cart_prepare', {
       origin: 'https://shop.example',
       query: 'portable charger'

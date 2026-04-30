@@ -145,3 +145,36 @@ test('buildPolicyHints points profile blockers to adapter doctor and onboarding 
   });
   assert.equal(hints.nextActions[2].requiresFreshReadiness, true);
 });
+
+test('buildPolicyHints does not offer approval or run bypass actions for commerce stop errors', () => {
+  const blockedCodes = [
+    'CHECKOUT_BLOCKED',
+    'SITE_PROFILE_UNAVAILABLE',
+    'BOUNDED_FULL_AUTO_ACTION_NOT_ALLOWED'
+  ];
+  const bypassKinds = new Set(['approve', 'run-after-approve', 'approval-run']);
+  const bypassToolNames = new Set([
+    'codex_chrome_approval_approve',
+    'codex_chrome_approval_run'
+  ]);
+
+  for (const code of blockedCodes) {
+    const hints = buildPolicyHints({
+      code,
+      message: `${code} must stop before checkout, payment, or order placement.`,
+      origin: 'https://shop.example'
+    });
+
+    assert.equal(hints.category, 'policy');
+    assert.ok(
+      hints.nextActions.some((action) => action.kind === 'stop'),
+      `${code} should return terminal stop guidance`
+    );
+    for (const action of hints.nextActions) {
+      assert.equal(bypassKinds.has(action.kind), false, `${code} must not expose ${action.kind}`);
+      assert.equal(bypassToolNames.has(action.toolName), false, `${code} must not expose ${action.toolName}`);
+      assert.notDeepEqual(action.operatorCli, ['approval-approve', 'approval_1']);
+      assert.notDeepEqual(action.operatorCli, ['approval-run', 'approval_1']);
+    }
+  }
+});

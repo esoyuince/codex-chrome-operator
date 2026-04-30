@@ -74,6 +74,39 @@ function resultForId(responses, id) {
   return message && message.result ? message.result : null;
 }
 
+function summarizeToolSchemaVersion(tools) {
+  const versions = Array.from(new Set(
+    tools
+      .map((tool) => tool && tool.toolSchemaVersion)
+      .filter((version) => typeof version === 'string' && version.length > 0)
+  ));
+  return versions.length === 1 ? versions[0] : null;
+}
+
+function collectLooseObjectSchemaPaths(schema, pathLabel = 'inputSchema') {
+  if (!schema || typeof schema !== 'object') {
+    return [];
+  }
+
+  const loosePaths = [];
+  if (schema.type === 'object' && schema.additionalProperties !== false) {
+    loosePaths.push(pathLabel);
+  }
+
+  if (schema.properties && typeof schema.properties === 'object') {
+    for (const [field, nestedSchema] of Object.entries(schema.properties)) {
+      loosePaths.push(...collectLooseObjectSchemaPaths(
+        nestedSchema,
+        `${pathLabel}.properties.${field}`
+      ));
+    }
+  }
+  if (schema.items) {
+    loosePaths.push(...collectLooseObjectSchemaPaths(schema.items, `${pathLabel}.items`));
+  }
+  return loosePaths;
+}
+
 function buildMcpSmokeReport(
   responses,
   { requiredTools = REQUIRED_MCP_SMOKE_TOOLS } = {}
@@ -83,17 +116,50 @@ function buildMcpSmokeReport(
   const tools = Array.isArray(toolsList.tools) ? toolsList.tools : [];
   const toolNames = new Set(tools.map((tool) => tool.name));
   const missingTools = requiredTools.filter((toolName) => !toolNames.has(toolName));
+  const looseSchemaPaths = tools.flatMap((tool) => {
+    if (!tool || !tool.name) {
+      return [];
+    }
+    return collectLooseObjectSchemaPaths(tool.inputSchema).map((schemaPath) => (
+      `${tool.name}.${schemaPath}`
+    ));
+  });
+  const strictSchemaToolCount = tools.filter((tool) => (
+    tool &&
+    tool.inputSchema &&
+    collectLooseObjectSchemaPaths(tool.inputSchema).length === 0
+  )).length;
+  const rawScreenshotBytesAllowed = tools
+    .filter((tool) => tool && tool.outputContract && tool.outputContract.rawScreenshotBytes === true)
+    .map((tool) => tool.name);
+  const untrustedOutputMissing = tools
+    .filter((tool) => !tool || !tool.outputContract || tool.outputContract.untrusted !== true)
+    .map((tool) => tool && tool.name)
+    .filter(Boolean);
+  const toolDefinitionsHash = initialize.toolDefinitionsHash || toolsList.toolDefinitionsHash || null;
+  const contractPinned = missingTools.length === 0 &&
+    Boolean(toolDefinitionsHash) &&
+    strictSchemaToolCount === tools.length &&
+    looseSchemaPaths.length === 0 &&
+    rawScreenshotBytesAllowed.length === 0 &&
+    untrustedOutputMissing.length === 0;
 
   return {
-    ok: missingTools.length === 0 &&
+    ok: contractPinned &&
       initialize.serverInfo &&
       initialize.serverInfo.name === 'codex-chrome-operator',
     serverName: initialize.serverInfo ? initialize.serverInfo.name : null,
     serverVersion: initialize.serverInfo ? initialize.serverInfo.version : null,
     protocolVersion: initialize.protocolVersion || null,
     adapterProtocolVersion: initialize.adapterProtocolVersion || toolsList.adapterProtocolVersion || null,
-    toolDefinitionsHash: initialize.toolDefinitionsHash || toolsList.toolDefinitionsHash || null,
+    toolDefinitionsHash,
     toolCount: tools.length,
+    toolSchemaVersion: summarizeToolSchemaVersion(tools),
+    strictSchemaToolCount,
+    looseSchemaPaths,
+    rawScreenshotBytesAllowed,
+    untrustedOutputMissing,
+    contractPinned,
     requiredTools,
     missingTools
   };

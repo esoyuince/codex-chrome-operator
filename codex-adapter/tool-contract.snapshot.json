@@ -1,0 +1,675 @@
+{
+  "adapterProtocolVersion": "1.0",
+  "toolSchemaVersion": "2026-04-29.m1",
+  "toolDefinitionsHash": "aef0c07ef2e1b5f2f837c2ed4dfd4011b850d64be5aa4eb70a4d98ab1e9b419e",
+  "toolCount": 26,
+  "toolNames": [
+    "codex_chrome_status",
+    "codex_chrome_prepare_origin",
+    "codex_chrome_readiness",
+    "codex_chrome_profile_doctor",
+    "codex_chrome_profile_onboard",
+    "codex_chrome_open_observe",
+    "codex_chrome_observe",
+    "codex_chrome_visual_observe",
+    "codex_chrome_visual_analyze",
+    "codex_chrome_upload_file",
+    "codex_chrome_cart_prepare",
+    "codex_chrome_fill",
+    "codex_chrome_type",
+    "codex_chrome_clear",
+    "codex_chrome_focus",
+    "codex_chrome_select",
+    "codex_chrome_check",
+    "codex_chrome_scroll",
+    "codex_chrome_press_key",
+    "codex_chrome_click",
+    "codex_chrome_approvals_list",
+    "codex_chrome_approval_approve",
+    "codex_chrome_approval_reject",
+    "codex_chrome_approval_run",
+    "codex_chrome_emergency_stop",
+    "codex_chrome_emergency_clear"
+  ],
+  "tools": [
+    {
+      "name": "codex_chrome_status",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_prepare_origin",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "openBootstrap": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_readiness",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_profile_doctor",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          }
+        },
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_profile_onboard",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "userDataDir": {
+            "type": "string"
+          },
+          "profileDirectory": {
+            "type": "string"
+          },
+          "profileLabel": {
+            "type": "string"
+          },
+          "openBootstrap": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_open_observe",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "timeoutMs": {
+            "type": "number",
+            "minimum": 0
+          },
+          "pollIntervalMs": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_observe",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_visual_observe",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_visual_analyze",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "maxBytes": {
+            "type": "number"
+          },
+          "allowSensitive": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_upload_file",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "ruleset": {
+            "type": "string"
+          },
+          "verifyPreview": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "role": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "expectedSha256": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "role",
+                "path"
+              ]
+            }
+          }
+        },
+        "required": [
+          "origin",
+          "handle",
+          "files"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_cart_prepare",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "profileId": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "criteria": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "minSellerRating": {
+                "type": "number"
+              },
+              "maxPrice": {
+                "type": "number"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "sort": {
+                "type": "string"
+              }
+            },
+            "required": []
+          },
+          "cartActionAllowed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "origin",
+          "query",
+          "cartActionAllowed"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_fill",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin",
+          "handle",
+          "text"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_type",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin",
+          "handle",
+          "text"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_clear",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin",
+          "handle"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_focus",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin",
+          "handle"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_select",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin",
+          "handle",
+          "value"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_check",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "checked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "origin",
+          "handle",
+          "checked"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_scroll",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "deltaX": {
+            "type": "number"
+          },
+          "deltaY": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "origin",
+          "handle",
+          "deltaX",
+          "deltaY"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_press_key",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin",
+          "handle",
+          "key"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_click",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin",
+          "handle"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_approvals_list",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_approval_approve",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "approvalId": {
+            "type": "string"
+          },
+          "userDecision": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "approvalId",
+          "userDecision"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_approval_reject",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "approvalId": {
+            "type": "string"
+          },
+          "userDecision": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "approvalId",
+          "userDecision"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_approval_run",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "approvalId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "approvalId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_emergency_stop",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_emergency_clear",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    }
+  ]
+}

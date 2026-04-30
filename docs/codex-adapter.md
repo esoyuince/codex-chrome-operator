@@ -74,19 +74,34 @@ When the daemon created an approval request, the hint includes the `approvalId`,
 - `approval-reject <approvalId>`
 - `approval-run <approvalId>`
 
-The setup, readiness, profile, and approval paths are also exposed as strict
-adapter tools:
+The adapter currently exposes 26 strict tools:
 
+- `codex_chrome_status`
 - `codex_chrome_prepare_origin`
 - `codex_chrome_readiness`
 - `codex_chrome_profile_doctor`
 - `codex_chrome_profile_onboard`
+- `codex_chrome_open_observe`
+- `codex_chrome_observe`
+- `codex_chrome_visual_observe`
+- `codex_chrome_visual_analyze`
 - `codex_chrome_upload_file`
 - `codex_chrome_cart_prepare`
+- `codex_chrome_fill`
+- `codex_chrome_type`
+- `codex_chrome_clear`
+- `codex_chrome_focus`
+- `codex_chrome_select`
+- `codex_chrome_check`
+- `codex_chrome_scroll`
+- `codex_chrome_press_key`
+- `codex_chrome_click`
 - `codex_chrome_approvals_list`
 - `codex_chrome_approval_approve`
 - `codex_chrome_approval_reject`
 - `codex_chrome_approval_run`
+- `codex_chrome_emergency_stop`
+- `codex_chrome_emergency_clear`
 
 Setup tools keep Codex-first browser work out of implicit Chrome UI gestures.
 `codex_chrome_prepare_origin` routes through the same origin preparation path as
@@ -134,6 +149,14 @@ Real-site profiles such as `hepsiburada.shopping.v1` can be installed but remain
 blocked while `realSiteEnabled` is false. Cart preparation may add the selected
 item to cart only inside the approved profile policy and must stop before
 checkout, payment, address changes, or order placement.
+
+Checkout, payment, address-change, and order-placement blockers are terminal
+policy stops for Codex. Adapter hints for these errors must never offer
+approval, run, or approval-run bypass actions. If a hint exists, it may only
+return policy-style retry, diagnostic, or stop guidance; returning no hint is
+also acceptable. Real-site shopping profiles remain disabled unless their
+profile explicitly enables real-site execution, and disabled real-site profile
+errors must not be converted into approval prompts.
 
 High-risk browser actions cannot be bypassed through this adapter. The operator
 daemon still controls guarded mode, approval prompts, profile binding, host

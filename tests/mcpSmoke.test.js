@@ -37,6 +37,7 @@ test('buildMcpSmokeMessages sends initialize then tools/list over stdio JSON-RPC
 test('buildMcpSmokeReport summarizes required adapter tool availability', () => {
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_cart_prepare'));
 
+  const toolSchemaVersion = '2026-04-29.m1';
   const responses = [
     {
       jsonrpc: '2.0',
@@ -57,9 +58,14 @@ test('buildMcpSmokeReport summarizes required adapter tool availability', () => 
       result: {
         tools: REQUIRED_MCP_SMOKE_TOOLS.map((name) => ({
           name,
+          toolSchemaVersion,
           inputSchema: {
             type: 'object',
             additionalProperties: false
+          },
+          outputContract: {
+            untrusted: true,
+            rawScreenshotBytes: false
           }
         }))
       }
@@ -74,9 +80,70 @@ test('buildMcpSmokeReport summarizes required adapter tool availability', () => 
     adapterProtocolVersion: '1.0',
     toolDefinitionsHash: 'a'.repeat(64),
     toolCount: REQUIRED_MCP_SMOKE_TOOLS.length,
+    toolSchemaVersion,
+    strictSchemaToolCount: REQUIRED_MCP_SMOKE_TOOLS.length,
+    looseSchemaPaths: [],
+    rawScreenshotBytesAllowed: [],
+    untrustedOutputMissing: [],
+    contractPinned: true,
     requiredTools: REQUIRED_MCP_SMOKE_TOOLS,
     missingTools: []
   });
+});
+
+test('buildMcpSmokeReport fails closed when adapter contract proof is not pinned', () => {
+  const looseTool = REQUIRED_MCP_SMOKE_TOOLS[0];
+  const rawScreenshotTool = REQUIRED_MCP_SMOKE_TOOLS[1];
+  const trustedOutputTool = REQUIRED_MCP_SMOKE_TOOLS[2];
+  const nestedLooseTool = REQUIRED_MCP_SMOKE_TOOLS[3];
+  const responses = [
+    {
+      jsonrpc: '2.0',
+      id: 1,
+      result: {
+        protocolVersion: '2025-06-18',
+        serverInfo: {
+          name: 'codex-chrome-operator',
+          version: '0.1.0'
+        },
+        adapterProtocolVersion: '1.0'
+      }
+    },
+    {
+      jsonrpc: '2.0',
+      id: 2,
+      result: {
+        tools: REQUIRED_MCP_SMOKE_TOOLS.map((name) => ({
+          name,
+          inputSchema: {
+            type: 'object',
+            additionalProperties: name === looseTool,
+            ...(name === nestedLooseTool
+              ? { properties: { nested: { type: 'object' } } }
+              : {})
+          },
+          outputContract: {
+            untrusted: name !== trustedOutputTool,
+            rawScreenshotBytes: name === rawScreenshotTool
+          }
+        }))
+      }
+    }
+  ];
+
+  const report = buildMcpSmokeReport(responses);
+
+  assert.equal(report.ok, false);
+  assert.equal(report.toolDefinitionsHash, null);
+  assert.equal(report.toolSchemaVersion, null);
+  assert.equal(report.strictSchemaToolCount, REQUIRED_MCP_SMOKE_TOOLS.length - 2);
+  assert.deepEqual(report.looseSchemaPaths, [
+    `${looseTool}.inputSchema`,
+    `${nestedLooseTool}.inputSchema.properties.nested`
+  ]);
+  assert.deepEqual(report.rawScreenshotBytesAllowed, [rawScreenshotTool]);
+  assert.deepEqual(report.untrustedOutputMissing, [trustedOutputTool]);
+  assert.equal(report.contractPinned, false);
 });
 
 test('buildMcpSmokeReport fails closed when a required tool is missing', () => {

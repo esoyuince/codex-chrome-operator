@@ -168,7 +168,16 @@ const TOOL_DEFINITIONS = [
         verifyPreview: { type: 'boolean' },
         files: {
           type: 'array',
-          items: { type: 'object' }
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              role: { type: 'string' },
+              path: { type: 'string' },
+              expectedSha256: { type: 'string' }
+            },
+            required: ['role', 'path']
+          }
         }
       },
       required: ['origin', 'handle', 'files']

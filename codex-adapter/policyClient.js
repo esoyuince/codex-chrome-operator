@@ -11,7 +11,10 @@ const POLICY_ERROR_CODES = new Set([
   'PROFILE_BINDING_VERSION_MISMATCH',
   'PROFILE_BINDING_STALE',
   'EXTENSION_DISCONNECTED',
-  'EMERGENCY_STOPPED'
+  'EMERGENCY_STOPPED',
+  'CHECKOUT_BLOCKED',
+  'SITE_PROFILE_UNAVAILABLE',
+  'BOUNDED_FULL_AUTO_ACTION_NOT_ALLOWED'
 ]);
 
 const PROFILE_ERROR_CODES = new Set([
@@ -20,6 +23,12 @@ const PROFILE_ERROR_CODES = new Set([
   'PROFILE_BINDING_MISSING',
   'PROFILE_BINDING_VERSION_MISMATCH',
   'PROFILE_BINDING_STALE'
+]);
+
+const STOP_ONLY_ERROR_CODES = new Set([
+  'CHECKOUT_BLOCKED',
+  'SITE_PROFILE_UNAVAILABLE',
+  'BOUNDED_FULL_AUTO_ACTION_NOT_ALLOWED'
 ]);
 
 function originArguments(origin) {
@@ -125,6 +134,17 @@ function buildPolicyHints(error = {}) {
     }];
   } else if (PROFILE_ERROR_CODES.has(error.code)) {
     nextActions = profileActions(error);
+  } else if (STOP_ONLY_ERROR_CODES.has(error.code)) {
+    nextActions = [{
+      kind: 'stop',
+      origin: error.origin || null,
+      policyCode: error.code,
+      requiresUserDecision: false
+    }, {
+      kind: 'manual-diagnostic',
+      policyCode: error.code,
+      requiresUserDecision: true
+    }];
   } else {
     nextActions = [{
       kind: 'manual-diagnostic',

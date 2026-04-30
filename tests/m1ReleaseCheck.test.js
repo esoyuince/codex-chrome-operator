@@ -224,6 +224,44 @@ test('runReleaseCheck attaches clean smoke evidence when the smoke gate succeeds
   assert.equal(report.checks[0].evidence, undefined);
 });
 
+test('runReleaseCheck attaches compact MCP contract evidence when the MCP smoke gate succeeds', () => {
+  const mcpSmokeOutput = {
+    ok: true,
+    serverName: 'codex-chrome-operator',
+    toolDefinitionsHash: 'b'.repeat(64),
+    toolCount: 14,
+    toolSchemaVersion: '2026-04-29.m1',
+    strictSchemaToolCount: 14,
+    contractPinned: true,
+    requiredTools: ['codex_chrome_status'],
+    missingTools: [],
+    rawScreenshotBytesAllowed: [],
+    untrustedOutputMissing: [],
+    tools: [{ name: 'codex_chrome_status', inputSchema: { type: 'object' } }]
+  };
+  const report = runReleaseCheck({
+    runner: (check) => ({
+      status: 0,
+      stdout: check.name === 'mcp-smoke'
+        ? JSON.stringify(mcpSmokeOutput)
+        : `${check.name} ok`,
+      stderr: ''
+    })
+  });
+
+  const mcpSmoke = report.checks.find((check) => check.name === 'mcp-smoke');
+  assert.equal(mcpSmoke.ok, true);
+  assert.deepEqual(mcpSmoke.evidence, {
+    toolDefinitionsHash: 'b'.repeat(64),
+    toolCount: 14,
+    toolSchemaVersion: '2026-04-29.m1',
+    strictSchemaToolCount: 14,
+    contractPinned: true
+  });
+  assert.equal(Object.hasOwn(mcpSmoke.evidence, 'tools'), false);
+  assert.equal(Object.hasOwn(mcpSmoke.evidence, 'requiredTools'), false);
+});
+
 test('runReleaseCheck fails closed when a process exits without a numeric status', () => {
   const report = runReleaseCheck({
     runner: () => ({
