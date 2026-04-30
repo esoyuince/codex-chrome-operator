@@ -1546,8 +1546,16 @@ async function waitReady({
   };
 }
 
+function comparableUrl(value) {
+  try {
+    return new URL(value).href;
+  } catch {
+    return null;
+  }
+}
+
 function activeTabMatchesUrl(activeTab, url, origin) {
-  if (!activeTab || activeTab.url !== url) {
+  if (!activeTab || comparableUrl(activeTab.url) !== comparableUrl(url)) {
     return false;
   }
   const activeOrigin = activeTab.origin || (() => {

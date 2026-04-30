@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const {
   assertPathInside,
+  bindSmokeProfile,
   clickElement,
   findChromeForTesting,
   resolveSmokeConfig
@@ -62,6 +63,40 @@ test('resolveSmokeConfig creates deterministic clean profile and URLs', () => {
   assert.equal(config.debugBaseUrl, 'http://127.0.0.1:9231');
   assert.equal(config.extensionId, 'abcdefghijklmnopabcdefghijklmnop');
   assert.equal(config.profileDir, path.join(installDir, 'clean-smoke-unit'));
+});
+
+test('bindSmokeProfile binds the transient smoke profile before setup', () => {
+  const calls = [];
+  const result = bindSmokeProfile(
+    {
+      profileDir: 'C:\\Operator\\clean-smoke-unit'
+    },
+    {
+      baseUrl: 'http://127.0.0.1:17391',
+      token: 'cli-token'
+    },
+    (args, settings) => {
+      calls.push({ args, settings });
+      return {
+        ok: true,
+        result: {
+          profileBindingId: 'profbind_smoke01',
+          profileBindingVersion: 1,
+          setupUrl: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/profileSetup.html?profileBindingId=profbind_smoke01&profileBindingVersion=1'
+        }
+      };
+    }
+  );
+
+  assert.deepEqual(calls, [{
+    args: ['profile-bind', 'C:\\Operator\\clean-smoke-unit', 'Default', 'Codex Clean Smoke'],
+    settings: {
+      baseUrl: 'http://127.0.0.1:17391',
+      token: 'cli-token'
+    }
+  }]);
+  assert.equal(result.profileBindingId, 'profbind_smoke01');
+  assert.equal(result.setupUrl, 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/profileSetup.html?profileBindingId=profbind_smoke01&profileBindingVersion=1');
 });
 
 test('clickElement can fall back to a DOM click for fixture-only controls', async () => {

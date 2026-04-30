@@ -65,6 +65,26 @@ Use the opened setup page in Chrome, then rerun:
 npm run operator:cli -- profile-doctor
 ```
 
+## Codex App MCP Registration
+
+Register the operator MCP server in the Codex desktop config:
+
+```powershell
+npm run codex:mcp:install
+```
+
+The installer updates `%USERPROFILE%\.codex\config.toml`, preserves unrelated
+config, and writes a timestamped backup beside `config.toml` when it changes an
+existing file.
+
+Restart Codex after changing MCP server config. Then verify the adapter contract:
+
+```powershell
+npm run smoke:mcp
+```
+
+Inside Codex, the visible tool prefix should be `codex_chrome_*`.
+
 ## First Origin
 
 Prepare an origin and grant the optional host permission from the extension

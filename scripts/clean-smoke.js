@@ -304,6 +304,19 @@ function runCliJsonAsync(args, settings) {
   });
 }
 
+function bindSmokeProfile(config, settings, runCliJsonFn = runCliJson) {
+  const profileBind = runCliJsonFn([
+    'profile-bind',
+    config.profileDir,
+    'Default',
+    'Codex Clean Smoke'
+  ], settings);
+  if (!profileBind.ok || !profileBind.result || !profileBind.result.setupUrl) {
+    throw new Error(`Clean smoke profile bind failed: ${JSON.stringify(profileBind)}`);
+  }
+  return profileBind.result;
+}
+
 function findElementHandle(observation, predicate, label) {
   const elements = observation && observation.result && Array.isArray(observation.result.elements)
     ? observation.result.elements
@@ -424,9 +437,10 @@ async function runCleanSmoke(options = {}) {
     chromeStarted = true;
     await waitForStatus(settings, (status) => status.connectionState === 'EXTENSION_CONNECTED_SETUP_ONLY');
 
+    const smokeProfileBinding = bindSmokeProfile(config, settings);
     await withCdp(await pageTarget(config), async (send) => {
       await send('Page.navigate', {
-        url: `chrome-extension://${config.extensionId}/profileSetup.html?profileBindingId=profbind_developmentBinding01&profileBindingVersion=1`
+        url: smokeProfileBinding.setupUrl
       });
       await new Promise((resolve) => setTimeout(resolve, 1000));
       await clickElement(send, 'bind');
@@ -1149,6 +1163,7 @@ if (require.main === module) {
 
 module.exports = {
   assertPathInside,
+  bindSmokeProfile,
   clickElement,
   findChromeForTesting,
   parseSmokeArgs,

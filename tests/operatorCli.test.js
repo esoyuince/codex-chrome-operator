@@ -12,6 +12,7 @@ const {
   profileDoctor,
   profileOnboard,
   resolveCliSettings,
+  waitForActiveTabUrl,
   waitForProfileVerified,
   waitReady
 } = require('../scripts/operator-cli');
@@ -717,6 +718,39 @@ test('openObserve waits for navigation to settle before observing', async () => 
   assert.equal(response.ok, true);
   assert.equal(response.result.navigationSettled.activeTab.url, 'https://example.com/path');
   assert.equal(response.result.observation.title, 'Example');
+});
+
+test('waitForActiveTabUrl accepts Chrome-normalized root URLs', async () => {
+  let calls = 0;
+  const response = await waitForActiveTabUrl({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token'
+    },
+    requestId: 'wait_root',
+    url: 'https://example.com',
+    origin: 'https://example.com',
+    timeoutMs: 10,
+    pollIntervalMs: 1,
+    delayFn: async () => {},
+    sendRpcFn: async () => {
+      calls += 1;
+      return {
+        ok: true,
+        result: {
+          activeTab: {
+            url: 'https://example.com/',
+            origin: 'https://example.com',
+            loadingState: 'complete'
+          }
+        }
+      };
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(calls > 0, true);
+  assert.equal(response.result.activeTab.url, 'https://example.com/');
 });
 
 test('waitReady polls verifyReadiness until the origin is ready', async () => {

@@ -15,6 +15,7 @@
     "release:m6": "node scripts/m6-final-check.js",
     "smoke:clean": "node scripts/clean-smoke.js",
     "smoke:mcp": "node scripts/mcp-smoke.js",
+    "codex:mcp:install": "node scripts/install-codex-mcp.js",
     "daemon": "node operator-daemon/daemon.js",
     "native-bridge": "node native-bridge/nativeMessagingShim.js",
     "doctor": "node operator-daemon/daemon.js --doctor"
