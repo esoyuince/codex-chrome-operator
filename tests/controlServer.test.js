@@ -1057,11 +1057,11 @@ test('page.prepareCart fails closed before readiness gates complete', async () =
       hello: verifiedHello(['observe.v1', 'cartPreparation.v1'])
     });
     await postJson(baseUrl, 'operator.approveDomain', {
-      origin: 'https://shop.example'
+      origin: 'http://127.0.0.1:18180'
     });
 
     const result = await postJson(baseUrl, 'page.prepareCart', {
-      origin: 'https://shop.example',
+      origin: 'http://127.0.0.1:18180',
       query: 'mac mini',
       criteria: {},
       cartActionAllowed: true
@@ -1075,7 +1075,7 @@ test('page.prepareCart fails closed before readiness gates complete', async () =
 
 test('page.prepareCart rejects invalid params before queueing browser work', async () => {
   await withServer(makeSession(), async (baseUrl, session) => {
-    await connectAndAuthorize(baseUrl, 'https://shop.example');
+    await connectAndAuthorize(baseUrl, 'http://127.0.0.1:18180');
 
     const invalidRequests = [
       {
@@ -1085,19 +1085,19 @@ test('page.prepareCart rejects invalid params before queueing browser work', asy
         cartActionAllowed: true
       },
       {
-        origin: 'https://shop.example',
+        origin: 'http://127.0.0.1:18180',
         query: '   ',
         criteria: {},
         cartActionAllowed: true
       },
       {
-        origin: 'https://shop.example',
+        origin: 'http://127.0.0.1:18180',
         query: 'mac mini',
         criteria: null,
         cartActionAllowed: true
       },
       {
-        origin: 'https://shop.example',
+        origin: 'http://127.0.0.1:18180',
         query: 'mac mini',
         criteria: {},
         cartActionAllowed: 'yes'
@@ -1118,10 +1118,10 @@ test('page.prepareCart rejects invalid params before queueing browser work', asy
 
 test('page.prepareCart queues normalized cart params and returns verification evidence', async () => {
   await withServer(makeSession(), async (baseUrl) => {
-    await connectAndAuthorize(baseUrl, 'https://shop.example');
+    await connectAndAuthorize(baseUrl, 'http://127.0.0.1:18180');
 
     const preparePromise = postJson(baseUrl, 'page.prepareCart', {
-      origin: 'https://shop.example',
+      origin: 'http://127.0.0.1:18180',
       query: '  Mac mini M4  ',
       criteria: {
         maxPrice: 29999,
@@ -1135,8 +1135,8 @@ test('page.prepareCart queues normalized cart params and returns verification ev
     assert.equal(command.body.ok, true);
     assert.equal(command.body.result.command.method, 'page.prepareCart');
     assert.deepEqual(command.body.result.command.params, {
-      origin: 'https://shop.example',
-      profileId: 'mock-commerce.v1',
+      origin: 'http://127.0.0.1:18180',
+      profileId: 'localTest.ecommerce.v1',
       query: 'Mac mini M4',
       criteria: {
         minSellerRating: 4,
@@ -1152,7 +1152,7 @@ test('page.prepareCart queues normalized cart params and returns verification ev
       response: {
         ok: true,
         result: {
-          origin: 'https://shop.example',
+          origin: 'http://127.0.0.1:18180',
           selected: {
             title: 'Mac mini M4',
             sellerRating: 4.8,
@@ -1180,18 +1180,18 @@ test('page.prepareCart queues normalized cart params and returns verification ev
     const auditTail = await postJson(baseUrl, 'operator.audit.tail', { limit: 10 });
     const cartEntry = auditTail.body.result.entries.find((entry) => entry.method === 'page.prepareCart');
     assert.equal(cartEntry.actionKind, 'cart-preparation');
-    assert.equal(cartEntry.origin, 'https://shop.example');
+    assert.equal(cartEntry.origin, 'http://127.0.0.1:18180');
     assert.equal(cartEntry.result, 'ok');
   });
 });
 
 test('bounded full auto allows explicitly listed cart preparation and blocks it otherwise', async () => {
   await withServer(makeSession(), async (baseUrl) => {
-    await connectAndAuthorize(baseUrl, 'https://shop.example');
+    await connectAndAuthorize(baseUrl, 'http://127.0.0.1:18180');
 
     await postJson(baseUrl, 'operator.fullAuto.start', {
       contract: boundedFullAutoContract({
-        approvedOrigins: ['https://shop.example'],
+        approvedOrigins: ['http://127.0.0.1:18180'],
         allowedActionKinds: ['observe', 'cart-preparation'],
         limits: {
           expiresInMinutes: 30,
@@ -1203,8 +1203,8 @@ test('bounded full auto allows explicitly listed cart preparation and blocks it 
     });
 
     const preparePromise = postJson(baseUrl, 'page.prepareCart', {
-      origin: 'https://shop.example',
-      profileId: 'storefront-a',
+      origin: 'http://127.0.0.1:18180',
+      profileId: 'localTest.ecommerce.v1',
       query: 'keyboard',
       criteria: { minSellerRating: 4.5 },
       cartActionAllowed: true
@@ -1227,7 +1227,7 @@ test('bounded full auto allows explicitly listed cart preparation and blocks it 
 
     await postJson(baseUrl, 'operator.fullAuto.start', {
       contract: boundedFullAutoContract({
-        approvedOrigins: ['https://shop.example'],
+        approvedOrigins: ['http://127.0.0.1:18180'],
         allowedActionKinds: ['observe'],
         limits: {
           expiresInMinutes: 30,
@@ -1239,7 +1239,7 @@ test('bounded full auto allows explicitly listed cart preparation and blocks it 
     });
 
     const blocked = await postJson(baseUrl, 'page.prepareCart', {
-      origin: 'https://shop.example',
+      origin: 'http://127.0.0.1:18180',
       query: 'mouse',
       criteria: {},
       cartActionAllowed: true
@@ -1250,12 +1250,31 @@ test('bounded full auto allows explicitly listed cart preparation and blocks it 
   });
 });
 
+test('page.prepareCart blocks disabled real-site profiles before queueing browser work', async () => {
+  await withServer(makeSession(), async (baseUrl, session) => {
+    await connectAndAuthorize(baseUrl, 'https://www.hepsiburada.com');
+
+    const result = await postJson(baseUrl, 'page.prepareCart', {
+      origin: 'https://www.hepsiburada.com',
+      profileId: 'hepsiburada.shopping.v1',
+      query: 'Mac mini',
+      criteria: { minSellerRating: 4 },
+      cartActionAllowed: true
+    });
+
+    assert.equal(result.body.ok, false);
+    assert.equal(result.body.error.code, ERROR_CODES.SITE_PROFILE_UNAVAILABLE);
+    assert.equal(result.body.error.reason, 'REAL_SITE_PROFILE_DISABLED');
+    assert.equal(session.pendingCommands.size, 0);
+  });
+});
+
 test('page.prepareCart returns checkout policy errors without approval replay', async () => {
   await withServer(makeSession(), async (baseUrl) => {
-    await connectAndAuthorize(baseUrl, 'https://shop.example');
+    await connectAndAuthorize(baseUrl, 'http://127.0.0.1:18180');
 
     const preparePromise = postJson(baseUrl, 'page.prepareCart', {
-      origin: 'https://shop.example',
+      origin: 'http://127.0.0.1:18180',
       query: 'laptop',
       criteria: {},
       cartActionAllowed: true

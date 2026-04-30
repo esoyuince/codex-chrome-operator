@@ -82,6 +82,7 @@ adapter tools:
 - `codex_chrome_profile_doctor`
 - `codex_chrome_profile_onboard`
 - `codex_chrome_upload_file`
+- `codex_chrome_cart_prepare`
 - `codex_chrome_approvals_list`
 - `codex_chrome_approval_approve`
 - `codex_chrome_approval_reject`
@@ -125,6 +126,14 @@ upload surface remains guarded/draft-only: daemon policy, domain approval,
 profile binding, host permissions, and approval prompts still decide whether a
 file interaction can run. Results return redacted file references; raw `path`
 fields are redacted while safe file basenames and hashes may remain visible.
+
+`codex_chrome_cart_prepare` routes to `page.prepareCart` with `origin`, `query`,
+optional `profileId`, optional cart `criteria`, and explicit
+`cartActionAllowed`. The default cart profile is `localTest.ecommerce.v1`.
+Real-site profiles such as `hepsiburada.shopping.v1` can be installed but remain
+blocked while `realSiteEnabled` is false. Cart preparation may add the selected
+item to cart only inside the approved profile policy and must stop before
+checkout, payment, address changes, or order placement.
 
 High-risk browser actions cannot be bypassed through this adapter. The operator
 daemon still controls guarded mode, approval prompts, profile binding, host

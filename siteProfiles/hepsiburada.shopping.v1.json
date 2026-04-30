@@ -1,0 +1,75 @@
+{
+  "id": "hepsiburada.shopping.v1",
+  "kind": "ecommerce-cart-preparation",
+  "displayName": "Hepsiburada Shopping",
+  "enabled": true,
+  "localOnly": false,
+  "realSiteEnabled": false,
+  "origins": [
+    "https://www.hepsiburada.com"
+  ],
+  "originPatterns": [
+    "https://www.hepsiburada.com"
+  ],
+  "workflow": {
+    "search": "site search box profile candidate, disabled until live selector tests pass",
+    "sort": "site sort/filter controls profile candidate, disabled until live selector tests pass",
+    "candidateSelection": "cheapest eligible product, then highest seller rating",
+    "detailRecheck": "product detail or seller selector recheck before cart action",
+    "cartVerification": "cart summary must contain selected product before stop"
+  },
+  "selectors": {
+    "searchCandidates": [
+      "input[type=\"search\"]",
+      "input[placeholder*=\"ara\" i]",
+      "[role=\"searchbox\"]"
+    ],
+    "productCardCandidates": [
+      "[data-test-id*=\"product\" i]",
+      "[data-listing-id]",
+      "li",
+      "article"
+    ],
+    "addToCartCandidates": [
+      "button[data-test-id*=\"add\" i]",
+      "button[aria-label*=\"sepet\" i]",
+      "button"
+    ],
+    "blockedCheckoutCandidates": [
+      "button[aria-label*=\"ödeme\" i]",
+      "button[aria-label*=\"checkout\" i]",
+      "a[href*=\"checkout\" i]"
+    ]
+  },
+  "candidateFields": {
+    "price": "DOM text first, visual fallback only after profile tests",
+    "currency": "TRY",
+    "sellerRating": "seller rating text or ARIA first, visual star fallback only after profile tests",
+    "availability": "stock text or disabled add-to-cart control"
+  },
+  "riskPolicy": {
+    "allowAddToCart": true,
+    "blockedActionKinds": [
+      "checkout",
+      "payment",
+      "order-placement",
+      "address-change",
+      "subscription",
+      "installment-selection"
+    ],
+    "stopAfter": "cart-verification"
+  },
+  "enablementGates": [
+    "localTest.ecommerce.v1 release smoke passes",
+    "Hepsiburada selector dry-run extraction tests pass",
+    "detail recheck confidence threshold is met",
+    "checkout/payment/order-placement blocked smoke passes"
+  ],
+  "evidenceRequirements": [
+    "product-card-extraction",
+    "seller-rating-threshold",
+    "detail-recheck",
+    "cart-verification",
+    "checkout-blocked"
+  ]
+}

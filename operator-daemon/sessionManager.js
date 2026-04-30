@@ -25,6 +25,10 @@ const {
 } = require('./visualAnalyzer');
 const defaultAssetValidator = require('./assetValidator');
 const { OperatorStateStore } = require('./stateStore');
+const {
+  assertCartProfileAllowed,
+  loadSiteProfiles
+} = require('./siteProfileRegistry');
 
 function defaultAuditPath() {
   return path.join(
@@ -255,6 +259,7 @@ class SessionManager {
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       visualAnalyzerRegistry: config.visualAnalyzerRegistry || createVisualAnalyzerRegistry(),
       assetValidator: config.assetValidator || defaultAssetValidator,
+      siteProfiles: config.siteProfiles || loadSiteProfiles({ profileDir: config.siteProfileDir }),
       token: config.token || process.env.CODEX_CHROME_OPERATOR_TOKEN || 'dev-token'
     };
     this.audit = new AuditLog(this.config.auditLogPath);
@@ -263,6 +268,7 @@ class SessionManager {
     });
     this.visualAnalyzerRegistry = this.config.visualAnalyzerRegistry;
     this.assetValidator = this.config.assetValidator;
+    this.siteProfiles = this.config.siteProfiles;
     this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
     this.profileVerified = false;
     this.profileBindingStatus = 'unverified';
@@ -1084,10 +1090,19 @@ class SessionManager {
     }
 
     const profileId = params.profileId === undefined
-      ? 'mock-commerce.v1'
+      ? 'localTest.ecommerce.v1'
       : (typeof params.profileId === 'string' ? params.profileId.trim() : '');
     if (!profileId) {
       return guardError(ERROR_CODES.INVALID_SCHEMA, 'profileId must be a non-empty string when provided.');
+    }
+
+    const siteProfile = assertCartProfileAllowed({
+      profiles: this.siteProfiles,
+      profileId,
+      origin
+    });
+    if (!siteProfile.ok) {
+      return siteProfile;
     }
 
     const query = typeof params.query === 'string' ? params.query.trim() : '';
@@ -1137,7 +1152,7 @@ class SessionManager {
       origin,
       commandParams: {
         origin,
-        profileId,
+        profileId: siteProfile.profile.id,
         query,
         criteria,
         cartActionAllowed: params.cartActionAllowed

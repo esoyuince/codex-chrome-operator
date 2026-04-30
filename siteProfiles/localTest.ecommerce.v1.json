@@ -1,0 +1,58 @@
+{
+  "id": "localTest.ecommerce.v1",
+  "kind": "ecommerce-cart-preparation",
+  "displayName": "Local Mock Commerce Fixture",
+  "enabled": true,
+  "localOnly": true,
+  "realSiteEnabled": false,
+  "origins": [],
+  "originPatterns": [
+    "http://127.0.0.1:*",
+    "http://localhost:*"
+  ],
+  "workflow": {
+    "search": "fixture search input",
+    "sort": "fixture sort select",
+    "candidateSelection": "cheapest eligible product, then highest seller rating",
+    "detailRecheck": "fixture detail panel",
+    "cartVerification": "fixture cart counter and last product id"
+  },
+  "selectors": {
+    "fixtureRoot": "[data-fixture=\"mock-commerce\"]",
+    "search": "[data-commerce-search]",
+    "sort": "[data-commerce-sort]",
+    "productCards": "[data-visual-card=\"product\"]",
+    "detailRecheck": "[data-detail-recheck]",
+    "cartCount": "[data-cart-count]",
+    "cartItems": "[data-cart-items]",
+    "checkoutControls": "[data-risk=\"checkout\"], [data-risk=\"payment\"]"
+  },
+  "candidateFields": {
+    "productId": "data-product-id",
+    "price": "data-price",
+    "currency": "data-currency",
+    "sellerName": "data-seller-name",
+    "sellerRating": "data-seller-rating",
+    "availability": "data-availability",
+    "shipping": "data-shipping"
+  },
+  "riskPolicy": {
+    "allowAddToCart": true,
+    "blockedActionKinds": [
+      "checkout",
+      "payment",
+      "order-placement",
+      "address-change",
+      "subscription",
+      "installment-selection"
+    ],
+    "stopAfter": "cart-verification"
+  },
+  "evidenceRequirements": [
+    "product-card-extraction",
+    "seller-rating-threshold",
+    "detail-recheck",
+    "cart-verification",
+    "checkout-blocked"
+  ]
+}
