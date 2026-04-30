@@ -9,7 +9,9 @@ const {
   bindSmokeProfile,
   clickElement,
   findChromeForTesting,
-  resolveSmokeConfig
+  resolveSmokeConfig,
+  restoreFileSnapshot,
+  snapshotFile
 } = require('../scripts/clean-smoke');
 
 function readFixture(name) {
@@ -63,6 +65,44 @@ test('resolveSmokeConfig creates deterministic clean profile and URLs', () => {
   assert.equal(config.debugBaseUrl, 'http://127.0.0.1:9231');
   assert.equal(config.extensionId, 'abcdefghijklmnopabcdefghijklmnop');
   assert.equal(config.profileDir, path.join(installDir, 'clean-smoke-unit'));
+});
+
+test('clean smoke snapshots and restores operator state file', () => {
+  const installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-smoke-install-'));
+  const statePath = path.join(installDir, 'state.json');
+  const original = JSON.stringify({
+    configuredProfile: {
+      userDataDir: 'C:\\Users\\example\\AppData\\Local\\Google\\Chrome\\User Data',
+      profileDirectory: 'Default',
+      profileBindingId: 'profbind_live'
+    }
+  });
+  fs.writeFileSync(statePath, original);
+
+  const snapshot = snapshotFile(statePath);
+  fs.writeFileSync(statePath, JSON.stringify({
+    configuredProfile: {
+      userDataDir: path.join(installDir, 'clean-smoke-unit'),
+      profileDirectory: 'Default',
+      profileBindingId: 'profbind_smoke'
+    }
+  }));
+
+  restoreFileSnapshot(statePath, snapshot);
+
+  assert.equal(fs.readFileSync(statePath, 'utf8'), original);
+});
+
+test('clean smoke restore removes state file when it did not previously exist', () => {
+  const installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-smoke-install-'));
+  const statePath = path.join(installDir, 'state.json');
+
+  const snapshot = snapshotFile(statePath);
+  fs.writeFileSync(statePath, JSON.stringify({ configuredProfile: { profileBindingId: 'profbind_smoke' } }));
+
+  restoreFileSnapshot(statePath, snapshot);
+
+  assert.equal(fs.existsSync(statePath), false);
 });
 
 test('bindSmokeProfile binds the transient smoke profile before setup', () => {

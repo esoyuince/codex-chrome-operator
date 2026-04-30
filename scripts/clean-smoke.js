@@ -123,6 +123,25 @@ function runInstall(extensionId) {
   ]);
 }
 
+function snapshotFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return { existed: false, content: null };
+  }
+  return {
+    existed: true,
+    content: fs.readFileSync(filePath)
+  };
+}
+
+function restoreFileSnapshot(filePath, snapshot) {
+  if (!snapshot.existed) {
+    fs.rmSync(filePath, { force: true });
+    return;
+  }
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, snapshot.content);
+}
+
 function startDaemon(config) {
   stopPortOwner(17391);
   const logDir = path.join(config.installDir, 'logs');
@@ -409,9 +428,12 @@ async function clickElement(send, elementId, options = {}) {
 }
 
 async function runCleanSmoke(options = {}) {
+  const installDir = options.installDir || defaultInstallDir();
+  const statePath = path.join(installDir, 'state.json');
+  const stateSnapshot = snapshotFile(statePath);
   const extensionId = ensureExtensionKey().extensionId;
   runInstall(extensionId);
-  const config = resolveSmokeConfig(options);
+  const config = resolveSmokeConfig({ ...options, installDir });
   const settings = resolveCliSettings({ installDir: config.installDir });
   let fixtureServer = null;
   let chromeStarted = false;
@@ -1132,6 +1154,8 @@ async function runCleanSmoke(options = {}) {
     if (fixtureServer) {
       await new Promise((resolve) => fixtureServer.close(resolve));
     }
+    stopPortOwner(17391);
+    restoreFileSnapshot(statePath, stateSnapshot);
   }
 }
 
@@ -1166,7 +1190,9 @@ module.exports = {
   bindSmokeProfile,
   clickElement,
   findChromeForTesting,
+  restoreFileSnapshot,
   parseSmokeArgs,
   resolveSmokeConfig,
-  runCleanSmoke
+  runCleanSmoke,
+  snapshotFile
 };

@@ -90,6 +90,8 @@ const PAGE_ACTION_KINDS = Object.freeze({
   'page.waitFor': 'wait'
 });
 
+const RECENT_ACTION_LOG_LIMIT = 25;
+
 function cloneJson(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
@@ -240,6 +242,18 @@ function normalizeActiveTab(tab) {
   };
 }
 
+function summarizeActiveTabForEvent(tab) {
+  if (!tab || typeof tab !== 'object') {
+    return undefined;
+  }
+  return {
+    url: tab.url || null,
+    origin: tab.origin || null,
+    title: tab.title || null,
+    loadingState: tab.loadingState || null
+  };
+}
+
 class SessionManager {
   constructor(config = {}) {
     this.stateStore = config.stateStore || new OperatorStateStore({ statePath: config.statePath });
@@ -272,6 +286,7 @@ class SessionManager {
     this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
     this.profileVerified = false;
     this.profileBindingStatus = 'unverified';
+    this.bridgeInstanceId = null;
     this.connectionId = null;
     this.lastDisconnect = null;
     this.reconnectCount = 0;
@@ -285,6 +300,7 @@ class SessionManager {
     this.nextApprovalId = 1;
     this.lastVersionMismatch = null;
     this.activeTab = null;
+    this.recentEvents = [];
     this.emergencyStop = {
       active: false,
       reason: null,
@@ -298,6 +314,7 @@ class SessionManager {
     return {
       connectionState: this.connectionState,
       connectionId: this.connectionId,
+      bridgeInstanceId: this.bridgeInstanceId,
       lastDisconnect: this.lastDisconnect,
       reconnectCount: this.reconnectCount,
       profileVerified: this.profileVerified,
@@ -308,6 +325,8 @@ class SessionManager {
       configuredProfile: this.stateStore.getConfiguredProfile(),
       pendingApprovals: this.listApprovalRecords({ status: 'pending' }),
       activeTab: this.activeTab ? { ...this.activeTab } : null,
+      recentEvents: this.recentEvents.map((event) => cloneJson(event)),
+      recentActionLog: this.recentEvents.map((event) => cloneJson(event)),
       emergencyStop: { ...this.emergencyStop },
       boundedFullAuto: this.boundedFullAutoStatus(),
       version: {
@@ -432,7 +451,7 @@ class SessionManager {
         response = await this.routePageCommand(id, request.method, params);
         break;
       case 'bridge.poll':
-        response = this.pollBridge(id);
+        response = this.pollBridge(id, params);
         break;
       case 'bridge.deliver':
         response = this.deliverBridgeResponse(id, params);
@@ -460,7 +479,107 @@ class SessionManager {
       this.lastError = null;
     }
 
+    this.recordRpcEvent({
+      method: request.method,
+      params,
+      response
+    });
+
     return response;
+  }
+
+  recordRecentEvent(event) {
+    const cleanEvent = Object.fromEntries(
+      Object.entries({
+        timestamp: new Date().toISOString(),
+        ...event
+      }).filter(([, value]) => value !== undefined)
+    );
+    this.recentEvents.push(cleanEvent);
+    if (this.recentEvents.length > RECENT_ACTION_LOG_LIMIT) {
+      this.recentEvents.splice(0, this.recentEvents.length - RECENT_ACTION_LOG_LIMIT);
+    }
+  }
+
+  recordRpcEvent({ method, params, response }) {
+    const result = response.ok ? 'ok' : 'error';
+    const errorCode = response.error && response.error.code;
+    const origin = originFromParams(params) || (response.ok && response.result && response.result.origin);
+    const actionKind = PAGE_ACTION_KINDS[method];
+
+    if (method === 'extension.hello') {
+      this.recordRecentEvent({
+        type: 'hello',
+        method,
+        result,
+        errorCode,
+        activeTab: summarizeActiveTabForEvent(this.activeTab)
+      });
+      if (response.ok) {
+        this.recordRecentEvent({
+          type: 'connect',
+          method,
+          result,
+          activeTab: summarizeActiveTabForEvent(this.activeTab)
+        });
+      }
+      return;
+    }
+
+    if (method === 'extension.disconnected' || method === 'bridge.disconnected') {
+      this.recordRecentEvent({
+        type: 'disconnect',
+        method,
+        result,
+        errorCode
+      });
+      return;
+    }
+
+    if (method === 'extension.activeTabUpdated') {
+      this.recordRecentEvent({
+        type: 'activeTabUpdated',
+        method,
+        result,
+        errorCode,
+        activeTab: summarizeActiveTabForEvent(this.activeTab)
+      });
+      return;
+    }
+
+    if (method === 'operator.approveDomain' || method === 'operator.revokeDomain') {
+      this.recordRecentEvent({
+        type: 'domainApproval',
+        method,
+        origin,
+        result,
+        errorCode
+      });
+      return;
+    }
+
+    if (method === 'extension.hostPermissionGranted' || method === 'extension.hostPermissionsSynced') {
+      this.recordRecentEvent({
+        type: 'hostPermission',
+        method,
+        origin,
+        result,
+        errorCode
+      });
+      return;
+    }
+
+    if (method.startsWith('page.') && !response.ok) {
+      this.recordRecentEvent({
+        type: 'pageCommandFailed',
+        method,
+        origin,
+        actionKind,
+        result,
+        errorCode,
+        activeTab: summarizeActiveTabForEvent(this.activeTab)
+      });
+    }
   }
 
   buildAuditEntry({ requestId, method, params, response }) {
@@ -526,6 +645,23 @@ class SessionManager {
   }
 
   handleHello(id, hello, params = {}) {
+    const bridgeInstanceId = typeof params.bridgeInstanceId === 'string' && params.bridgeInstanceId.trim()
+      ? params.bridgeInstanceId.trim()
+      : null;
+    if (
+      this.bridgeInstanceId &&
+      bridgeInstanceId &&
+      bridgeInstanceId !== this.bridgeInstanceId &&
+      ['EXTENSION_CONNECTED', 'EXTENSION_CONNECTED_SETUP_ONLY'].includes(this.connectionState)
+    ) {
+      return rpcError(id, {
+        code: ERROR_CODES.EXTENSION_DISCONNECTED,
+        message: 'A different native bridge instance already owns this operator session.',
+        foreignBridgeIgnored: true,
+        currentBridgeInstanceId: this.bridgeInstanceId,
+        rejectedBridgeInstanceId: bridgeInstanceId
+      });
+    }
     const result = validateHello(hello, {
       expectedExtensionId: this.config.expectedExtensionId,
       expectedProtocolVersion: this.config.expectedProtocolVersion,
@@ -554,6 +690,7 @@ class SessionManager {
     this.lastVersionMismatch = null;
     this.profileBindingStatus = result.profileBindingStatus;
     this.profileVerified = result.profileBindingStatus === 'verified';
+    this.bridgeInstanceId = bridgeInstanceId;
     const previousState = this.connectionState;
     this.connectionId = makeConnectionId();
     if (previousState === 'RECONNECTING') {
@@ -567,14 +704,36 @@ class SessionManager {
     return rpcOk(id, {
       connectionState: this.connectionState,
       connectionId: this.connectionId,
+      bridgeInstanceId: this.bridgeInstanceId,
       profileBindingStatus: this.profileBindingStatus
     });
   }
 
   activeTabUpdated(id, params = {}) {
+    const bridgeCheck = this.checkBridgeInstance(params);
+    if (!bridgeCheck.ok) {
+      return rpcOk(id, {
+        ignored: true,
+        reason: 'bridgeInstanceMismatch',
+        activeTab: this.activeTab ? { ...this.activeTab } : null
+      });
+    }
     this.updateActiveTab(params.activeTab || params.tab || null);
     return rpcOk(id, {
       activeTab: this.activeTab ? { ...this.activeTab } : null
+    });
+  }
+
+  checkBridgeInstance(params = {}) {
+    const bridgeInstanceId = typeof params.bridgeInstanceId === 'string' && params.bridgeInstanceId.trim()
+      ? params.bridgeInstanceId.trim()
+      : null;
+    if (!this.bridgeInstanceId || bridgeInstanceId === this.bridgeInstanceId) {
+      return guardOk({ bridgeInstanceId });
+    }
+    return guardError(ERROR_CODES.EXTENSION_DISCONNECTED, 'Stale native bridge instance cannot control this session.', {
+      currentBridgeInstanceId: this.bridgeInstanceId,
+      bridgeInstanceId
     });
   }
 
@@ -616,9 +775,21 @@ class SessionManager {
   }
 
   handleDisconnected(id, params = {}) {
+    if (params.source !== 'operator-cli') {
+      const bridgeCheck = this.checkBridgeInstance(params);
+      if (!bridgeCheck.ok) {
+        return rpcOk(id, {
+          ignored: true,
+          reason: 'bridgeInstanceMismatch',
+          connectionState: this.connectionState,
+          currentBridgeInstanceId: this.bridgeInstanceId
+        });
+      }
+    }
     const previousConnectionId = this.connectionId;
     this.connectionState = 'RECONNECTING';
     this.profileVerified = false;
+    this.bridgeInstanceId = null;
     this.connectionId = null;
     this.lastDisconnect = {
       source: params.source || 'unknown',
@@ -683,6 +854,14 @@ class SessionManager {
   }
 
   hostPermissionGranted(id, params) {
+    const bridgeCheck = this.checkBridgeInstance(params);
+    if (!bridgeCheck.ok) {
+      return rpcOk(id, {
+        ignored: true,
+        reason: 'bridgeInstanceMismatch',
+        hostPermissionGranted: false
+      });
+    }
     const origin = params && params.origin;
     if (!origin || typeof origin !== 'string') {
       return rpcError(id, {
@@ -699,6 +878,14 @@ class SessionManager {
   }
 
   hostPermissionsSynced(id, params) {
+    const bridgeCheck = this.checkBridgeInstance(params);
+    if (!bridgeCheck.ok) {
+      return rpcOk(id, {
+        ignored: true,
+        reason: 'bridgeInstanceMismatch',
+        hostPermissionOrigins: [...this.hostPermissions]
+      });
+    }
     if (!Array.isArray(params.origins)) {
       return rpcError(id, {
         code: ERROR_CODES.INVALID_SCHEMA,
@@ -1560,6 +1747,14 @@ class SessionManager {
       params
     };
     this.commandQueue.push(command);
+    this.recordRecentEvent({
+      type: 'pageCommandQueued',
+      method,
+      origin: originFromParams(params),
+      actionKind: PAGE_ACTION_KINDS[method],
+      result: 'queued',
+      activeTab: summarizeActiveTabForEvent(this.activeTab)
+    });
     const commandTimeoutMs = Number.isFinite(params && params.timeoutMs)
       ? Math.max(30000, params.timeoutMs + 5000)
       : 30000;
@@ -1577,19 +1772,35 @@ class SessionManager {
       }, commandTimeoutMs);
 
       this.pendingCommands.set(commandId, {
+        method,
+        origin: originFromParams(params),
+        actionKind: PAGE_ACTION_KINDS[method],
         resolve,
         timeout
       });
     });
   }
 
-  pollBridge(id) {
+  pollBridge(id, params = {}) {
+    const bridgeCheck = this.checkBridgeInstance(params);
+    if (!bridgeCheck.ok) {
+      return rpcOk(id, {
+        command: null,
+        ignored: true,
+        reason: 'bridgeInstanceMismatch',
+        currentBridgeInstanceId: this.bridgeInstanceId
+      });
+    }
     return rpcOk(id, {
       command: this.commandQueue.shift() || null
     });
   }
 
   deliverBridgeResponse(id, params) {
+    const bridgeCheck = this.checkBridgeInstance(params);
+    if (!bridgeCheck.ok) {
+      return rpcError(id, bridgeCheck.error);
+    }
     if (params.connectionId && params.connectionId !== this.connectionId) {
       return rpcError(id, {
         code: ERROR_CODES.EXTENSION_DISCONNECTED,
@@ -1611,6 +1822,15 @@ class SessionManager {
     clearTimeout(pending.timeout);
     this.pendingCommands.delete(params.commandId);
     this.updateActiveTab(params.activeTab || null);
+    this.recordRecentEvent({
+      type: 'pageCommandDelivered',
+      method: pending.method,
+      origin: pending.origin,
+      actionKind: pending.actionKind,
+      result: params.response && params.response.ok ? 'ok' : 'error',
+      errorCode: params.response && params.response.error && params.response.error.code,
+      activeTab: summarizeActiveTabForEvent(this.activeTab)
+    });
     pending.resolve(params.response || {
       ok: false,
       error: {

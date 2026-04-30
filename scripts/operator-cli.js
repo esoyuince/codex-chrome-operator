@@ -493,6 +493,13 @@ function startDaemonProcess({ installDir = defaultInstallDir() } = {}) {
   return { pid: child.pid };
 }
 
+function isPathInside(parentPath, candidatePath) {
+  const parent = path.resolve(parentPath);
+  const candidate = path.resolve(candidatePath);
+  const relative = path.relative(parent, candidate);
+  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
 async function waitForDaemon({
   settings,
   request,
@@ -582,26 +589,68 @@ async function waitForExtensionConnection({
   };
 }
 
-function findChromeForBootstrap(installDir, env = process.env) {
+function bundledChromeCandidates(installDir) {
   const browserRoot = path.join(installDir, 'browsers', 'chrome');
-  if (fs.existsSync(browserRoot)) {
-    const candidates = fs.readdirSync(browserRoot, { withFileTypes: true })
+  if (!fs.existsSync(browserRoot)) {
+    return [];
+  }
+  return fs.readdirSync(browserRoot, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => path.join(browserRoot, entry.name, 'chrome-win64', 'chrome.exe'))
       .filter((candidate) => fs.existsSync(candidate))
       .sort()
       .reverse();
-    if (candidates[0]) {
-      return candidates[0];
-    }
-  }
+}
 
-  const common = [
+function systemChromeCandidates(env = process.env) {
+  return [
     env.ProgramFiles && path.join(env.ProgramFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
     env['ProgramFiles(x86)'] && path.join(env['ProgramFiles(x86)'], 'Google', 'Chrome', 'Application', 'chrome.exe'),
     env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe')
-  ].filter(Boolean);
-  return common.find((candidate) => fs.existsSync(candidate)) || null;
+  ].filter(Boolean).filter((candidate) => fs.existsSync(candidate));
+}
+
+function isConfiguredRealProfile(installDir, configuredProfile) {
+  return Boolean(
+    configuredProfile &&
+    configuredProfile.userDataDir &&
+    !isPathInside(installDir, configuredProfile.userDataDir)
+  );
+}
+
+function browserSelection(chromePath, browserKind, profileLaunchMode, configuredProfile) {
+  return {
+    chromePath,
+    browserKind,
+    profileLaunchMode,
+    ...(configuredProfile ? { configuredProfile } : {})
+  };
+}
+
+function findChromeForBootstrap(installDir, env = process.env) {
+  const configuredProfile = loadConfiguredProfile(installDir);
+  const configuredRealProfile = isConfiguredRealProfile(installDir, configuredProfile);
+  const profileLaunchMode = configuredRealProfile
+    ? 'configured-real-profile'
+    : configuredProfile && configuredProfile.userDataDir
+    ? 'configured-isolated-profile'
+    : 'isolated-operator-profile';
+  const systemChrome = systemChromeCandidates(env)[0] || null;
+  const bundledChrome = bundledChromeCandidates(installDir)[0] || null;
+
+  if (configuredRealProfile && systemChrome) {
+    return browserSelection(systemChrome, 'system-google-chrome', profileLaunchMode, configuredProfile);
+  }
+  if (configuredRealProfile && bundledChrome) {
+    return browserSelection(bundledChrome, 'bundled-chrome-for-testing', profileLaunchMode, configuredProfile);
+  }
+  if (bundledChrome) {
+    return browserSelection(bundledChrome, 'bundled-chrome-for-testing', profileLaunchMode, configuredProfile);
+  }
+  if (systemChrome) {
+    return browserSelection(systemChrome, 'system-google-chrome', profileLaunchMode, configuredProfile);
+  }
+  return null;
 }
 
 function loadConfiguredProfile(installDir) {
@@ -622,8 +671,8 @@ function launchBootstrapChrome({
   bootstrapUrl,
   env = process.env
 } = {}) {
-  const chromePath = findChromeForBootstrap(installDir, env);
-  if (!chromePath) {
+  const chromeSelection = findChromeForBootstrap(installDir, env);
+  if (!chromeSelection) {
     return {
       attempted: true,
       launched: false,
@@ -633,9 +682,28 @@ function launchBootstrapChrome({
       }
     };
   }
+  const {
+    chromePath,
+    browserKind,
+    profileLaunchMode,
+    configuredProfile
+  } = chromeSelection;
+
+  if (profileLaunchMode === 'configured-real-profile' && browserKind !== 'system-google-chrome') {
+    return {
+      attempted: true,
+      launched: false,
+      chromePath,
+      browserKind,
+      profileLaunchMode,
+      error: {
+        code: 'PROFILE_BROWSER_MISMATCH',
+        message: 'Configured real Chrome profiles must be launched with installed Google Chrome, not bundled Chrome for Testing.'
+      }
+    };
+  }
 
   const extensionDir = path.join(installDir, 'extension-unpacked');
-  const configuredProfile = loadConfiguredProfile(installDir);
   const args = [];
   if (configuredProfile && configuredProfile.userDataDir) {
     args.push(`--user-data-dir=${configuredProfile.userDataDir}`);
@@ -660,7 +728,10 @@ function launchBootstrapChrome({
     attempted: true,
     launched: true,
     pid: child.pid,
-    bootstrapUrl
+    bootstrapUrl,
+    chromePath,
+    browserKind,
+    profileLaunchMode
   };
 }
 

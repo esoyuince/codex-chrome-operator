@@ -354,3 +354,81 @@ test('operator.revokeDomain removes approval but keeps host permission metadata'
     assert.deepEqual(readiness.result.missing, ['domainApproval']);
   });
 });
+
+test('status recentEvents includes active tab updates without raw sensitive params', async () => {
+  const paths = tempPaths();
+
+  await withServer(makeSession(paths), async (baseUrl) => {
+    const updated = await postJson(baseUrl, 'extension.activeTabUpdated', {
+      activeTab: {
+        id: 7,
+        windowId: 2,
+        url: 'https://example.com/settings',
+        title: 'Settings',
+        status: 'loading'
+      },
+      text: 'do not expose this text',
+      filePath: 'C:/Users/example/Desktop/private.png'
+    });
+    assert.equal(updated.ok, true);
+
+    const status = await postJson(baseUrl, 'operator.status');
+    const activeTabEvent = status.result.recentEvents.find((event) => (
+      event.type === 'activeTabUpdated'
+    ));
+
+    assert.equal(activeTabEvent.method, 'extension.activeTabUpdated');
+    assert.equal(activeTabEvent.activeTab.url, 'https://example.com/settings');
+    assert.equal(activeTabEvent.activeTab.origin, 'https://example.com');
+    assert.equal(activeTabEvent.activeTab.title, 'Settings');
+    assert.equal(activeTabEvent.activeTab.loadingState, 'loading');
+
+    const serialized = JSON.stringify(status.result.recentEvents);
+    assert.equal(serialized.includes('do not expose this text'), false);
+    assert.equal(serialized.includes('C:/Users/example/Desktop/private.png'), false);
+  });
+});
+
+test('status recentEvents includes page command readiness failures', async () => {
+  const paths = tempPaths();
+
+  await withServer(makeSession(paths), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.1.0',
+        bridgeVersion: '0.1.0',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_developmentBinding01',
+        profileBindingVersion: 1,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+
+    const result = await postJson(baseUrl, 'page.type', {
+      origin: 'https://example.com',
+      handle: 'el_1',
+      text: 'super secret typed text'
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+
+    const status = await postJson(baseUrl, 'operator.status');
+    const failureEvent = status.result.recentEvents.find((event) => (
+      event.type === 'pageCommandFailed' && event.method === 'page.type'
+    ));
+
+    assert.equal(failureEvent.origin, 'https://example.com');
+    assert.equal(failureEvent.actionKind, 'type');
+    assert.equal(failureEvent.result, 'error');
+    assert.equal(failureEvent.errorCode, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+    assert.equal(JSON.stringify(failureEvent).includes('super secret typed text'), false);
+  });
+});

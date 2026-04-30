@@ -17,6 +17,7 @@ async function sendRpc({ baseUrl, token, request }) {
 function notifyDaemonDisconnect({
   baseUrl,
   token,
+  bridgeInstanceId,
   source = 'native-bridge',
   reason = 'Native bridge disconnected.'
 }) {
@@ -27,6 +28,7 @@ function notifyDaemonDisconnect({
       id: `disconnect_${Date.now()}`,
       method: 'bridge.disconnected',
       params: {
+        ...(bridgeInstanceId ? { bridgeInstanceId } : {}),
         source,
         reason
       }

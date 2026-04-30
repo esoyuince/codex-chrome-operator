@@ -194,6 +194,142 @@ test('extension.hello and tab updates expose active tab in operator.status', asy
   });
 });
 
+test('foreign native bridge cannot replace active tab or consume queued commands', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    const hello = await postJson(baseUrl, 'extension.hello', {
+      bridgeInstanceId: 'bridge_smoke',
+      hello: verifiedHello(),
+      activeTab: {
+        id: 7,
+        windowId: 2,
+        url: 'http://127.0.0.1:18180/basic-form.html',
+        title: 'Smoke Fixture',
+        status: 'complete'
+      }
+    });
+    assert.equal(hello.body.ok, true);
+    assert.equal(hello.body.result.bridgeInstanceId, 'bridge_smoke');
+
+    const foreignHello = await postJson(baseUrl, 'extension.hello', {
+      bridgeInstanceId: 'bridge_real',
+      hello: {
+        ...verifiedHello(),
+        sessionBootstrapId: 'boot_real',
+        profileBindingId: 'profbind_realProfile'
+      },
+      activeTab: {
+        id: 99,
+        windowId: 9,
+        url: 'https://x.com/home',
+        title: 'Real Browser',
+        status: 'complete'
+      }
+    });
+    assert.equal(foreignHello.body.ok, false);
+    assert.equal(foreignHello.body.error.foreignBridgeIgnored, true);
+
+    const ignoredUpdate = await postJson(baseUrl, 'extension.activeTabUpdated', {
+      bridgeInstanceId: 'bridge_real',
+      activeTab: {
+        id: 99,
+        windowId: 9,
+        url: 'https://x.com/home',
+        title: 'Real Browser',
+        status: 'complete'
+      }
+    });
+    assert.equal(ignoredUpdate.body.ok, true);
+    assert.equal(ignoredUpdate.body.result.ignored, true);
+
+    await postJson(baseUrl, 'operator.approveDomain', { origin: 'http://127.0.0.1:18180' });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      bridgeInstanceId: 'bridge_smoke',
+      origin: 'http://127.0.0.1:18180'
+    });
+
+    const observePromise = postJson(baseUrl, 'page.observe', {
+      origin: 'http://127.0.0.1:18180'
+    });
+
+    const legacyPoll = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(legacyPoll.body.ok, true);
+    assert.equal(legacyPoll.body.result.command, null);
+    assert.equal(legacyPoll.body.result.ignored, true);
+
+    const foreignPoll = await postJson(baseUrl, 'bridge.poll', {
+      bridgeInstanceId: 'bridge_real'
+    });
+    assert.equal(foreignPoll.body.ok, true);
+    assert.equal(foreignPoll.body.result.command, null);
+    assert.equal(foreignPoll.body.result.ignored, true);
+
+    const smokePoll = await postJson(baseUrl, 'bridge.poll', {
+      bridgeInstanceId: 'bridge_smoke'
+    });
+    assert.equal(smokePoll.body.ok, true);
+    assert.equal(smokePoll.body.result.command.method, 'page.observe');
+
+    const foreignDeliver = await postJson(baseUrl, 'bridge.deliver', {
+      bridgeInstanceId: 'bridge_real',
+      commandId: smokePoll.body.result.command.commandId,
+      response: {
+        ok: false,
+        error: {
+          code: 'DOMAIN_NOT_APPROVED',
+          message: 'Wrong browser.'
+        }
+      }
+    });
+    assert.equal(foreignDeliver.body.ok, false);
+    assert.equal(foreignDeliver.body.error.code, ERROR_CODES.EXTENSION_DISCONNECTED);
+
+    await postJson(baseUrl, 'bridge.deliver', {
+      bridgeInstanceId: 'bridge_smoke',
+      commandId: smokePoll.body.result.command.commandId,
+      activeTab: {
+        id: 7,
+        windowId: 2,
+        url: 'http://127.0.0.1:18180/basic-form.html',
+        title: 'Smoke Fixture',
+        status: 'complete'
+      },
+      response: {
+        ok: true,
+        result: {
+          origin: 'http://127.0.0.1:18180',
+          title: 'Smoke Fixture',
+          elements: []
+        }
+      }
+    });
+
+    const observed = await observePromise;
+    assert.equal(observed.body.ok, true);
+    assert.equal(observed.body.result.title, 'Smoke Fixture');
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.equal(status.body.result.activeTab.origin, 'http://127.0.0.1:18180');
+    assert.equal(status.body.result.activeTab.title, 'Smoke Fixture');
+  });
+});
+
+test('operator-cli disconnect can simulate reconnect while bridge ownership is set', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      bridgeInstanceId: 'bridge_smoke',
+      hello: verifiedHello()
+    });
+
+    const disconnected = await postJson(baseUrl, 'bridge.disconnected', {
+      source: 'operator-cli',
+      reason: 'unit simulated disconnect'
+    });
+
+    assert.equal(disconnected.body.ok, true);
+    assert.equal(disconnected.body.result.connectionState, 'RECONNECTING');
+  });
+});
+
 test('operator.fullAuto.start validates and exposes bounded session status', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await connectAndAuthorize(baseUrl);

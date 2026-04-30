@@ -7,6 +7,8 @@ const path = require('node:path');
 const {
   buildRpcRequest,
   ensureStarted,
+  findChromeForBootstrap,
+  launchBootstrapChrome,
   openObserve,
   prepareOrigin,
   profileDoctor,
@@ -16,6 +18,19 @@ const {
   waitForProfileVerified,
   waitReady
 } = require('../scripts/operator-cli');
+
+function writeEmptyFile(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, '', 'utf8');
+}
+
+function writeConfiguredProfile(installDir, configuredProfile) {
+  fs.writeFileSync(
+    path.join(installDir, 'state.json'),
+    JSON.stringify({ configuredProfile }),
+    'utf8'
+  );
+}
 
 test('buildRpcRequest maps status to operator.status', () => {
   assert.deepEqual(buildRpcRequest(['status']), {
@@ -32,6 +47,97 @@ test('buildRpcRequest maps status to operator.status', () => {
       origin: 'https://example.com'
     }
   });
+});
+
+test('configured real profile bootstrap prefers system Chrome over bundled Chrome for Testing', () => {
+  const installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-cli-'));
+  const chromeUserDataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-real-chrome-user-data-'));
+  const programFiles = path.join(installDir, 'ProgramFiles');
+  const localAppData = path.join(installDir, 'LocalAppData');
+  const bundledChrome = path.join(installDir, 'browsers', 'chrome', '1234', 'chrome-win64', 'chrome.exe');
+  const systemChrome = path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe');
+  writeEmptyFile(bundledChrome);
+  writeEmptyFile(systemChrome);
+  writeConfiguredProfile(installDir, {
+    userDataDir: chromeUserDataRoot,
+    profileDirectory: 'Profile 1',
+    profileLabel: 'Play Console'
+  });
+
+  const found = findChromeForBootstrap(installDir, {
+    ProgramFiles: programFiles,
+    LOCALAPPDATA: localAppData
+  });
+
+  assert.equal(found.chromePath, systemChrome);
+  assert.equal(found.browserKind, 'system-google-chrome');
+  assert.equal(found.profileLaunchMode, 'configured-real-profile');
+});
+
+test('configured real profile bootstrap refuses bundled Chrome for Testing when system Chrome is unavailable', () => {
+  const installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-cli-'));
+  const chromeUserDataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-real-chrome-user-data-'));
+  const localAppData = path.join(installDir, 'LocalAppData');
+  const bundledChrome = path.join(installDir, 'browsers', 'chrome', '1234', 'chrome-win64', 'chrome.exe');
+  writeEmptyFile(bundledChrome);
+  writeConfiguredProfile(installDir, {
+    userDataDir: chromeUserDataRoot,
+    profileDirectory: 'Profile 1',
+    profileLabel: 'Play Console'
+  });
+
+  const launched = launchBootstrapChrome({
+    installDir,
+    bootstrapUrl: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/bootstrap.html?session=boot',
+    env: {
+      ProgramFiles: path.join(installDir, 'MissingProgramFiles'),
+      LOCALAPPDATA: localAppData
+    }
+  });
+
+  assert.equal(launched.attempted, true);
+  assert.equal(launched.launched, false);
+  assert.equal(launched.error.code, 'PROFILE_BROWSER_MISMATCH');
+  assert.equal(launched.browserKind, 'bundled-chrome-for-testing');
+  assert.equal(launched.profileLaunchMode, 'configured-real-profile');
+  assert.equal(launched.chromePath, bundledChrome);
+});
+
+test('unconfigured isolated smoke profile can bootstrap with bundled Chrome for Testing', () => {
+  const originalSpawn = require('node:child_process').spawn;
+  const installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-cli-'));
+  const bundledChrome = path.join(installDir, 'browsers', 'chrome', '1234', 'chrome-win64', 'chrome.exe');
+  const extensionManifest = path.join(installDir, 'extension-unpacked', 'manifest.json');
+  writeEmptyFile(bundledChrome);
+  writeEmptyFile(extensionManifest);
+
+  const calls = [];
+  require('node:child_process').spawn = (chromePath, args, options) => {
+    calls.push({ chromePath, args, options });
+    return {
+      pid: 2468,
+      unref() {}
+    };
+  };
+
+  try {
+    const launched = launchBootstrapChrome({
+      installDir,
+      bootstrapUrl: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/bootstrap.html?session=boot',
+      env: {}
+    });
+
+    assert.equal(launched.launched, true);
+    assert.equal(launched.pid, 2468);
+    assert.equal(launched.chromePath, bundledChrome);
+    assert.equal(launched.browserKind, 'bundled-chrome-for-testing');
+    assert.equal(launched.profileLaunchMode, 'isolated-operator-profile');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].chromePath, bundledChrome);
+    assert.ok(calls[0].args.includes(`--user-data-dir=${path.join(installDir, 'chrome-operator-profile')}`));
+  } finally {
+    require('node:child_process').spawn = originalSpawn;
+  }
 });
 
 test('ensureStarted starts daemon when the first RPC cannot connect', async () => {

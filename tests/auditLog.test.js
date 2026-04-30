@@ -9,6 +9,7 @@ const {
   redactObject,
   AuditLog
 } = require('../operator-daemon/auditLog');
+const { SessionManager } = require('../operator-daemon/sessionManager');
 
 test('redactValue redacts Windows file paths and sensitive strings', () => {
   assert.equal(redactValue('C:/Users/example/Desktop/icon.png'), '[REDACTED_PATH:icon.png]');
@@ -75,4 +76,30 @@ test('AuditLog.tail returns recent redacted entries in order', () => {
   assert.equal(entries[0].requestId, 'req_2');
   assert.equal(entries[0].path, '[REDACTED_PATH:file.txt]');
   assert.equal(entries[1].requestId, 'req_3');
+});
+
+test('status recentEvents omits raw sensitive params from failed page commands', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-audit-'));
+  const session = new SessionManager({
+    auditLogPath: path.join(dir, 'audit.jsonl'),
+    statePath: path.join(dir, 'state.json'),
+    expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop'
+  });
+
+  await session.handleRpc({
+    id: 'type-secret',
+    method: 'page.type',
+    params: {
+      origin: 'https://example.com',
+      handle: 'password',
+      text: 'raw password text',
+      filePath: 'C:/Users/example/Desktop/secret.txt'
+    }
+  });
+
+  const status = session.status();
+  const serialized = JSON.stringify(status.recentEvents);
+  assert.match(serialized, /pageCommandFailed/);
+  assert.equal(serialized.includes('raw password text'), false);
+  assert.equal(serialized.includes('C:/Users/example/Desktop/secret.txt'), false);
 });
