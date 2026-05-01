@@ -74,7 +74,7 @@ When the daemon created an approval request, the hint includes the `approvalId`,
 - `approval-reject <approvalId>`
 - `approval-run <approvalId>`
 
-The adapter currently exposes 26 strict tools:
+The adapter currently exposes 28 strict tools:
 
 - `codex_chrome_status`
 - `codex_chrome_prepare_origin`
@@ -83,6 +83,8 @@ The adapter currently exposes 26 strict tools:
 - `codex_chrome_profile_onboard`
 - `codex_chrome_open_observe`
 - `codex_chrome_observe`
+- `codex_chrome_read_page`
+- `codex_chrome_batch`
 - `codex_chrome_visual_observe`
 - `codex_chrome_visual_analyze`
 - `codex_chrome_upload_file`
@@ -115,6 +117,26 @@ Approval and rejection tools require an explicit `userDecision` argument:
 `"approve"` for `codex_chrome_approval_approve` and `"reject"` for
 `codex_chrome_approval_reject`. This field is checked by the adapter before the
 request reaches the daemon.
+
+`codex_chrome_read_page` routes to `page.readPage` and returns compact
+accessibility-like page text with page-state handles and a caller-controlled
+`maxChars` budget. It is the fast text-first read path for pages where a full DOM
+observation or screenshot is unnecessary.
+
+`codex_chrome_batch` routes to `page.batch` and queues a guarded sequence as one
+extension command. The daemon validates each child action, enforces bounded
+full-auto policy per child action kind, and caps the batch length. Batches may
+include `observe`, `readPage`, `waitFor`, and basic DOM actions; screenshot,
+upload, cart, navigation, and approval replay flows remain separate policy
+surfaces.
+
+The extension also warms the active tab with an offscreen heartbeat and a
+short-lived `observe` plus compact `readPage` cache. When the daemon receives a
+matching warmup from the current active tab, `page.observe` and
+`page.readPage` can return from that cache after normal readiness and bounded
+full-auto checks, avoiding an extra extension round trip. The cache is summary
+visible in `operator.status`, expires quickly, and is invalidated when the
+active tab URL changes.
 
 Gate handoff hints are returned for visible auth or anti-abuse gates such as
 password, OTP, WebAuthn, and CAPTCHA. The hint carries the daemon

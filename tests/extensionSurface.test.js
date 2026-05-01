@@ -87,3 +87,31 @@ test('background reconnects native bridge after Chrome startup without popup int
   assert.match(background, /scheduleNativeReconnect/);
   assert.match(background, /connectNative\(\{ retryOnFailure: true \}\)/);
 });
+
+test('extension ships offscreen warm-session heartbeat and active-tab warmup wiring', () => {
+  const manifest = readManifest();
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const offscreenHtmlPath = path.join(EXTENSION_DIR, 'offscreen.html');
+  const offscreenJsPath = path.join(EXTENSION_DIR, 'offscreen.js');
+
+  assert.ok(manifest.permissions.includes('offscreen'));
+  assert.equal(fs.existsSync(offscreenHtmlPath), true);
+  assert.equal(fs.existsSync(offscreenJsPath), true);
+  assert.match(fs.readFileSync(offscreenJsPath, 'utf8'), /operator\.offscreenHeartbeat/);
+
+  assert.match(background, /operator\.warmSession/);
+  assert.match(background, /ensureOffscreenDocument/);
+  assert.match(background, /content\.batch/);
+  assert.match(background, /extension\.activeTabWarmup/);
+  assert.match(background, /operator\.offscreenHeartbeat/);
+});
+
+test('background injects compact page reader before the content script', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+
+  assert.match(background, /pageReader\.js/);
+  assert.ok(
+    background.indexOf("'pageReader.js'") < background.indexOf("'contentScript.js'"),
+    'pageReader.js should load before contentScript.js'
+  );
+});

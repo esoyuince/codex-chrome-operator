@@ -50,8 +50,8 @@ function verifiedHello(capabilities = ['observe.v1', 'visualObserve.v1']) {
     type: 'HELLO',
     protocolVersion: '1.0',
     extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    extensionVersion: '0.2.5',
-    bridgeVersion: '0.2.5',
+    extensionVersion: '0.2.6',
+    bridgeVersion: '0.2.6',
     sessionBootstrapId: `boot_${Date.now()}`,
     profileBindingState: 'bound',
     profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -193,6 +193,192 @@ test('extension.hello and tab updates expose active tab in operator.status', asy
     const statusAfterUpdate = await postJson(baseUrl, 'operator.status');
     assert.equal(statusAfterUpdate.body.result.activeTab.url, 'https://example.com/done');
     assert.equal(statusAfterUpdate.body.result.activeTab.title, 'Done Page');
+  });
+});
+
+test('extension active-tab warmup caches observe and compact read results without queueing', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const warmed = await postJson(baseUrl, 'extension.activeTabWarmup', {
+      activeTab: {
+        id: 7,
+        windowId: 2,
+        url: 'https://example.com/form',
+        title: 'Warm Form',
+        status: 'complete'
+      },
+      warmup: {
+        ok: true,
+        source: 'content.batch',
+        observation: {
+          origin: 'https://example.com',
+          url: 'https://example.com/form',
+          title: 'Warm Form',
+          elements: [{ handle: 'el_warm_0', tag: 'input', label: 'Email' }]
+        },
+        readPage: {
+          origin: 'https://example.com',
+          url: 'https://example.com/form',
+          title: 'Warm Form',
+          pageStateId: 'warm_state',
+          pageContent: 'textbox "Email" [el_warm_0]',
+          handles: [{ handle: 'el_warm_0', tag: 'input', label: 'Email' }]
+        }
+      }
+    });
+    assert.equal(warmed.body.ok, true);
+
+    const readPromise = postJson(baseUrl, 'page.readPage', {
+      origin: 'https://example.com',
+      filter: 'interactive',
+      maxChars: 1000
+    });
+    const pollAfterRead = await postJson(baseUrl, 'bridge.poll');
+    if (pollAfterRead.body.result.command) {
+      await postJson(baseUrl, 'bridge.deliver', {
+        commandId: pollAfterRead.body.result.command.commandId,
+        response: {
+          ok: true,
+          result: { origin: 'https://example.com', pageContent: 'uncached' }
+        }
+      });
+    }
+    const read = await readPromise;
+
+    assert.equal(pollAfterRead.body.result.command, null);
+    assert.equal(read.body.ok, true);
+    assert.equal(read.body.result.pageContent, 'textbox "Email" [el_warm_0]');
+    assert.equal(read.body.result.warmCache.hit, true);
+
+    const observePromise = postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    const pollAfterObserve = await postJson(baseUrl, 'bridge.poll');
+    if (pollAfterObserve.body.result.command) {
+      await postJson(baseUrl, 'bridge.deliver', {
+        commandId: pollAfterObserve.body.result.command.commandId,
+        response: {
+          ok: true,
+          result: { origin: 'https://example.com', title: 'uncached', elements: [] }
+        }
+      });
+    }
+    const observed = await observePromise;
+
+    assert.equal(pollAfterObserve.body.result.command, null);
+    assert.equal(observed.body.ok, true);
+    assert.equal(observed.body.result.title, 'Warm Form');
+    assert.equal(observed.body.result.warmCache.hit, true);
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.equal(status.body.result.warmSession.active, true);
+    assert.equal(status.body.result.warmSession.origin, 'https://example.com');
+    assert.equal(status.body.result.warmSession.source, 'content.batch');
+    assert.equal(status.body.result.warmSession.hasObservation, true);
+    assert.equal(status.body.result.warmSession.hasReadPage, true);
+  });
+});
+
+test('active-tab updates invalidate stale warm session cache before browser work', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+    await postJson(baseUrl, 'extension.activeTabWarmup', {
+      activeTab: {
+        id: 7,
+        windowId: 2,
+        url: 'https://example.com/form',
+        title: 'Warm Form',
+        status: 'complete'
+      },
+      warmup: {
+        ok: true,
+        source: 'content.batch',
+        observation: { origin: 'https://example.com', title: 'Warm Form', elements: [] },
+        readPage: { origin: 'https://example.com', pageContent: 'main [el_warm_0]' }
+      }
+    });
+
+    await postJson(baseUrl, 'extension.activeTabUpdated', {
+      activeTab: {
+        id: 7,
+        windowId: 2,
+        url: 'https://example.com/changed',
+        title: 'Changed',
+        status: 'complete'
+      }
+    });
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.equal(status.body.result.warmSession.active, false);
+    assert.equal(status.body.result.warmSession.reason, 'active-tab-changed');
+
+    const readPromise = postJson(baseUrl, 'page.readPage', {
+      origin: 'https://example.com',
+      filter: 'interactive',
+      maxChars: 1000
+    });
+    const command = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(command.body.result.command.method, 'page.readPage');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: { origin: 'https://example.com', pageContent: 'fresh' }
+      }
+    });
+    const read = await readPromise;
+    assert.equal(read.body.result.pageContent, 'fresh');
+  });
+});
+
+test('successful mutating page commands invalidate warm session cache', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+    await postJson(baseUrl, 'extension.activeTabWarmup', {
+      activeTab: {
+        id: 7,
+        windowId: 2,
+        url: 'https://example.com/form',
+        title: 'Warm Form',
+        status: 'complete'
+      },
+      warmup: {
+        ok: true,
+        source: 'content.batch',
+        observation: { origin: 'https://example.com', title: 'Stale Warm Form', elements: [] },
+        readPage: { origin: 'https://example.com', pageContent: 'stale warm content' }
+      }
+    });
+
+    const scrollPromise = postJson(baseUrl, 'page.scroll', {
+      origin: 'https://example.com',
+      deltaX: 0,
+      deltaY: 650
+    });
+    const scrollCommand = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: { action: 'scrolled', scrollY: 650 }
+    });
+    assert.equal(scrollCommand.method, 'page.scroll');
+    const scrolled = await scrollPromise;
+    assert.equal(scrolled.body.ok, true);
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.equal(status.body.result.warmSession.active, false);
+    assert.equal(status.body.result.warmSession.reason, 'page.scroll');
+
+    const observePromise = postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    const observeCommand = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: { origin: 'https://example.com', title: 'Fresh After Scroll', elements: [] }
+    });
+    assert.equal(observeCommand.method, 'page.observe');
+    const observed = await observePromise;
+    assert.equal(observed.body.result.title, 'Fresh After Scroll');
+    assert.equal(observed.body.result.warmCache, undefined);
   });
 });
 
@@ -511,8 +697,8 @@ test('extension.hello connects without requiring profile binding', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -539,8 +725,8 @@ test('extension.hello accepts unbound legacy state and unlocks guarded page work
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_setup',
         profileBindingState: 'missing',
         profileBindingSource: 'chrome.storage.local',
@@ -580,7 +766,7 @@ test('extension.hello rejects daemon extension bridge version mismatch', async (
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
         extensionVersion: '0.3.0',
-        bridgeVersion: '0.2.5',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -596,10 +782,10 @@ test('extension.hello rejects daemon extension bridge version mismatch', async (
     const status = await postJson(baseUrl, 'operator.status');
     assert.equal(status.body.result.connectionState, 'DAEMON_RUNNING_EXTENSION_DISCONNECTED');
     assert.equal(status.body.result.version.protocolVersion, '1.0');
-    assert.equal(status.body.result.version.extensionVersion, '0.2.5');
-    assert.equal(status.body.result.version.bridgeVersion, '0.2.5');
+    assert.equal(status.body.result.version.extensionVersion, '0.2.6');
+    assert.equal(status.body.result.version.bridgeVersion, '0.2.6');
     assert.equal(status.body.result.version.lastMismatch.code, ERROR_CODES.EXTENSION_VERSION_MISMATCH);
-    assert.equal(status.body.result.version.lastMismatch.expectedExtensionVersion, '0.2.5');
+    assert.equal(status.body.result.version.lastMismatch.expectedExtensionVersion, '0.2.6');
     assert.equal(status.body.result.version.lastMismatch.actualExtensionVersion, '0.3.0');
   });
 });
@@ -611,8 +797,8 @@ test('page.observe queues once profile and domain are ready without per-site hos
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -643,6 +829,54 @@ test('page.observe queues once profile and domain are ready without per-site hos
     assert.equal(result.status, 200);
     assert.equal(result.body.ok, true);
     assert.equal(result.body.result.title, 'Example');
+  });
+});
+
+test('page.batch queues a single extension command for low-risk multi-step browser work', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const batchPromise = postJson(baseUrl, 'page.batch', {
+      origin: 'https://example.com',
+      stopOnError: true,
+      actions: [{
+        action: 'observe'
+      }, {
+        action: 'readPage',
+        filter: 'interactive',
+        maxChars: 12000
+      }, {
+        action: 'fill',
+        handle: 'el_state_0',
+        text: 'Draft'
+      }, {
+        action: 'pressKey',
+        handle: 'el_state_0',
+        key: 'Enter'
+      }]
+    });
+
+    const command = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: {
+        origin: 'https://example.com',
+        results: [
+          { ok: true, result: { action: 'observe', title: 'Example' } },
+          { ok: true, result: { action: 'readPage', pageContent: 'textbox "Draft" [el_state_0]' } },
+          { ok: true, result: { action: 'filled' } },
+          { ok: true, result: { action: 'key-pressed', key: 'Enter' } }
+        ],
+        stoppedOnError: false
+      }
+    });
+    assert.equal(command.method, 'page.batch');
+    assert.equal(command.params.origin, 'https://example.com');
+    assert.deepEqual(command.params.actions.map((action) => action.action), ['observe', 'readPage', 'fill', 'pressKey']);
+
+    const result = await batchPromise;
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.results.length, 4);
+    assert.equal(result.body.result.stoppedOnError, false);
   });
 });
 
@@ -686,8 +920,8 @@ test('page.visualObserve queues once profile and domain are ready without per-si
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -733,8 +967,8 @@ test('page.observe queues extension command and resolves from bridge delivery', 
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -949,8 +1183,8 @@ test('page.visualObserve queues extension command and resolves from bridge deliv
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1112,8 +1346,8 @@ test('operator.screenshots.cleanup removes stored visual artifacts', async () =>
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1591,8 +1825,8 @@ test('operator.emergencyStop cancels pending page actions and blocks new ones un
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1671,8 +1905,8 @@ test('extension disconnect cancels pending commands and reconnect requires a fre
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1730,8 +1964,8 @@ test('extension disconnect cancels pending commands and reconnect requires a fre
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_def',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1753,8 +1987,8 @@ test('successful page command clears stale lastError', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1814,8 +2048,8 @@ test('local high-risk click can be approved and replayed once', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1891,8 +2125,8 @@ test('gate handoff errors pause actions without creating approval requests', asy
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1947,8 +2181,8 @@ test('real-origin high-risk approval replay is blocked in M1', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.5',
-        bridgeVersion: '0.2.5',
+        extensionVersion: '0.2.6',
+        bridgeVersion: '0.2.6',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',

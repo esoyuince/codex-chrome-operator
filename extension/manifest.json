@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Codex Chrome Operator",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Codex-controlled Chrome operator bridge with guarded local automation.",
   "permissions": [
     "nativeMessaging",
@@ -11,6 +11,7 @@
     "storage",
     "sidePanel",
     "debugger",
+    "offscreen",
     "alarms"
   ],
   "host_permissions": [

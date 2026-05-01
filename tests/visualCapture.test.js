@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  captureVisibleTabWithBudget,
   captureVisibleTabWithRetry,
   isRetryableCaptureError
 } = require('../extension/visualCapture');
@@ -66,4 +67,45 @@ test('captureVisibleTabWithRetry uses a quota-safe default retry delay', async (
   });
 
   assert.deepEqual(delays, [1100]);
+});
+
+test('captureVisibleTabWithBudget falls back to jpeg quality when the first capture is too large', async () => {
+  const calls = [];
+  const dataUrl = await captureVisibleTabWithBudget({
+    windowId: 1,
+    maxBytes: 8,
+    qualities: [80, 50],
+    captureVisibleTab: async (windowId, options) => {
+      calls.push({ windowId, options });
+      return options.format === 'png'
+        ? `data:image/png;base64,${Buffer.from('this is too large').toString('base64')}`
+        : `data:image/jpeg;base64,${Buffer.from('small').toString('base64')}`;
+    }
+  });
+
+  assert.equal(dataUrl, 'data:image/jpeg;base64,c21hbGw=');
+  assert.deepEqual(calls.map((call) => call.options), [
+    { format: 'png' },
+    { format: 'jpeg', quality: 80 }
+  ]);
+});
+
+test('captureVisibleTabWithBudget honors explicit jpeg format and quality', async () => {
+  const calls = [];
+  const dataUrl = await captureVisibleTabWithBudget({
+    windowId: 1,
+    format: 'jpeg',
+    quality: 65,
+    maxBytes: 1024,
+    captureVisibleTab: async (windowId, options) => {
+      calls.push({ windowId, options });
+      return 'data:image/jpeg;base64,c21hbGw=';
+    }
+  });
+
+  assert.equal(dataUrl, 'data:image/jpeg;base64,c21hbGw=');
+  assert.deepEqual(calls, [{
+    windowId: 1,
+    options: { format: 'jpeg', quality: 65 }
+  }]);
 });

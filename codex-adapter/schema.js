@@ -1,7 +1,38 @@
 'use strict';
 
 const ADAPTER_PROTOCOL_VERSION = '1.0';
-const TOOL_SCHEMA_VERSION = '2026-04-29.m1';
+const TOOL_SCHEMA_VERSION = '2026-05-01.m1';
+
+const READ_PAGE_PROPERTIES = {
+  origin: { type: 'string' },
+  filter: { type: 'string' },
+  depth: { type: 'number', minimum: 0 },
+  maxChars: { type: 'number', minimum: 1 },
+  refId: { type: 'string' }
+};
+
+const BATCH_ACTION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    action: { type: 'string' },
+    handle: { type: 'string' },
+    text: { type: 'string' },
+    value: { type: 'string' },
+    checked: { type: 'boolean' },
+    deltaX: { type: 'number' },
+    deltaY: { type: 'number' },
+    key: { type: 'string' },
+    condition: { type: 'string' },
+    timeoutMs: { type: 'number', minimum: 0 },
+    pollIntervalMs: { type: 'number', minimum: 1 },
+    filter: { type: 'string' },
+    depth: { type: 'number', minimum: 0 },
+    maxChars: { type: 'number', minimum: 1 },
+    refId: { type: 'string' }
+  },
+  required: ['action']
+};
 
 const TOOL_DEFINITIONS = [
   {
@@ -114,6 +145,42 @@ const TOOL_DEFINITIONS = [
         origin: { type: 'string' }
       },
       required: ['origin']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_read_page',
+    description: 'Return compact accessibility-like page text for an approved active tab origin.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: READ_PAGE_PROPERTIES,
+      required: ['origin']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_batch',
+    description: 'Run a guarded batch of low-risk page read and DOM actions as one extension command.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        actions: {
+          type: 'array',
+          minItems: 1,
+          items: BATCH_ACTION_SCHEMA
+        },
+        stopOnError: { type: 'boolean' }
+      },
+      required: ['origin', 'actions']
     },
     outputContract: {
       untrusted: true,

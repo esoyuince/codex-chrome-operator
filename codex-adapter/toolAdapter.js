@@ -255,6 +255,14 @@ function normalizeOrigin(value) {
   }
 }
 
+function pickDefined(input, fields) {
+  return Object.fromEntries(
+    fields
+      .filter((field) => input[field] !== undefined)
+      .map((field) => [field, input[field]])
+  );
+}
+
 class CodexChromeToolAdapter {
   constructor({
     settings,
@@ -302,6 +310,19 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_observe':
         response = await this.sendRpc('page.observe', { origin: input.origin });
+        break;
+      case 'codex_chrome_read_page':
+        response = await this.sendRpc('page.readPage', {
+          origin: normalizeOrigin(input.origin),
+          ...pickDefined(input, ['filter', 'depth', 'maxChars', 'refId'])
+        });
+        break;
+      case 'codex_chrome_batch':
+        response = await this.sendRpc('page.batch', {
+          origin: normalizeOrigin(input.origin),
+          actions: input.actions.map((action) => ({ ...action })),
+          ...(input.stopOnError === undefined ? {} : { stopOnError: input.stopOnError })
+        });
         break;
       case 'codex_chrome_visual_observe':
         response = await this.sendRpc('page.visualObserve', { origin: input.origin });

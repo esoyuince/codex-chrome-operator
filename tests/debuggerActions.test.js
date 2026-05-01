@@ -94,6 +94,54 @@ test('runDebuggerAction executes DOM actions through the Chrome debugger runtime
   assert.match(evaluate.params.expression, /"text":"hello"/);
 });
 
+test('runDebuggerAction clicks with Chrome input pointer events', async () => {
+  const { chromeApi, calls } = makeChrome({
+    evaluateValue: {
+      ok: true,
+      result: {
+        action: 'resolved-pointer-target',
+        handle: 'el_state_2',
+        x: 180,
+        y: 240
+      }
+    }
+  });
+
+  const result = await runDebuggerAction({
+    chromeApi,
+    tab: { id: 7, url: 'https://example.com/products' },
+    action: 'click',
+    params: {
+      handle: 'el_state_2',
+      target: {
+        tag: 'a',
+        href: 'https://example.com/products/keyboard',
+        label: 'Keyboard'
+      }
+    }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.provider, 'chrome.debugger.Input.dispatchMouseEvent');
+  assert.equal(result.result.action, 'clicked');
+  assert.equal(result.result.pointer, true);
+  assert.deepEqual(calls.map((call) => call.method), [
+    'attach',
+    'Runtime.enable',
+    'Runtime.evaluate',
+    'Input.dispatchMouseEvent',
+    'Input.dispatchMouseEvent',
+    'Input.dispatchMouseEvent',
+    'detach'
+  ]);
+  const evaluate = calls.find((call) => call.method === 'Runtime.evaluate');
+  assert.match(evaluate.params.expression, /"action":"resolvePointerTarget"/);
+  assert.match(evaluate.params.expression, /"href":"https:\/\/example.com\/products\/keyboard"/);
+  const pointerCalls = calls.filter((call) => call.method === 'Input.dispatchMouseEvent');
+  assert.deepEqual(pointerCalls.map((call) => call.params.type), ['mouseMoved', 'mousePressed', 'mouseReleased']);
+  assert.deepEqual(pointerCalls.map((call) => [call.params.x, call.params.y]), [[180, 240], [180, 240], [180, 240]]);
+});
+
 test('runtime scroll action scrolls the page even when a handle is present', () => {
   const expression = buildRuntimeActionExpression({
     action: 'scroll',

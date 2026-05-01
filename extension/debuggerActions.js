@@ -3,6 +3,7 @@
 
   const DEBUGGER_PROTOCOL_VERSION = '1.3';
   const DEBUGGER_ACTION_PROVIDER = 'chrome.debugger.Runtime.evaluate';
+  const DEBUGGER_POINTER_PROVIDER = 'chrome.debugger.Input.dispatchMouseEvent';
   const DEBUGGER_TIMEOUT_MS = 5000;
 
   function isDebuggerSupportedUrl(url) {
@@ -106,6 +107,16 @@
         : '';
     }
 
+    function normalizedHref(element) {
+      return element && typeof element.href === 'string' && element.href
+        ? element.href
+        : attr(element, 'href');
+    }
+
+    function normalizeText(value) {
+      return String(value || '').replace(/\s+/g, ' ').trim();
+    }
+
     function hashText(value) {
       let hash = 2166136261;
       for (let index = 0; index < value.length; index += 1) {
@@ -124,8 +135,23 @@
         attr(element, 'role'),
         attr(element, 'data-risk'),
         attr(element, 'aria-label'),
-        attr(element, 'placeholder')
+        attr(element, 'placeholder'),
+        attr(element, 'title'),
+        normalizedHref(element),
+        attr(element, 'data-product-id')
       ].join('|');
+    }
+
+    function elementLabel(element) {
+      return normalizeText(
+        attr(element, 'aria-label') ||
+        attr(element, 'title') ||
+        element.innerText ||
+        element.value ||
+        attr(element, 'placeholder') ||
+        attr(element, 'name') ||
+        ''
+      ).slice(0, 200);
     }
 
     function collectInteractiveElements() {
@@ -173,6 +199,68 @@
       };
     }
 
+    function targetMatchesElement(target, element) {
+      if (!target || typeof target !== 'object' || !element) {
+        return false;
+      }
+
+      const exactChecks = [
+        ['tag', String(element.tagName || '').toLowerCase()],
+        ['id', element.id || ''],
+        ['name', attr(element, 'name')],
+        ['type', attr(element, 'type')],
+        ['role', attr(element, 'role')],
+        ['href', normalizedHref(element)],
+        ['placeholder', attr(element, 'placeholder')],
+        ['title', attr(element, 'title')],
+        ['productId', attr(element, 'data-product-id')],
+        ['dataRisk', attr(element, 'data-risk')]
+      ].filter(([key]) => target[key]);
+
+      for (const [key, value] of exactChecks) {
+        if (String(target[key]) !== String(value)) {
+          return false;
+        }
+      }
+
+      const hasStableKey = exactChecks.some(([key]) => key !== 'tag');
+      if (hasStableKey) {
+        return true;
+      }
+
+      return Boolean(target.label) && String(target.label) === elementLabel(element);
+    }
+
+    function recoverHandleFromTarget(elements, target) {
+      if (!target || typeof target !== 'object') {
+        return null;
+      }
+      const matches = [];
+      for (let index = 0; index < elements.length; index += 1) {
+        if (targetMatchesElement(target, elements[index])) {
+          matches.push({ element: elements[index], index });
+        }
+      }
+      if (matches.length === 1) {
+        return {
+          ok: true,
+          element: matches[0].element,
+          index: matches[0].index,
+          recovered: true,
+          recovery: {
+            strategy: 'target-summary',
+            reason: 'PAGE_STATE_CHANGED'
+          }
+        };
+      }
+      if (matches.length > 1) {
+        return staleHandle('RECOVERY_NOT_UNIQUE', {
+          matchCount: matches.length
+        });
+      }
+      return null;
+    }
+
     function resolveHandle(handle) {
       const legacy = /^el_\d+$/.test(String(handle || ''));
       if (legacy) {
@@ -189,6 +277,17 @@
       const index = Number(match[2]);
       const currentPageStateId = buildPageStateId(elements);
       if (handlePageStateId !== currentPageStateId) {
+        const recovered = recoverHandleFromTarget(elements, payload.target);
+        if (recovered) {
+          if (recovered.ok) {
+            return {
+              ...recovered,
+              pageStateId: currentPageStateId,
+              previousPageStateId: handlePageStateId
+            };
+          }
+          return recovered;
+        }
         return staleHandle('PAGE_STATE_CHANGED', {
           handlePageStateId,
           currentPageStateId
@@ -265,6 +364,32 @@
     }
 
     element.scrollIntoView({ block: 'center', inline: 'center' });
+
+    if (payload.action === 'resolvePointerTarget') {
+      const rect = element.getBoundingClientRect();
+      if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return {
+          ok: false,
+          error: {
+            code: 'TARGET_NOT_VISIBLE',
+            message: 'The target element has no clickable box.'
+          }
+        };
+      }
+      const x = Math.max(1, Math.min((window.innerWidth || rect.right) - 1, rect.left + rect.width / 2));
+      const y = Math.max(1, Math.min((window.innerHeight || rect.bottom) - 1, rect.top + rect.height / 2));
+      return {
+        ok: true,
+        result: {
+          action: 'resolved-pointer-target',
+          handle: payload.handle,
+          x,
+          y,
+          recovered: resolved.recovered === true,
+          recovery: resolved.recovery || null
+        }
+      };
+    }
 
     if (payload.action === 'click') {
       element.click();
@@ -402,6 +527,56 @@
       await attachDebugger(chromeApi, target, timeoutMs);
       attached = true;
       await sendCommand(chromeApi, target, 'Runtime.enable', {}, timeoutMs);
+      if (action === 'click') {
+        const response = await sendCommand(chromeApi, target, 'Runtime.evaluate', {
+          expression: buildRuntimeActionExpression({ action: 'resolvePointerTarget', ...params }),
+          awaitPromise: true,
+          returnByValue: true
+        }, timeoutMs);
+        const value = normalizeRuntimeActionValue(response && response.result && response.result.value);
+        if (!value.ok) {
+          return value;
+        }
+        const x = Number(value.result && value.result.x);
+        const y = Number(value.result && value.result.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          return {
+            ok: false,
+            error: {
+              code: 'DEBUGGER_ACTION_FAILED',
+              message: 'Debugger runtime did not return a pointer target.'
+            }
+          };
+        }
+        await sendCommand(chromeApi, target, 'Input.dispatchMouseEvent', {
+          type: 'mouseMoved',
+          x,
+          y
+        }, timeoutMs);
+        await sendCommand(chromeApi, target, 'Input.dispatchMouseEvent', {
+          type: 'mousePressed',
+          x,
+          y,
+          button: 'left',
+          clickCount: 1
+        }, timeoutMs);
+        await sendCommand(chromeApi, target, 'Input.dispatchMouseEvent', {
+          type: 'mouseReleased',
+          x,
+          y,
+          button: 'left',
+          clickCount: 1
+        }, timeoutMs);
+        return {
+          ok: true,
+          result: {
+            provider: DEBUGGER_POINTER_PROVIDER,
+            ...value.result,
+            action: 'clicked',
+            pointer: true
+          }
+        };
+      }
       const response = await sendCommand(chromeApi, target, 'Runtime.evaluate', {
         expression: buildRuntimeActionExpression({ action, ...params }),
         awaitPromise: true,

@@ -6,6 +6,7 @@ CodexChromeOperator/
 config.json
 token.txt
 state.json
+TODO.md
 
 # Operator runtime artifacts
 audit/

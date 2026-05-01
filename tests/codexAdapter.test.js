@@ -15,6 +15,8 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   const profileOnboard = tools.find((tool) => tool.name === 'codex_chrome_profile_onboard');
   const uploadFile = tools.find((tool) => tool.name === 'codex_chrome_upload_file');
   const cartPrepare = tools.find((tool) => tool.name === 'codex_chrome_cart_prepare');
+  const readPage = tools.find((tool) => tool.name === 'codex_chrome_read_page');
+  const batch = tools.find((tool) => tool.name === 'codex_chrome_batch');
 
   assert.equal(ADAPTER_PROTOCOL_VERSION, '1.0');
   assert.ok(openObserve);
@@ -41,6 +43,14 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.match(cartPrepare.description, /stop before checkout\/payment/i);
   assert.equal(cartPrepare.outputContract.untrusted, true);
   assert.equal(cartPrepare.outputContract.rawScreenshotBytes, false);
+  assert.ok(readPage);
+  assert.deepEqual(readPage.inputSchema.required, ['origin']);
+  assert.equal(readPage.inputSchema.properties.maxChars.type, 'number');
+  assert.equal(readPage.inputSchema.properties.refId.type, 'string');
+  assert.ok(batch);
+  assert.deepEqual(batch.inputSchema.required, ['origin', 'actions']);
+  assert.equal(batch.inputSchema.properties.actions.type, 'array');
+  assert.equal(batch.inputSchema.properties.actions.items.additionalProperties, false);
   assert.match(toolDefinitionsHash(), /^[a-f0-9]{64}$/);
   assert.equal(toolDefinitionsHash(), toolDefinitionsHash());
 });
@@ -164,6 +174,118 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     }).ok,
     true
   );
+  assert.equal(
+    validateToolInput('codex_chrome_read_page', {
+      origin: 'https://example.com/path',
+      filter: 'interactive',
+      depth: 4,
+      maxChars: 12000,
+      refId: 'el_state_0'
+    }).ok,
+    true
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_batch', {
+      origin: 'https://example.com',
+      actions: [{
+        action: 'observe'
+      }, {
+        action: 'fill',
+        handle: 'el_state_0',
+        text: 'Draft'
+      }, {
+        action: 'pressKey',
+        handle: 'el_state_0',
+        key: 'Enter'
+      }],
+      stopOnError: true
+    }).ok,
+    true
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_batch', {
+      origin: 'https://example.com',
+      actions: [{
+        action: 'fill',
+        handle: 'el_state_0',
+        text: 'Draft',
+        extra: true
+      }]
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+});
+
+test('CodexChromeToolAdapter routes compact read page and batch actions with normalized origins', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          method: request.method,
+          params: request.params
+        }
+      };
+    }
+  });
+
+  const readPage = await adapter.executeTool({
+    toolName: 'codex_chrome_read_page',
+    input: {
+      origin: 'https://example.com/path?x=1',
+      filter: 'interactive',
+      depth: 3,
+      maxChars: 12000,
+      refId: 'el_state_0'
+    }
+  });
+  const batch = await adapter.executeTool({
+    toolName: 'codex_chrome_batch',
+    input: {
+      origin: 'https://example.com/form',
+      stopOnError: true,
+      actions: [{
+        action: 'fill',
+        handle: 'el_state_0',
+        text: 'Draft'
+      }, {
+        action: 'pressKey',
+        handle: 'el_state_0',
+        key: 'Enter'
+      }]
+    }
+  });
+
+  assert.equal(readPage.ok, true);
+  assert.equal(batch.ok, true);
+  assert.deepEqual(calls.map((call) => call.method), ['page.readPage', 'page.batch']);
+  assert.deepEqual(calls[0].params, {
+    origin: 'https://example.com',
+    filter: 'interactive',
+    depth: 3,
+    maxChars: 12000,
+    refId: 'el_state_0'
+  });
+  assert.deepEqual(calls[1].params, {
+    origin: 'https://example.com',
+    stopOnError: true,
+    actions: [{
+      action: 'fill',
+      handle: 'el_state_0',
+      text: 'Draft'
+    }, {
+      action: 'pressKey',
+      handle: 'el_state_0',
+      key: 'Enter'
+    }]
+  });
 });
 
 test('CodexChromeToolAdapter routes cart preparation with normalized origin and safe defaults', async () => {

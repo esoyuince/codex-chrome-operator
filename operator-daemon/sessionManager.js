@@ -56,6 +56,7 @@ function clearsLastErrorOnSuccess(method) {
     'operator.profile.verify',
     'operator.profiles.discover',
     'extension.hostPermissionsSynced',
+    'extension.activeTabWarmup',
     'operator.screenshots.cleanup',
     'operator.emergencyStop',
     'operator.emergencyClear',
@@ -72,10 +73,12 @@ function clearsLastErrorOnSuccess(method) {
 
 const PAGE_ACTION_KINDS = Object.freeze({
   'page.observe': 'observe',
+  'page.readPage': 'observe',
   'page.visualObserve': 'screenshot',
   'page.visualAnalyze': 'screenshot',
   'page.uploadFile': 'upload',
   'page.prepareCart': 'cart-preparation',
+  'page.batch': 'batch',
   'page.click': 'click',
   'page.type': 'type',
   'page.fill': 'fill',
@@ -89,7 +92,76 @@ const PAGE_ACTION_KINDS = Object.freeze({
   'page.waitFor': 'wait'
 });
 
+const BATCH_ACTION_KINDS = Object.freeze({
+  observe: 'observe',
+  readPage: 'observe',
+  click: 'click',
+  type: 'type',
+  fill: 'fill',
+  clear: 'clear',
+  focus: 'focus',
+  select: 'select',
+  check: 'check',
+  scroll: 'scroll',
+  pressKey: 'pressKey',
+  waitFor: 'wait'
+});
+
+const BATCH_ACTION_FIELDS = new Set([
+  'action',
+  'handle',
+  'text',
+  'value',
+  'checked',
+  'deltaX',
+  'deltaY',
+  'key',
+  'condition',
+  'timeoutMs',
+  'pollIntervalMs',
+  'filter',
+  'depth',
+  'maxChars',
+  'refId'
+]);
+
+const BATCH_ACTION_FIELD_TYPES = Object.freeze({
+  action: 'string',
+  handle: 'string',
+  text: 'string',
+  value: 'string',
+  checked: 'boolean',
+  deltaX: 'number',
+  deltaY: 'number',
+  key: 'string',
+  condition: 'string',
+  timeoutMs: 'number',
+  pollIntervalMs: 'number',
+  filter: 'string',
+  depth: 'number',
+  maxChars: 'number',
+  refId: 'string'
+});
+
+const BATCH_ACTION_REQUIRED_FIELDS = Object.freeze({
+  observe: [],
+  readPage: [],
+  click: ['handle'],
+  type: ['handle', 'text'],
+  fill: ['handle', 'text'],
+  clear: ['handle'],
+  focus: ['handle'],
+  select: ['handle', 'value'],
+  check: ['handle', 'checked'],
+  scroll: ['handle', 'deltaX', 'deltaY'],
+  pressKey: ['handle', 'key'],
+  waitFor: ['condition']
+});
+
+const MAX_BATCH_ACTIONS = 20;
+const WARM_SESSION_CACHE_TTL_MS = 10000;
 const RECENT_ACTION_LOG_LIMIT = 25;
+const WARM_CACHE_PRESERVING_ACTION_KINDS = new Set(['observe', 'screenshot', 'wait']);
 
 function cloneJson(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -216,6 +288,17 @@ function isBoundedFullAutoError(error) {
   return Boolean(error && typeof error.code === 'string' && error.code.startsWith('BOUNDED_FULL_AUTO_'));
 }
 
+function shouldInvalidateWarmSession(method, childActions = []) {
+  if (method === 'page.batch') {
+    return childActions.some((childAction) => (
+      childAction && !WARM_CACHE_PRESERVING_ACTION_KINDS.has(childAction.actionKind)
+    ));
+  }
+
+  const actionKind = PAGE_ACTION_KINDS[method];
+  return Boolean(actionKind && !WARM_CACHE_PRESERVING_ACTION_KINDS.has(actionKind));
+}
+
 function normalizeActiveTab(tab) {
   if (!tab || typeof tab !== 'object') {
     return null;
@@ -260,8 +343,8 @@ class SessionManager {
     this.config = {
       expectedExtensionId: config.expectedExtensionId || 'development-extension-id',
       expectedProtocolVersion: config.expectedProtocolVersion || '1.0',
-      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.5',
-      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.5',
+      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.6',
+      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.6',
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       visualAnalyzerRegistry: config.visualAnalyzerRegistry || createVisualAnalyzerRegistry(),
@@ -303,6 +386,7 @@ class SessionManager {
       clearedAt: null
     };
     this.boundedFullAuto = this.defaultBoundedFullAutoState();
+    this.warmSessionCache = null;
   }
 
   status() {
@@ -321,6 +405,7 @@ class SessionManager {
       configuredProfile: this.stateStore.getConfiguredProfile(),
       pendingApprovals: this.listApprovalRecords({ status: 'pending' }),
       activeTab: this.activeTab ? { ...this.activeTab } : null,
+      warmSession: this.warmSessionStatus(),
       recentEvents: this.recentEvents.map((event) => cloneJson(event)),
       recentActionLog: this.recentEvents.map((event) => cloneJson(event)),
       emergencyStop: { ...this.emergencyStop },
@@ -377,6 +462,9 @@ class SessionManager {
       case 'extension.activeTabUpdated':
         response = this.activeTabUpdated(id, params);
         break;
+      case 'extension.activeTabWarmup':
+        response = this.activeTabWarmup(id, params);
+        break;
       case 'extension.disconnected':
       case 'bridge.disconnected':
         response = this.handleDisconnected(id, {
@@ -430,6 +518,8 @@ class SessionManager {
         response = this.tailAudit(id, params);
         break;
       case 'page.observe':
+      case 'page.readPage':
+      case 'page.batch':
       case 'page.visualObserve':
       case 'page.visualAnalyze':
       case 'page.uploadFile':
@@ -541,6 +631,18 @@ class SessionManager {
         method,
         result,
         errorCode,
+        activeTab: summarizeActiveTabForEvent(this.activeTab)
+      });
+      return;
+    }
+
+    if (method === 'extension.activeTabWarmup') {
+      this.recordRecentEvent({
+        type: 'activeTabWarmup',
+        method,
+        result,
+        errorCode,
+        warmSession: response.ok ? this.warmSessionStatus() : null,
         activeTab: summarizeActiveTabForEvent(this.activeTab)
       });
       return;
@@ -727,6 +829,66 @@ class SessionManager {
     });
   }
 
+  activeTabWarmup(id, params = {}) {
+    const bridgeCheck = this.checkBridgeInstance(params);
+    if (!bridgeCheck.ok) {
+      return rpcOk(id, {
+        ignored: true,
+        reason: 'bridgeInstanceMismatch',
+        warmSession: this.warmSessionStatus()
+      });
+    }
+
+    const activeTab = this.updateActiveTab(params.activeTab || params.tab || null);
+    const warmup = params.warmup;
+    if (!isPlainObject(warmup)) {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_SCHEMA,
+        message: 'extension.activeTabWarmup requires a warmup object.'
+      });
+    }
+
+    if (warmup.ok !== true) {
+      this.clearWarmSessionCache('warmup-failed');
+      return rpcOk(id, {
+        warmSession: this.warmSessionStatus()
+      });
+    }
+
+    const observation = this.normalizedWarmResult(warmup.observation);
+    const readPage = this.normalizedWarmResult(warmup.readPage);
+    const origin = (observation && observation.origin) ||
+      (readPage && readPage.origin) ||
+      (activeTab && activeTab.origin);
+    if (!origin || !activeTab || activeTab.origin !== origin) {
+      this.clearWarmSessionCache('warmup-origin-mismatch');
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_SCHEMA,
+        message: 'Warm session origin must match the active tab origin.'
+      });
+    }
+
+    const updatedAtMs = Date.now();
+    this.warmSessionCache = {
+      origin,
+      url: activeTab.url,
+      tabId: activeTab.id,
+      title: activeTab.title || (observation && observation.title) || (readPage && readPage.title) || null,
+      source: typeof warmup.source === 'string' && warmup.source.trim()
+        ? warmup.source.trim()
+        : 'extension',
+      updatedAt: new Date(updatedAtMs).toISOString(),
+      expiresAt: new Date(updatedAtMs + WARM_SESSION_CACHE_TTL_MS).toISOString(),
+      observation: observation ? cloneJson(observation) : null,
+      readPage: readPage ? cloneJson(readPage) : null,
+      readPageFilter: typeof warmup.readPageFilter === 'string' ? warmup.readPageFilter : 'interactive'
+    };
+
+    return rpcOk(id, {
+      warmSession: this.warmSessionStatus()
+    });
+  }
+
   checkBridgeInstance(params = {}) {
     const bridgeInstanceId = typeof params.bridgeInstanceId === 'string' && params.bridgeInstanceId.trim()
       ? params.bridgeInstanceId.trim()
@@ -744,8 +906,163 @@ class SessionManager {
     const normalized = normalizeActiveTab(tab);
     if (normalized) {
       this.activeTab = normalized;
+      if (
+        this.warmSessionCache &&
+        (
+          this.warmSessionCache.url !== normalized.url ||
+          this.warmSessionCache.tabId !== normalized.id
+        )
+      ) {
+        this.clearWarmSessionCache('active-tab-changed');
+      }
     }
     return this.activeTab;
+  }
+
+  normalizedWarmResult(value) {
+    if (!isPlainObject(value)) {
+      return null;
+    }
+    if (value.ok === true && isPlainObject(value.result)) {
+      return value.result;
+    }
+    if (value.ok === false) {
+      return null;
+    }
+    return value;
+  }
+
+  clearWarmSessionCache(reason = 'cleared') {
+    const previous = this.warmSessionCache;
+    this.warmSessionCache = previous
+      ? {
+        origin: previous.origin,
+        url: previous.url,
+        tabId: previous.tabId,
+        title: previous.title,
+        source: previous.source,
+        updatedAt: previous.updatedAt,
+        expiresAt: previous.expiresAt,
+        inactiveAt: new Date().toISOString(),
+        inactiveReason: reason,
+        observation: null,
+        readPage: null
+      }
+      : {
+        inactiveAt: new Date().toISOString(),
+        inactiveReason: reason,
+        observation: null,
+        readPage: null
+      };
+  }
+
+  warmSessionStatus() {
+    const cache = this.warmSessionCache;
+    if (!cache) {
+      return {
+        active: false,
+        reason: null
+      };
+    }
+
+    const expiresAt = Date.parse(cache.expiresAt);
+    const expired = Number.isFinite(expiresAt) && Date.now() > expiresAt;
+    if (expired) {
+      return {
+        active: false,
+        reason: 'expired',
+        origin: cache.origin || null,
+        url: cache.url || null,
+        tabId: cache.tabId ?? null,
+        title: cache.title || null,
+        source: cache.source || null,
+        updatedAt: cache.updatedAt || null,
+        expiresAt: cache.expiresAt || null,
+        hasObservation: false,
+        hasReadPage: false
+      };
+    }
+
+    const active = Boolean(cache.observation || cache.readPage);
+    return {
+      active,
+      reason: active ? null : (cache.inactiveReason || 'cleared'),
+      origin: cache.origin || null,
+      url: cache.url || null,
+      tabId: cache.tabId ?? null,
+      title: cache.title || null,
+      source: cache.source || null,
+      updatedAt: cache.updatedAt || null,
+      expiresAt: cache.expiresAt || null,
+      hasObservation: Boolean(cache.observation),
+      hasReadPage: Boolean(cache.readPage)
+    };
+  }
+
+  warmCacheMetadata() {
+    const status = this.warmSessionStatus();
+    return {
+      hit: true,
+      source: status.source,
+      updatedAt: status.updatedAt,
+      expiresAt: status.expiresAt
+    };
+  }
+
+  readPageCacheMatches(params = {}) {
+    if (params.refId) {
+      return false;
+    }
+    const filter = typeof params.filter === 'string' && params.filter
+      ? params.filter
+      : 'interactive';
+    return filter === 'interactive' || filter === 'controls';
+  }
+
+  warmCacheHit(method, params = {}, origin) {
+    const status = this.warmSessionStatus();
+    const cache = this.warmSessionCache;
+    if (!status.active || !cache || cache.origin !== origin) {
+      return null;
+    }
+    if (this.activeTab && this.activeTab.url && cache.url !== this.activeTab.url) {
+      this.clearWarmSessionCache('active-tab-changed');
+      return null;
+    }
+
+    if (method === 'page.observe' && cache.observation) {
+      return {
+        ok: true,
+        result: {
+          ...cloneJson(cache.observation),
+          warmCache: this.warmCacheMetadata()
+        }
+      };
+    }
+
+    if (method === 'page.readPage' && cache.readPage && this.readPageCacheMatches(params)) {
+      const pageContent = String(cache.readPage.pageContent || '');
+      if (Number.isFinite(params.maxChars) && pageContent.length > params.maxChars) {
+        return {
+          ok: false,
+          error: {
+            code: 'PAGE_CONTENT_TOO_LARGE',
+            message: 'Cached compact page content exceeds the requested character budget.',
+            maxChars: params.maxChars,
+            actualChars: pageContent.length
+          }
+        };
+      }
+      return {
+        ok: true,
+        result: {
+          ...cloneJson(cache.readPage),
+          warmCache: this.warmCacheMetadata()
+        }
+      };
+    }
+
+    return null;
   }
 
   ensureStarted(id, params = {}) {
@@ -1157,6 +1474,233 @@ class SessionManager {
     return guardOk({ boundedFullAuto: this.boundedFullAutoStatus() });
   }
 
+  enforceBoundedFullAutoBatch(childActions, origin) {
+    if (!this.boundedFullAuto.active) {
+      return guardOk();
+    }
+
+    const contract = this.boundedFullAuto.contract || {};
+    const limits = contract.limits || {};
+    const expiresAt = Date.parse(this.boundedFullAuto.expiresAt);
+    if (Number.isFinite(expiresAt) && Date.now() > expiresAt) {
+      this.boundedFullAuto = {
+        ...this.boundedFullAuto,
+        active: false,
+        stoppedAt: new Date().toISOString(),
+        stopReason: 'Bounded Full Auto expired.'
+      };
+      return guardError(
+        ERROR_CODES.BOUNDED_FULL_AUTO_EXPIRED,
+        'Bounded Full Auto session expired.',
+        { boundedFullAuto: this.boundedFullAutoStatus() }
+      );
+    }
+
+    const approvedOrigins = Array.isArray(contract.approvedOrigins)
+      ? contract.approvedOrigins
+      : [];
+    if (!origin || !approvedOrigins.includes(origin)) {
+      return guardError(
+        ERROR_CODES.BOUNDED_FULL_AUTO_SCOPE_MISMATCH,
+        'Origin is outside the Bounded Full Auto contract scope.',
+        { origin, approvedOrigins }
+      );
+    }
+
+    const allowedActionKinds = new Set(Array.isArray(contract.allowedActionKinds)
+      ? contract.allowedActionKinds
+      : []);
+    for (const childAction of childActions) {
+      if (!allowedActionKinds.has(childAction.actionKind)) {
+        return guardError(
+          ERROR_CODES.BOUNDED_FULL_AUTO_ACTION_NOT_ALLOWED,
+          'Batch child action kind is not allowed by the Bounded Full Auto contract.',
+          {
+            actionKind: childAction.actionKind,
+            action: childAction.action,
+            actionIndex: childAction.index,
+            allowedActionKinds: [...allowedActionKinds]
+          }
+        );
+      }
+    }
+
+    const counters = this.boundedFullAuto.counters;
+    const browserActionIncrement = childActions.length;
+    const screenshotIncrement = childActions.filter((childAction) => (
+      childAction.actionKind === 'screenshot'
+    )).length;
+    const originChangeIncrement = this.boundedFullAuto.lastOrigin &&
+      this.boundedFullAuto.lastOrigin !== origin
+      ? 1
+      : 0;
+
+    if (
+      Number.isFinite(limits.maxBrowserActions) &&
+      counters.browserActions + browserActionIncrement > limits.maxBrowserActions
+    ) {
+      return guardError(
+        ERROR_CODES.BOUNDED_FULL_AUTO_LIMIT_EXCEEDED,
+        'Bounded Full Auto browser action limit exceeded.',
+        {
+          limit: limits.maxBrowserActions,
+          counter: counters.browserActions,
+          requested: browserActionIncrement
+        }
+      );
+    }
+
+    if (
+      Number.isFinite(limits.maxScreenshots) &&
+      counters.screenshots + screenshotIncrement > limits.maxScreenshots
+    ) {
+      return guardError(
+        ERROR_CODES.BOUNDED_FULL_AUTO_LIMIT_EXCEEDED,
+        'Bounded Full Auto screenshot limit exceeded.',
+        {
+          limit: limits.maxScreenshots,
+          counter: counters.screenshots,
+          requested: screenshotIncrement
+        }
+      );
+    }
+
+    if (
+      Number.isFinite(limits.maxOriginChanges) &&
+      counters.originChanges + originChangeIncrement > limits.maxOriginChanges
+    ) {
+      return guardError(
+        ERROR_CODES.BOUNDED_FULL_AUTO_LIMIT_EXCEEDED,
+        'Bounded Full Auto origin-change limit exceeded.',
+        { limit: limits.maxOriginChanges, counter: counters.originChanges }
+      );
+    }
+
+    counters.browserActions += browserActionIncrement;
+    counters.screenshots += screenshotIncrement;
+    counters.originChanges += originChangeIncrement;
+    this.boundedFullAuto.lastOrigin = origin;
+
+    return guardOk({ boundedFullAuto: this.boundedFullAutoStatus() });
+  }
+
+  validateBatchActionField(field, value, actionIndex) {
+    const type = BATCH_ACTION_FIELD_TYPES[field];
+    if (!type) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, `Batch action field is not supported: ${field}.`, {
+        actionIndex,
+        field
+      });
+    }
+    if (type === 'number') {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, `Batch action field ${field} must be a finite number.`, {
+          actionIndex,
+          field
+        });
+      }
+      if (['depth', 'timeoutMs'].includes(field) && value < 0) {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, `Batch action field ${field} must be zero or greater.`, {
+          actionIndex,
+          field
+        });
+      }
+      if (['maxChars', 'pollIntervalMs'].includes(field) && value < 1) {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, `Batch action field ${field} must be one or greater.`, {
+          actionIndex,
+          field
+        });
+      }
+      return guardOk();
+    }
+    if (typeof value !== type) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, `Batch action field ${field} must be ${type}.`, {
+        actionIndex,
+        field
+      });
+    }
+    return guardOk();
+  }
+
+  validateBatchCommandParams(params = {}, origin) {
+    if (!Array.isArray(params.actions) || params.actions.length === 0) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'actions must be a non-empty array.');
+    }
+    if (params.actions.length > MAX_BATCH_ACTIONS) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, `actions must contain ${MAX_BATCH_ACTIONS} or fewer items.`);
+    }
+    if (params.stopOnError !== undefined && typeof params.stopOnError !== 'boolean') {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'stopOnError must be a boolean.');
+    }
+
+    const actions = [];
+    const childActions = [];
+    for (let index = 0; index < params.actions.length; index += 1) {
+      const action = params.actions[index];
+      if (!isPlainObject(action)) {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, 'Batch action must be an object.', {
+          actionIndex: index
+        });
+      }
+      for (const field of Object.keys(action)) {
+        if (!BATCH_ACTION_FIELDS.has(field)) {
+          return guardError(ERROR_CODES.INVALID_SCHEMA, `Batch action does not accept field: ${field}.`, {
+            actionIndex: index,
+            field
+          });
+        }
+      }
+
+      const actionName = typeof action.action === 'string' ? action.action.trim() : '';
+      const actionKind = BATCH_ACTION_KINDS[actionName];
+      if (!actionName || !actionKind) {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, 'Batch action is not supported.', {
+          actionIndex: index,
+          action: actionName || null
+        });
+      }
+
+      const commandAction = { action: actionName };
+      for (const [field, value] of Object.entries(action)) {
+        const fieldValidation = this.validateBatchActionField(field, value, index);
+        if (!fieldValidation.ok) {
+          return fieldValidation;
+        }
+        if (field !== 'action') {
+          commandAction[field] = value;
+        }
+      }
+
+      const requiredFields = BATCH_ACTION_REQUIRED_FIELDS[actionName] || [];
+      for (const field of requiredFields) {
+        if (commandAction[field] === undefined) {
+          return guardError(ERROR_CODES.INVALID_SCHEMA, `Batch action ${actionName} requires field: ${field}.`, {
+            actionIndex: index,
+            field
+          });
+        }
+      }
+
+      actions.push(commandAction);
+      childActions.push({
+        index,
+        action: actionName,
+        actionKind
+      });
+    }
+
+    return guardOk({
+      origin,
+      actions,
+      childActions,
+      commandParams: {
+        origin,
+        actions,
+        ...(params.stopOnError === undefined ? {} : { stopOnError: params.stopOnError })
+      }
+    });
+  }
+
   validateUploadCommandParams(params = {}, origin) {
     const targetHandle = params.target && typeof params.target.handle === 'string'
       ? params.target.handle.trim()
@@ -1341,15 +1885,31 @@ class SessionManager {
       return rpcError(id, target.error);
     }
     const origin = prepareCart ? prepareCart.origin : (target ? target.origin : originFromParams(params));
+    const batch = method === 'page.batch'
+      ? this.validateBatchCommandParams(params, origin)
+      : null;
+    if (batch && !batch.ok) {
+      return rpcError(id, batch.error);
+    }
     const readiness = assertReadyForRealSiteAction(this.readinessStateForOrigin(origin));
 
     if (!readiness.ok) {
       return rpcError(id, readiness.error);
     }
 
-    const boundedFullAuto = this.enforceBoundedFullAuto(method, origin);
+    const boundedFullAuto = batch
+      ? this.enforceBoundedFullAutoBatch(batch.childActions, origin)
+      : this.enforceBoundedFullAuto(method, origin);
     if (!boundedFullAuto.ok) {
       return rpcError(id, boundedFullAuto.error);
+    }
+
+    const warmCache = this.warmCacheHit(method, params, origin);
+    if (warmCache) {
+      if (!warmCache.ok) {
+        return rpcError(id, warmCache.error);
+      }
+      return rpcOk(id, warmCache.result);
     }
 
     if (method === 'page.uploadFile') {
@@ -1374,6 +1934,9 @@ class SessionManager {
           files: upload.files
         }, extensionResponse.error));
       }
+      if (shouldInvalidateWarmSession(method)) {
+        this.clearWarmSessionCache(method);
+      }
       return rpcOk(id, {
         ...extensionResponse.result,
         assetValidation: upload.assetValidation
@@ -1384,6 +1947,9 @@ class SessionManager {
       const extensionResponse = await this.enqueueExtensionCommand(method, prepareCart.commandParams);
       if (!extensionResponse.ok) {
         return rpcError(id, this.attachApprovalRequest(method, prepareCart.commandParams, extensionResponse.error));
+      }
+      if (shouldInvalidateWarmSession(method)) {
+        this.clearWarmSessionCache(method);
       }
       return rpcOk(id, {
         ...extensionResponse.result,
@@ -1397,6 +1963,17 @@ class SessionManager {
       });
     }
 
+    if (method === 'page.batch') {
+      const extensionResponse = await this.enqueueExtensionCommand(method, batch.commandParams);
+      if (!extensionResponse.ok) {
+        return rpcError(id, this.attachApprovalRequest(method, batch.commandParams, extensionResponse.error));
+      }
+      if (shouldInvalidateWarmSession(method, batch.childActions)) {
+        this.clearWarmSessionCache(method);
+      }
+      return rpcOk(id, extensionResponse.result);
+    }
+
     const extensionMethod = method === 'page.visualAnalyze' ? 'page.visualObserve' : method;
     const extensionResponse = await this.enqueueExtensionCommand(extensionMethod, {
       ...params,
@@ -1405,6 +1982,9 @@ class SessionManager {
     });
     if (!extensionResponse.ok) {
       return rpcError(id, this.attachApprovalRequest(method, { ...params, origin }, extensionResponse.error));
+    }
+    if (shouldInvalidateWarmSession(method)) {
+      this.clearWarmSessionCache(method);
     }
     if (method === 'page.visualObserve' || method === 'page.visualAnalyze') {
       const materialized = this.materializeVisualObservation(extensionResponse.result, origin, {

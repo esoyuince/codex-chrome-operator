@@ -1,11 +1,16 @@
 'use strict';
 
-importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js', 'cartWorkflow.js', 'debuggerActions.js');
+importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js', 'cartWorkflow.js', 'debuggerActions.js', 'pageReader.js');
 
 const NATIVE_HOST = 'com.codex.chrome_operator';
 const BLOCKED_ORIGINS_KEY = 'blockedOrigins';
 const NATIVE_RECONNECT_ALARM = 'operator.nativeReconnect';
 const NATIVE_RECONNECT_PERIOD_MINUTES = 0.5;
+const WARM_SESSION_ALARM = 'operator.warmSession';
+const WARM_SESSION_PERIOD_MINUTES = 0.5;
+const WARM_SESSION_MIN_INTERVAL_MS = 1500;
+const WARM_SESSION_READ_MAX_CHARS = 6000;
+const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 const FATAL_NATIVE_ERROR_CODES = new Set([
   'EXTENSION_ID_MISMATCH',
   'PROTOCOL_VERSION_MISMATCH',
@@ -17,7 +22,7 @@ const {
   permissionPatternsToOrigins
 } = globalThis.CodexPermissionOrigins;
 const {
-  captureVisibleTabWithRetry
+  captureVisibleTabWithBudget
 } = globalThis.CodexVisualCapture;
 const {
   runDebuggerAction
@@ -27,6 +32,8 @@ let nativePort = null;
 let lastNativeError = null;
 let connectionState = 'DISCONNECTED';
 let suppressNextNativeReconnect = false;
+let warmSessionInFlight = false;
+let lastWarmSessionAt = 0;
 
 function requestId(prefix = 'ext') {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -45,15 +52,18 @@ async function buildHello() {
     protocolVersion: '1.0',
     extensionId: chrome.runtime.id,
     extensionVersion: chrome.runtime.getManifest().version,
-    bridgeVersion: '0.2.5',
+    bridgeVersion: '0.2.6',
     sessionBootstrapId: requestId('boot'),
     ...getProfileBinding(),
     capabilities: [
       'observe.v1',
+      'readPage.v1',
       'visualObserve.v1',
       'visualAnalyze.v1',
       'screenshots.v1',
       'actions.basic.v1',
+      'batch.v1',
+      'warmSession.v1',
       'fileUpload.v1',
       'cartPreparation.v1',
       'guarded.v1',
@@ -104,6 +114,49 @@ async function clearNativeReconnect() {
     return;
   }
   await chrome.alarms.clear(NATIVE_RECONNECT_ALARM);
+}
+
+async function hasOffscreenDocument() {
+  if (!chrome.offscreen) {
+    return false;
+  }
+  if (typeof chrome.offscreen.hasDocument === 'function') {
+    return chrome.offscreen.hasDocument();
+  }
+  if (chrome.runtime.getContexts) {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ['OFFSCREEN_DOCUMENT'],
+      documentUrls: [chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH)]
+    });
+    return contexts.length > 0;
+  }
+  return false;
+}
+
+async function ensureOffscreenDocument() {
+  if (!chrome.offscreen || typeof chrome.offscreen.createDocument !== 'function') {
+    return false;
+  }
+  if (await hasOffscreenDocument()) {
+    return true;
+  }
+  await chrome.offscreen.createDocument({
+    url: OFFSCREEN_DOCUMENT_PATH,
+    reasons: ['WORKERS'],
+    justification: 'Keep the local Codex operator session warm for active-tab observation.'
+  });
+  return true;
+}
+
+async function scheduleWarmSession() {
+  await ensureOffscreenDocument().catch(() => false);
+  if (!chrome.alarms || !chrome.alarms.create) {
+    return;
+  }
+  await chrome.alarms.create(WARM_SESSION_ALARM, {
+    delayInMinutes: WARM_SESSION_PERIOD_MINUTES,
+    periodInMinutes: WARM_SESSION_PERIOD_MINUTES
+  });
 }
 
 function normalizeBlockedPattern(pattern) {
@@ -282,6 +335,8 @@ async function connectNative({ refreshHello = false, retryOnFailure = false } = 
     await syncBlockedOrigins();
     connectionState = 'CONNECTED';
     await clearNativeReconnect();
+    await scheduleWarmSession();
+    warmActiveSession({ reason: 'native-connected' }).catch(() => {});
     await chrome.storage.local.set({ connectionState, lastNativeError: null });
   } catch (error) {
     lastNativeError = error.message;
@@ -403,7 +458,7 @@ async function syncPermissionsAfterChange() {
 async function ensureContentScript(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ['actionPolicy.js', 'gateDetector.js', 'pageHandles.js', 'pageWait.js', 'fileUpload.js', 'cartWorkflow.js', 'contentScript.js']
+    files: ['actionPolicy.js', 'gateDetector.js', 'pageHandles.js', 'pageWait.js', 'fileUpload.js', 'cartWorkflow.js', 'pageReader.js', 'contentScript.js']
   });
 }
 
@@ -464,6 +519,123 @@ async function reportActiveTab() {
   postNativeRpcNoThrow('extension.activeTabUpdated', {
     activeTab: await activeTabInfo()
   });
+}
+
+function isWarmableTab(tab) {
+  if (!tab || !tab.id || !tab.url || tab.status === 'loading' || isExtensionPageTab(tab)) {
+    return false;
+  }
+  try {
+    const url = new URL(tab.url);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function batchResultByAction(response, actionName) {
+  const results = response &&
+    response.result &&
+    Array.isArray(response.result.results)
+    ? response.result.results
+    : [];
+  const item = results.find((entry) => (
+    entry &&
+    entry.ok &&
+    entry.result &&
+    entry.result.action === actionName
+  ));
+  return item ? item.result : null;
+}
+
+async function postWarmSessionFailure(tab, reason, error) {
+  if (!nativePort || !tab) {
+    return;
+  }
+  postNativeRpcNoThrow('extension.activeTabWarmup', {
+    activeTab: tabInfo(tab),
+    warmup: {
+      ok: false,
+      source: 'content.batch',
+      reason,
+      error: error ? {
+        code: error.code || 'WARM_SESSION_FAILED',
+        message: error.message || String(error)
+      } : null
+    }
+  });
+}
+
+async function warmActiveSession({ reason = 'manual' } = {}) {
+  if (!nativePort) {
+    return null;
+  }
+  const now = Date.now();
+  if (warmSessionInFlight || now - lastWarmSessionAt < WARM_SESSION_MIN_INTERVAL_MS) {
+    return null;
+  }
+
+  const tab = await activeTabInfo();
+  if (!isWarmableTab(tab)) {
+    return null;
+  }
+
+  warmSessionInFlight = true;
+  lastWarmSessionAt = now;
+  try {
+    const origin = new URL(tab.url).origin;
+    const blocked = await blockedOriginMatch(origin);
+    if (blocked) {
+      await postWarmSessionFailure(tab, 'blocked-origin', {
+        code: 'SITE_BLOCKED_BY_USER_SETTINGS',
+        message: 'Origin is blocked by user extension settings.'
+      });
+      return null;
+    }
+
+    await ensureContentScript(tab.id);
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      type: 'content.batch',
+      origin,
+      stopOnError: false,
+      actions: [{
+        action: 'observe'
+      }, {
+        action: 'readPage',
+        filter: 'interactive',
+        maxChars: WARM_SESSION_READ_MAX_CHARS
+      }]
+    });
+    if (!response || !response.ok) {
+      await postWarmSessionFailure(tab, 'content-batch-failed', response && response.error);
+      return null;
+    }
+
+    const observation = batchResultByAction(response, 'observe');
+    const readPage = batchResultByAction(response, 'readPage');
+    postNativeRpcNoThrow('extension.activeTabWarmup', {
+      activeTab: tabInfo(tab),
+      reason,
+      warmup: {
+        ok: true,
+        source: 'content.batch',
+        readPageFilter: 'interactive',
+        observation,
+        readPage
+      }
+    });
+    return { observation, readPage };
+  } catch (error) {
+    await postWarmSessionFailure(tab, 'exception', error);
+    return null;
+  } finally {
+    warmSessionInFlight = false;
+  }
+}
+
+async function reportAndWarmActiveTab(reason) {
+  await reportActiveTab();
+  await warmActiveSession({ reason });
 }
 
 async function requireActiveTabForOrigin(origin) {
@@ -575,17 +747,39 @@ async function handleOperatorCommand(command) {
       return { ok: true, result: observation };
     }
 
+    if (command.method === 'page.readPage') {
+      return chrome.tabs.sendMessage(ready.tab.id, {
+        type: 'content.readPage',
+        filter: params.filter,
+        depth: params.depth,
+        maxChars: params.maxChars,
+        refId: params.refId
+      });
+    }
+
+    if (command.method === 'page.batch') {
+      return chrome.tabs.sendMessage(ready.tab.id, {
+        type: 'content.batch',
+        origin: params.origin,
+        stopOnError: params.stopOnError,
+        actions: params.actions
+      });
+    }
+
     if (command.method === 'page.visualObserve') {
       const observation = await chrome.tabs.sendMessage(ready.tab.id, { type: 'content.observe' });
       const policyError = visualPolicyErrorForObservation(observation);
       if (policyError) {
         return { ok: false, error: policyError };
       }
-      const dataUrl = await captureVisibleTabWithRetry({
+      const dataUrl = await captureVisibleTabWithBudget({
         captureVisibleTab: (windowId, options) => chrome.tabs.captureVisibleTab(windowId, options),
         windowId: ready.tab.windowId,
-        options: { format: 'png' }
+        format: params.format,
+        quality: params.quality,
+        maxBytes: params.maxBytes
       });
+      const mimeType = dataUrl.startsWith('data:image/jpeg;') ? 'image/jpeg' : 'image/png';
       return {
         ok: true,
         result: {
@@ -595,7 +789,7 @@ async function handleOperatorCommand(command) {
             screenshotBacked: true
           },
           screenshot: {
-            mimeType: 'image/png',
+            mimeType,
             dataUrl,
             bytesApprox: estimateDataUrlBytes(dataUrl)
           }
@@ -661,6 +855,7 @@ async function handleOperatorCommand(command) {
       action,
       params: {
         handle: params.handle,
+        target: preflight.result && preflight.result.target,
         text: params.text,
         value: params.value,
         checked: params.checked,
@@ -746,6 +941,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message && message.type === 'operator.offscreenHeartbeat') {
+      if (!nativePort) {
+        wakeNativeBridge();
+      } else {
+        reportAndWarmActiveTab('offscreen-heartbeat').catch(() => {});
+      }
+      sendResponse({ ok: true });
+      return;
+    }
+
     if (message && message.type === 'operator.observeActiveTab') {
       const tab = await activeTabInfo();
       if (!tab || !tab.id || !tab.url) {
@@ -792,17 +997,26 @@ function wakeNativeBridge() {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ connectionState: 'DISCONNECTED' });
   configureSidePanelBehavior();
+  scheduleWarmSession().catch(() => {});
   wakeNativeBridge();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   configureSidePanelBehavior();
+  scheduleWarmSession().catch(() => {});
   wakeNativeBridge();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm && alarm.name === NATIVE_RECONNECT_ALARM) {
     wakeNativeBridge();
+  }
+  if (alarm && alarm.name === WARM_SESSION_ALARM) {
+    if (!nativePort) {
+      wakeNativeBridge();
+      return;
+    }
+    reportAndWarmActiveTab('warm-session-alarm').catch(() => {});
   }
 });
 
@@ -816,10 +1030,14 @@ chrome.action.onClicked.addListener((tab) => {
 chrome.permissions.onAdded.addListener(syncPermissionsAfterChange);
 chrome.permissions.onRemoved.addListener(syncPermissionsAfterChange);
 chrome.tabs.onActivated.addListener(() => {
-  reportActiveTab();
+  reportAndWarmActiveTab('tab-activated').catch(() => {});
 });
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status || changeInfo.url || changeInfo.title) {
+    if (changeInfo.status === 'complete' || changeInfo.url) {
+      reportAndWarmActiveTab('tab-updated').catch(() => {});
+      return;
+    }
     reportActiveTab();
   }
 });

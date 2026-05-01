@@ -1,10 +1,28 @@
 (function initPageHandles(root) {
   'use strict';
 
+  const MAX_HANDLE_DESCRIPTORS = 800;
+  const existingDescriptors = root.CodexPageHandles &&
+    root.CodexPageHandles.__handleDescriptors &&
+    typeof root.CodexPageHandles.__handleDescriptors.get === 'function'
+    ? root.CodexPageHandles.__handleDescriptors
+    : null;
+  const handleDescriptors = existingDescriptors || new Map();
+
   function attr(element, name) {
     return element && typeof element.getAttribute === 'function'
       ? element.getAttribute(name) || ''
       : '';
+  }
+
+  function contextUrl(context) {
+    return context && context.location ? context.location.href || '' : '';
+  }
+
+  function normalizedHref(element) {
+    return element && typeof element.href === 'string' && element.href
+      ? element.href
+      : attr(element, 'href');
   }
 
   function hashText(value) {
@@ -25,7 +43,10 @@
       attr(element, 'role'),
       attr(element, 'data-risk'),
       attr(element, 'aria-label'),
-      attr(element, 'placeholder')
+      attr(element, 'placeholder'),
+      attr(element, 'title'),
+      normalizedHref(element),
+      attr(element, 'data-product-id')
     ].join('|');
   }
 
@@ -39,16 +60,42 @@
     return hashText([location, title, viewport, fingerprints].join('\n'));
   }
 
+  function rememberDescriptor(descriptor) {
+    handleDescriptors.set(descriptor.handle, descriptor);
+    if (handleDescriptors.size <= MAX_HANDLE_DESCRIPTORS) {
+      return;
+    }
+    const overflow = handleDescriptors.size - MAX_HANDLE_DESCRIPTORS;
+    const keys = handleDescriptors.keys();
+    for (let index = 0; index < overflow; index += 1) {
+      const next = keys.next();
+      if (next.done) {
+        break;
+      }
+      handleDescriptors.delete(next.value);
+    }
+  }
+
   function describeElements(elements, context) {
     const pageStateId = buildPageStateId(elements, context);
     return {
       pageStateId,
-      items: elements.map((element, index) => ({
-        element,
-        index,
-        pageStateId,
-        handle: `el_${pageStateId}_${index}`
-      }))
+      items: elements.map((element, index) => {
+        const handle = `el_${pageStateId}_${index}`;
+        rememberDescriptor({
+          handle,
+          index,
+          pageStateId,
+          url: contextUrl(context),
+          fingerprint: elementFingerprint(element)
+        });
+        return {
+          element,
+          index,
+          pageStateId,
+          handle
+        };
+      })
     };
   }
 
@@ -62,6 +109,49 @@
         ...extra
       }
     };
+  }
+
+  function recoverStaleHandle({ handle, elements, context, handlePageStateId, currentPageStateId }) {
+    const descriptor = handleDescriptors.get(handle);
+    if (!descriptor || descriptor.pageStateId !== handlePageStateId) {
+      return null;
+    }
+    if (descriptor.url && descriptor.url !== contextUrl(context)) {
+      return null;
+    }
+
+    const matches = [];
+    for (let index = 0; index < elements.length; index += 1) {
+      if (elementFingerprint(elements[index]) === descriptor.fingerprint) {
+        matches.push({ element: elements[index], index });
+      }
+    }
+
+    if (matches.length === 1) {
+      return {
+        ok: true,
+        element: matches[0].element,
+        pageStateId: currentPageStateId,
+        previousPageStateId: handlePageStateId,
+        index: matches[0].index,
+        previousIndex: descriptor.index,
+        recovered: true,
+        recovery: {
+          strategy: 'stable-fingerprint',
+          reason: 'PAGE_STATE_CHANGED'
+        }
+      };
+    }
+
+    if (matches.length > 1) {
+      return staleHandle('RECOVERY_NOT_UNIQUE', {
+        handlePageStateId,
+        currentPageStateId,
+        matchCount: matches.length
+      });
+    }
+
+    return null;
   }
 
   function resolveVersionedHandle({ handle, elements, context }) {
@@ -79,6 +169,16 @@
     const index = Number(match[2]);
     const currentPageStateId = buildPageStateId(elements, context);
     if (handlePageStateId !== currentPageStateId) {
+      const recovered = recoverStaleHandle({
+        handle,
+        elements,
+        context,
+        handlePageStateId,
+        currentPageStateId
+      });
+      if (recovered) {
+        return recovered;
+      }
       return staleHandle('PAGE_STATE_CHANGED', {
         handlePageStateId,
         currentPageStateId
@@ -104,7 +204,8 @@
   const api = {
     buildPageStateId,
     describeElements,
-    resolveVersionedHandle
+    resolveVersionedHandle,
+    __handleDescriptors: handleDescriptors
   };
 
   if (typeof module !== 'undefined' && module.exports) {

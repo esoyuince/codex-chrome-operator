@@ -1,8 +1,8 @@
 {
   "adapterProtocolVersion": "1.0",
-  "toolSchemaVersion": "2026-04-29.m1",
-  "toolDefinitionsHash": "9796b6d440c927078aa051ddebe6c371c313532ef94d600fc0f9cac2b54858d2",
-  "toolCount": 26,
+  "toolSchemaVersion": "2026-05-01.m1",
+  "toolDefinitionsHash": "1bf61d08145ad19a6f93310ff39aec2977bb4ab6d85072faee273bae32579b64",
+  "toolCount": 28,
   "toolNames": [
     "codex_chrome_status",
     "codex_chrome_prepare_origin",
@@ -11,6 +11,8 @@
     "codex_chrome_profile_onboard",
     "codex_chrome_open_observe",
     "codex_chrome_observe",
+    "codex_chrome_read_page",
+    "codex_chrome_batch",
     "codex_chrome_visual_observe",
     "codex_chrome_visual_analyze",
     "codex_chrome_upload_file",
@@ -169,6 +171,124 @@
         },
         "required": [
           "origin"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_read_page",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "filter": {
+            "type": "string"
+          },
+          "depth": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxChars": {
+            "type": "number",
+            "minimum": 1
+          },
+          "refId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_batch",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "actions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "type": "string"
+                },
+                "handle": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "checked": {
+                  "type": "boolean"
+                },
+                "deltaX": {
+                  "type": "number"
+                },
+                "deltaY": {
+                  "type": "number"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "condition": {
+                  "type": "string"
+                },
+                "timeoutMs": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "pollIntervalMs": {
+                  "type": "number",
+                  "minimum": 1
+                },
+                "filter": {
+                  "type": "string"
+                },
+                "depth": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "maxChars": {
+                  "type": "number",
+                  "minimum": 1
+                },
+                "refId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            }
+          },
+          "stopOnError": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "origin",
+          "actions"
         ]
       },
       "outputContract": {

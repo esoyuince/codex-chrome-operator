@@ -95,10 +95,16 @@ function elementSummary(element, handle) {
   const dataRisk = element.getAttribute('data-risk') || null;
   const uploadInput = uploadInputForElement(element);
   const uploadRole = uploadRoleForElement(element);
+  const href = typeof element.href === 'string' && element.href
+    ? element.href
+    : element.getAttribute('href') || null;
+  const placeholder = element.getAttribute('placeholder') || null;
+  const title = element.getAttribute('title') || null;
   const label = element.getAttribute('aria-label') ||
+    title ||
     element.innerText ||
     element.value ||
-    element.getAttribute('placeholder') ||
+    placeholder ||
     element.getAttribute('name') ||
     '';
 
@@ -111,6 +117,9 @@ function elementSummary(element, handle) {
     type: element.getAttribute('type') || null,
     name: element.getAttribute('name') || null,
     id: element.id || null,
+    href,
+    placeholder,
+    title,
     dataRisk,
     data: dataAttributes(element),
     visualRole,
@@ -260,17 +269,129 @@ function collectObservation() {
   };
 }
 
-function resolveHandle(handle) {
-  const candidates = collectObservedElements();
+let lastReadableElements = [];
+
+function pageReaderContext() {
+  return {
+    rootElement: document.body,
+    document,
+    window,
+    location,
+    describeElements: (elements) => globalThis.CodexPageHandles.describeElements(elements, {
+      location,
+      document,
+      window
+    }),
+    resolveHandle: (handle, options = {}) => resolvePageReaderHandle(handle, options)
+  };
+}
+
+function pageReaderOptions(message = {}) {
+  return {
+    filter: message.filter,
+    depth: message.depth,
+    maxChars: message.maxChars,
+    refId: message.refId
+  };
+}
+
+function resolveVersionedHandleFromElements(handle, elements) {
   return globalThis.CodexPageHandles.resolveVersionedHandle({
     handle,
-    elements: candidates,
+    elements,
     context: {
       location,
       document,
       window
     }
   });
+}
+
+function resolveLastReadableHandle(handle) {
+  if (!lastReadableElements.length) {
+    return null;
+  }
+  return resolveVersionedHandleFromElements(handle, lastReadableElements);
+}
+
+function collectReadableElements(options = {}) {
+  if (
+    !globalThis.CodexPageReader ||
+    typeof globalThis.CodexPageReader.collectElements !== 'function'
+  ) {
+    return [];
+  }
+
+  let context = pageReaderContext();
+  if (options.refId) {
+    const resolved = resolvePageReaderHandle(options.refId, options);
+    if (!resolved || !resolved.ok || !resolved.element) {
+      return [];
+    }
+    context = {
+      ...context,
+      rootElement: resolved.element
+    };
+  }
+
+  return globalThis.CodexPageReader.collectElements(context, {
+    filter: options.filter || 'all',
+    depth: options.depth
+  }).map((entry) => entry.element);
+}
+
+function rememberReadableElements(options = {}) {
+  const elements = collectReadableElements(options);
+  if (elements.length > 0) {
+    lastReadableElements = elements;
+  }
+}
+
+function resolvePageReaderHandle(handle, options = {}) {
+  const remembered = resolveLastReadableHandle(handle);
+  if (remembered && remembered.ok) {
+    return remembered;
+  }
+
+  if (
+    globalThis.CodexPageReader &&
+    typeof globalThis.CodexPageReader.collectElements === 'function'
+  ) {
+    const entries = globalThis.CodexPageReader.collectElements(pageReaderContext(), {
+      filter: options.filter || 'all',
+      depth: options.depth
+    });
+    return resolveVersionedHandleFromElements(handle, entries.map((entry) => entry.element));
+  }
+  return resolveHandle(handle);
+}
+
+function readPage(message = {}) {
+  if (!globalThis.CodexPageReader || typeof globalThis.CodexPageReader.generatePageSnapshot !== 'function') {
+    return {
+      ok: false,
+      error: {
+        code: 'PAGE_READER_UNAVAILABLE',
+        message: 'Compact page reader is not loaded in this tab.'
+      }
+    };
+  }
+  const options = pageReaderOptions(message);
+  const response = globalThis.CodexPageReader.generatePageSnapshot(pageReaderContext(), options);
+  if (response && response.ok) {
+    rememberReadableElements(options);
+  }
+  return response;
+}
+
+function resolveHandle(handle) {
+  const remembered = resolveLastReadableHandle(handle);
+  if (remembered && remembered.ok) {
+    return remembered;
+  }
+
+  const candidates = collectObservedElements();
+  return resolveVersionedHandleFromElements(handle, candidates);
 }
 
 async function runAction(message) {
@@ -282,6 +403,11 @@ async function runAction(message) {
     : null;
   if (gateError) {
     return { ok: false, error: gateError };
+  }
+
+  if (message.action === 'scroll' && !message.handle) {
+    window.scrollBy(message.deltaX || 0, message.deltaY || 0);
+    return { ok: true, result: { action: 'scrolled', scrollX: window.scrollX, scrollY: window.scrollY } };
   }
 
   const resolved = resolveHandle(message.handle);
@@ -348,10 +474,153 @@ async function runAction(message) {
     element.focus();
     const event = new KeyboardEvent('keydown', { key: message.key || 'Enter', bubbles: true });
     element.dispatchEvent(event);
+    element.dispatchEvent(new KeyboardEvent('keyup', { key: event.key, bubbles: true }));
     return { ok: true, result: { action: 'key-pressed', key: event.key } };
   }
 
   return { ok: false, error: { code: 'UNKNOWN_ACTION' } };
+}
+
+async function waitForPageCondition(message) {
+  return globalThis.CodexPageWait.waitForCondition({
+    condition: message.condition,
+    timeoutMs: message.timeoutMs,
+    pollIntervalMs: message.pollIntervalMs,
+    context: {
+      window,
+      document,
+      location,
+      resolveHandle: (handle) => {
+        const resolved = resolveHandle(handle);
+        return resolved.ok ? resolved.element : null;
+      }
+    }
+  });
+}
+
+function batchActionName(action) {
+  const requested = action.action || action.type || action.method;
+  const methodMap = {
+    'page.readPage': 'readPage',
+    'content.readPage': 'readPage',
+    'page.observe': 'observe',
+    'content.observe': 'observe',
+    'page.waitFor': 'waitFor',
+    'content.waitFor': 'waitFor',
+    'page.click': 'click',
+    'page.type': 'type',
+    'page.fill': 'fill',
+    'page.clear': 'clear',
+    'page.focus': 'focus',
+    'page.select': 'select',
+    'page.check': 'check',
+    'page.scroll': 'scroll',
+    'page.pressKey': 'pressKey'
+  };
+  return methodMap[requested] || requested;
+}
+
+async function runBatchAction(action) {
+  const normalizedAction = batchActionName(action || {});
+
+  if (normalizedAction === 'readPage') {
+    const response = readPage(action);
+    if (!response.ok) {
+      return response;
+    }
+    return {
+      ok: true,
+      result: {
+        action: 'readPage',
+        ...response.result
+      }
+    };
+  }
+
+  if (normalizedAction === 'observe') {
+    return {
+      ok: true,
+      result: {
+        action: 'observe',
+        ...collectObservation()
+      }
+    };
+  }
+
+  if (normalizedAction === 'waitFor') {
+    return waitForPageCondition(action);
+  }
+
+  if ([
+    'click',
+    'type',
+    'fill',
+    'clear',
+    'focus',
+    'select',
+    'check',
+    'scroll',
+    'pressKey'
+  ].includes(normalizedAction)) {
+    return runAction({
+      ...action,
+      action: normalizedAction
+    });
+  }
+
+  return {
+    ok: false,
+    error: {
+      code: 'UNKNOWN_BATCH_ACTION',
+      message: `Unsupported batch action: ${normalizedAction || 'unknown'}`
+    }
+  };
+}
+
+async function runBatch(message = {}) {
+  const actions = Array.isArray(message.actions) ? message.actions : [];
+  if (!Array.isArray(message.actions)) {
+    return {
+      ok: false,
+      error: {
+        code: 'INVALID_SCHEMA',
+        message: 'content.batch requires an actions array.'
+      }
+    };
+  }
+
+  const stopOnError = message.stopOnError !== false;
+  const results = [];
+  let stoppedOnError = false;
+
+  for (const action of actions) {
+    let response;
+    try {
+      response = await runBatchAction(action || {});
+    } catch (error) {
+      response = {
+        ok: false,
+        error: {
+          code: 'BATCH_ACTION_FAILED',
+          message: error.message || String(error)
+        }
+      };
+    }
+    results.push(response);
+    if (stopOnError && (!response || response.ok === false)) {
+      stoppedOnError = true;
+      break;
+    }
+  }
+
+  return {
+    ok: true,
+    result: {
+      origin: location.origin,
+      results,
+      stoppedOnError
+    }
+  };
 }
 
 async function resolveActionTarget(message) {
@@ -387,26 +656,23 @@ async function resolveActionTarget(message) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
+    if (message && message.type === 'content.readPage') {
+      sendResponse(readPage(message));
+      return;
+    }
+
+    if (message && message.type === 'content.batch') {
+      sendResponse(await runBatch(message));
+      return;
+    }
+
     if (message && message.type === 'content.observe') {
       sendResponse(collectObservation());
       return;
     }
 
     if (message && message.type === 'content.waitFor') {
-      sendResponse(await globalThis.CodexPageWait.waitForCondition({
-        condition: message.condition,
-        timeoutMs: message.timeoutMs,
-        pollIntervalMs: message.pollIntervalMs,
-        context: {
-          window,
-          document,
-          location,
-          resolveHandle: (handle) => {
-            const resolved = resolveHandle(handle);
-            return resolved.ok ? resolved.element : null;
-          }
-        }
-      }));
+      sendResponse(await waitForPageCondition(message));
       return;
     }
 
