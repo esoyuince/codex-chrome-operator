@@ -15,7 +15,6 @@ const {
   profileOnboard,
   resolveCliSettings,
   waitForActiveTabUrl,
-  waitForProfileVerified,
   waitReady
 } = require('../scripts/operator-cli');
 
@@ -392,24 +391,14 @@ test('ensureStarted reports target readiness diagnostic for missing gates', asyn
 
   assert.equal(response.ok, true);
   assert.equal(response.result.readiness.ready, false);
-  assert.deepEqual(response.result.readiness.missing, ['profile', 'domainApproval', 'hostPermission']);
+  assert.deepEqual(response.result.readiness.missing, ['domainApproval']);
   assert.equal(response.result.diagnostic.code, 'READINESS_INCOMPLETE');
   assert.equal(response.result.diagnostic.origin, 'https://example.com');
   assert.deepEqual(
     response.result.diagnostic.nextActions.map((action) => action.kind),
-    ['profile', 'domainApproval', 'hostPermission']
+    ['domainApproval']
   );
-  assert.equal(
-    response.result.diagnostic.nextActions[0].command,
-    'node scripts/operator-cli.js profile-onboard'
-  );
-  assert.equal(response.result.diagnostic.nextActions[0].requiresUserGesture, true);
-  assert.ok(response.result.diagnostic.nextActions[1].command.includes('approve https://example.com'));
-  assert.equal(response.result.diagnostic.nextActions[2].requiresUserGesture, true);
-  assert.equal(
-    response.result.diagnostic.nextActions[2].url,
-    'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html?origin=https%3A%2F%2Fexample.com'
-  );
+  assert.ok(response.result.diagnostic.nextActions[0].command.includes('approve https://example.com'));
 });
 
 test('buildRpcRequest maps prepare-origin to operator.ensureStarted', () => {
@@ -488,7 +477,7 @@ test('buildRpcRequest maps cart-prepare to guarded page.prepareCart request', ()
   });
 });
 
-test('prepareOrigin approves domain and returns permission URL when host permission is missing', async () => {
+test('prepareOrigin approves domain and becomes ready without per-site host permission', async () => {
   const calls = [];
   const bootstrapUrl = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/bootstrap.html?session=boot';
   const response = await prepareOrigin({
@@ -518,7 +507,8 @@ test('prepareOrigin approves domain and returns permission URL when host permiss
             profileVerified: true,
             domainApproved: false,
             hostPermissionGranted: false,
-            missing: ['domainApproval', 'hostPermission']
+            siteBlocked: false,
+            missing: ['domainApproval']
           },
           diagnostic: {
             code: 'READINESS_INCOMPLETE'
@@ -542,11 +532,12 @@ test('prepareOrigin approves domain and returns permission URL when host permiss
           ok: true,
           result: {
             origin: request.params.origin,
-            ready: false,
+            ready: true,
             profileVerified: true,
             domainApproved: true,
             hostPermissionGranted: false,
-            missing: ['hostPermission']
+            siteBlocked: false,
+            missing: []
           }
         };
       }
@@ -562,10 +553,10 @@ test('prepareOrigin approves domain and returns permission URL when host permiss
   assert.equal(response.ok, true);
   assert.equal(response.result.origin, 'https://example.com');
   assert.equal(response.result.applied.domainApproval, true);
-  assert.equal(response.result.ready, false);
-  assert.equal(response.result.permissionUrl, 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html?origin=https%3A%2F%2Fexample.com');
-  assert.equal(response.result.requiresUserGesture, true);
-  assert.equal(response.result.nextAction.kind, 'hostPermission');
+  assert.equal(response.result.ready, true);
+  assert.equal(response.result.permissionUrl, null);
+  assert.equal(response.result.requiresUserGesture, false);
+  assert.equal(response.result.nextAction, null);
 });
 
 test('openObserve stops before navigation when readiness requires a user gesture', async () => {
@@ -594,11 +585,15 @@ test('openObserve stops before navigation when readiness requires a user gesture
           origin: 'https://example.com',
           ready: false,
           requiresUserGesture: true,
-          permissionUrl: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html?origin=https%3A%2F%2Fexample.com',
+          permissionUrl: null,
           diagnostic: {
             code: 'READINESS_INCOMPLETE',
-            missing: ['hostPermission']
-          }
+            missing: ['siteAllowed']
+          },
+          nextActions: [{
+            kind: 'blockedSiteSettings',
+            requiresUserGesture: true
+          }]
         }
       };
     },
@@ -621,7 +616,8 @@ test('openObserve stops before navigation when readiness requires a user gesture
   assert.equal(response.ok, false);
   assert.equal(response.error.code, 'READINESS_INCOMPLETE');
   assert.equal(response.error.blockedAt, 'prepare-origin');
-  assert.equal(response.error.permissionUrl, 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html?origin=https%3A%2F%2Fexample.com');
+  assert.equal(response.error.permissionUrl, null);
+  assert.equal(response.error.nextActions[0].kind, 'blockedSiteSettings');
 });
 
 test('openObserve navigates and observes after readiness is confirmed', async () => {
@@ -773,7 +769,7 @@ test('openObserve waits for navigation to settle before observing', async () => 
             ok: true,
             result: {
               activeTab: {
-                url: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/permissionRequest.html',
+                url: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/sidepanel.html',
                 origin: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop',
                 loadingState: 'complete'
               }
@@ -867,13 +863,15 @@ test('waitReady polls verifyReadiness until the origin is ready', async () => {
       profileVerified: true,
       domainApproved: true,
       hostPermissionGranted: false,
-      missing: ['hostPermission']
+      siteBlocked: true,
+      missing: ['siteAllowed']
     },
     {
       ready: true,
       profileVerified: true,
       domainApproved: true,
-      hostPermissionGranted: true,
+      hostPermissionGranted: false,
+      siteBlocked: false,
       missing: []
     }
   ];
@@ -943,15 +941,16 @@ test('waitReady timeout returns last readiness next actions', async () => {
         profileVerified: true,
         domainApproved: true,
         hostPermissionGranted: false,
-        missing: ['hostPermission']
+        siteBlocked: true,
+        missing: ['siteAllowed']
       }
     })
   });
 
   assert.equal(response.ok, false);
   assert.equal(response.error.code, 'READINESS_WAIT_TIMEOUT');
-  assert.deepEqual(response.error.lastReadiness.missing, ['hostPermission']);
-  assert.deepEqual(response.error.nextActions.map((action) => action.kind), ['hostPermission']);
+  assert.deepEqual(response.error.lastReadiness.missing, ['siteAllowed']);
+  assert.deepEqual(response.error.nextActions.map((action) => action.kind), ['blockedSiteSettings']);
   assert.equal(response.error.nextActions[0].requiresUserGesture, true);
 });
 
@@ -1319,13 +1318,13 @@ test('profileDoctor reports configured profile, active tab, and readiness in one
   ]);
   assert.equal(response.result.checks.daemon.ok, true);
   assert.equal(response.result.checks.configuredProfile.ok, true);
-  assert.equal(response.result.checks.profileVerified.ok, true);
+  assert.equal(response.result.checks.extensionConnected.ok, true);
   assert.equal(response.result.checks.activeTabOrigin.ok, true);
   assert.equal(response.result.checks.readiness.ok, true);
   assert.deepEqual(response.result.nextActions, []);
 });
 
-test('profileDoctor points an unconfigured profile to profile-onboard', async () => {
+test('profileDoctor does not block on an unconfigured profile', async () => {
   const response = await profileDoctor({
     settings: {
       baseUrl: 'http://127.0.0.1:19091',
@@ -1342,20 +1341,19 @@ test('profileDoctor points an unconfigured profile to profile-onboard', async ()
       return {
         ok: true,
         result: {
-          connectionState: 'EXTENSION_CONNECTED_SETUP_ONLY',
-          profileVerified: false,
-          profileBindingStatus: 'setup-unbound',
+          connectionState: 'EXTENSION_CONNECTED',
+          profileVerified: true,
+          profileBindingStatus: 'not-required',
           configuredProfile: null
         }
       };
     }
   });
 
-  assert.equal(response.ok, false);
+  assert.equal(response.ok, true);
   const profileActions = response.result.nextActions.filter((action) => action.kind === 'profile');
-  assert.equal(profileActions.length, 1);
-  assert.equal(profileActions[0].command, 'node scripts/operator-cli.js profile-onboard');
-  assert.equal(profileActions[0].requiresUserGesture, true);
+  assert.equal(profileActions.length, 0);
+  assert.equal(response.result.checks.extensionConnected.ok, true);
 });
 
 test('profileOnboard asks for an explicit profile when discovery finds multiple profiles', async () => {
@@ -1408,9 +1406,8 @@ test('profileOnboard asks for an explicit profile when discovery finds multiple 
   assert.match(response.error.nextActions[1].command, /Profile 1/);
 });
 
-test('profileOnboard binds the only discovered profile, launches setup, waits, and runs doctor', async () => {
+test('profileOnboard saves the only discovered profile and runs doctor without setup', async () => {
   const calls = [];
-  const setupUrl = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/profileSetup.html?profileBindingId=profbind_profile01&profileBindingVersion=1';
   const response = await profileOnboard({
     settings: {
       baseUrl: 'http://127.0.0.1:19091',
@@ -1449,10 +1446,7 @@ test('profileOnboard binds the only discovered profile, launches setup, waits, a
         result: {
           userDataDir: 'C:/Chrome/User Data',
           profileDirectory: 'Profile 1',
-          profileLabel: 'Play Console',
-          profileBindingId: 'profbind_profile01',
-          profileBindingVersion: 1,
-          setupUrl
+          profileLabel: 'Play Console'
         }
       };
     },
@@ -1463,22 +1457,6 @@ test('profileOnboard binds the only discovered profile, launches setup, waits, a
         launched: true,
         pid: 4321,
         bootstrapUrl
-      };
-    },
-    waitForProfileVerifiedFn: async ({ requestId }) => {
-      calls.push(`wait:${requestId}`);
-      return {
-        ok: true,
-        result: {
-          profileVerified: true,
-          profileBindingStatus: 'verified',
-          connectionState: 'EXTENSION_CONNECTED',
-          profileWait: {
-            attempted: true,
-            verified: true,
-            attempts: 1
-          }
-        }
       };
     },
     profileDoctorFn: async ({ request }) => {
@@ -1500,62 +1478,19 @@ test('profileOnboard binds the only discovered profile, launches setup, waits, a
   assert.deepEqual(calls, [
     'profile_onboard_2_discover_profiles:operator.profiles.discover',
     'profile_onboard_2_bind_profile:operator.profile.bind',
-    `launch:C:/Operator:${setupUrl}`,
-    'wait:profile_onboard_2',
     'profile_onboard_2_doctor:operator.status:doctor'
   ]);
   assert.equal(response.ok, true);
   assert.equal(response.result.selection.autoSelected, true);
   assert.equal(response.result.selectedProfile.profileDirectory, 'Profile 1');
-  assert.equal(response.result.bind.profileBindingId, 'profbind_profile01');
-  assert.equal(response.result.bootstrapLaunch.pid, 4321);
-  assert.equal(response.result.profileWait.profileVerified, true);
+  assert.equal(response.result.bind.profileBindingId, undefined);
+  assert.equal(response.result.setupUrl, null);
+  assert.equal(response.result.bootstrapLaunch.skippedReason, 'PROFILE_SELECTION_ONLY');
+  assert.equal(response.result.profileWait.skippedReason, 'PROFILE_SELECTION_ONLY');
   assert.equal(response.result.doctor.ok, true);
 });
 
-test('waitForProfileVerified polls profile verify until the binding is verified', async () => {
-  const calls = [];
-  const profileResponses = [
-    {
-      profileVerified: false,
-      profileBindingStatus: 'binding-pending',
-      connectionState: 'EXTENSION_CONNECTED_SETUP_ONLY'
-    },
-    {
-      profileVerified: true,
-      profileBindingStatus: 'verified',
-      connectionState: 'EXTENSION_CONNECTED'
-    }
-  ];
-  const response = await waitForProfileVerified({
-    settings: {
-      baseUrl: 'http://127.0.0.1:19091',
-      token: 'cli-token',
-      installDir: 'C:/Operator'
-    },
-    requestId: 'profile_onboard_3',
-    delayFn: async () => {},
-    sendRpcFn: async ({ request }) => {
-      calls.push(`${request.id}:${request.method}`);
-      return {
-        ok: true,
-        result: profileResponses.shift()
-      };
-    }
-  });
-
-  assert.deepEqual(calls, [
-    'profile_onboard_3_profile_verify_1:operator.profile.verify',
-    'profile_onboard_3_profile_verify_2:operator.profile.verify'
-  ]);
-  assert.equal(response.ok, true);
-  assert.equal(response.result.profileVerified, true);
-  assert.equal(response.result.profileWait.attempted, true);
-  assert.equal(response.result.profileWait.verified, true);
-  assert.equal(response.result.profileWait.attempts, 2);
-});
-
-test('profileDoctor gives next actions when profile is not verified and origin is not ready', async () => {
+test('profileDoctor gives next actions when the active tab and origin are not ready', async () => {
   const response = await profileDoctor({
     settings: {
       baseUrl: 'http://127.0.0.1:19091',
@@ -1574,15 +1509,13 @@ test('profileDoctor gives next actions when profile is not verified and origin i
         return {
           ok: true,
           result: {
-            connectionState: 'EXTENSION_CONNECTED_SETUP_ONLY',
-            profileVerified: false,
-            profileBindingStatus: 'rejected',
+            connectionState: 'EXTENSION_CONNECTED',
+            profileVerified: true,
+            profileBindingStatus: 'not-required',
             configuredProfile: {
               userDataDir: 'C:/Chrome/User Data',
               profileDirectory: 'Profile 1',
-              profileLabel: 'Play Console',
-              profileBindingId: 'profbind_expected',
-              profileBindingVersion: 1
+              profileLabel: 'Play Console'
             },
             activeTab: {
               url: 'https://other.example/app',
@@ -1592,10 +1525,7 @@ test('profileDoctor gives next actions when profile is not verified and origin i
             version: {
               lastMismatch: null
             },
-            lastError: {
-              code: 'PROFILE_BINDING_MISMATCH',
-              message: 'Profile binding id does not match configured profile.'
-            }
+            lastError: null
           }
         };
       }
@@ -1604,7 +1534,7 @@ test('profileDoctor gives next actions when profile is not verified and origin i
         result: {
           origin: 'https://example.com',
           ready: false,
-          profileVerified: false,
+          profileVerified: true,
           domainApproved: false,
           hostPermissionGranted: false
         }
@@ -1613,24 +1543,16 @@ test('profileDoctor gives next actions when profile is not verified and origin i
   });
 
   assert.equal(response.ok, false);
-  assert.equal(response.result.checks.profileVerified.ok, false);
+  assert.equal(response.result.checks.extensionConnected.ok, true);
   assert.equal(response.result.checks.activeTabOrigin.ok, false);
   assert.equal(response.result.checks.readiness.ok, false);
   assert.deepEqual(response.result.checks.readiness.details.missing, [
-    'profile',
-    'domainApproval',
-    'hostPermission'
+    'domainApproval'
   ]);
-  assert.ok(response.result.nextActions.some((action) => action.kind === 'profile'));
   const profileActions = response.result.nextActions.filter((action) => action.kind === 'profile');
-  assert.equal(profileActions.length, 1);
-  assert.equal(
-    profileActions[0].command,
-    'node scripts/operator-cli.js profile-onboard "C:/Chrome/User Data" "Profile 1" "Play Console"'
-  );
-  assert.equal(profileActions[0].requiresUserGesture, true);
+  assert.equal(profileActions.length, 0);
   assert.ok(response.result.nextActions.some((action) => action.kind === 'domainApproval'));
-  assert.ok(response.result.nextActions.some((action) => action.kind === 'hostPermission'));
+  assert.equal(response.result.nextActions.some((action) => action.kind === 'hostPermission'), false);
 });
 
 test('resolveCliSettings reads install config and token defaults', () => {

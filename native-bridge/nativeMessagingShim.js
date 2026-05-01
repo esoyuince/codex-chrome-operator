@@ -51,7 +51,9 @@ async function pollOnce(options, output = process.stdout) {
       id: `poll_${Date.now()}`,
       method: 'bridge.poll',
       params: {
-        bridgeInstanceId: options.bridgeInstanceId
+        bridgeInstanceId: options.bridgeInstanceId,
+        wait: true,
+        timeoutMs: options.pollTimeoutMs || 25000
       }
     }
   });
@@ -65,19 +67,29 @@ async function pollOnce(options, output = process.stdout) {
 
 function startPolling(options) {
   let busy = false;
+  let nextAttemptAt = 0;
+  let errorBackoffMs = 0;
   const interval = setInterval(async () => {
     if (busy) {
+      return;
+    }
+    if (Date.now() < nextAttemptAt) {
       return;
     }
     busy = true;
     try {
       await pollOnce(options);
+      errorBackoffMs = 0;
     } catch (error) {
       process.stderr.write(`${error.stack || error.message}\n`);
+      errorBackoffMs = errorBackoffMs
+        ? Math.min(errorBackoffMs * 2, options.maxErrorBackoffMs || 10000)
+        : (options.initialErrorBackoffMs || 1000);
+      nextAttemptAt = Date.now() + errorBackoffMs;
     } finally {
       busy = false;
     }
-  }, options.pollIntervalMs || 250);
+  }, options.pollIntervalMs || 50);
   return interval;
 }
 
@@ -90,7 +102,8 @@ async function runBridge(options = {}) {
     daemonUrl,
     token,
     bridgeInstanceId,
-    pollIntervalMs: options.pollIntervalMs
+    pollIntervalMs: options.pollIntervalMs,
+    pollTimeoutMs: options.pollTimeoutMs
   });
 
   process.stdin.on('data', async (chunk) => {

@@ -105,7 +105,7 @@ test('clean smoke restore removes state file when it did not previously exist', 
   assert.equal(fs.existsSync(statePath), false);
 });
 
-test('bindSmokeProfile binds the transient smoke profile before setup', () => {
+test('bindSmokeProfile configures the transient smoke profile without setup', () => {
   const calls = [];
   const result = bindSmokeProfile(
     {
@@ -120,9 +120,11 @@ test('bindSmokeProfile binds the transient smoke profile before setup', () => {
       return {
         ok: true,
         result: {
-          profileBindingId: 'profbind_smoke01',
-          profileBindingVersion: 1,
-          setupUrl: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/profileSetup.html?profileBindingId=profbind_smoke01&profileBindingVersion=1'
+          userDataDir: 'C:\\Operator\\clean-smoke-unit',
+          profileDirectory: 'Default',
+          profileLabel: 'Codex Clean Smoke',
+          profileBindingId: 'profileless',
+          profileBindingVersion: 1
         }
       };
     }
@@ -135,8 +137,9 @@ test('bindSmokeProfile binds the transient smoke profile before setup', () => {
       token: 'cli-token'
     }
   }]);
-  assert.equal(result.profileBindingId, 'profbind_smoke01');
-  assert.equal(result.setupUrl, 'chrome-extension://abcdefghijklmnopabcdefghijklmnop/profileSetup.html?profileBindingId=profbind_smoke01&profileBindingVersion=1');
+  assert.equal(result.profileBindingId, 'profileless');
+  assert.equal(result.profileDirectory, 'Default');
+  assert.equal(result.setupUrl, undefined);
 });
 
 test('clickElement can fall back to a DOM click for fixture-only controls', async () => {
@@ -273,9 +276,10 @@ test('extension wires upload and cart helpers into background and content script
   const contentScript = fs.readFileSync(path.join(__dirname, '..', 'extension', 'contentScript.js'), 'utf8');
 
   assertIncludesAll(background, [
-    "importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js', 'cartWorkflow.js')",
+    "importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js', 'cartWorkflow.js', 'debuggerActions.js')",
     "'fileUpload.v1'",
     "'cartPreparation.v1'",
+    "'actions.cdp.v1'",
     "'fileUpload.js'",
     "'cartWorkflow.js'",
     "'page.uploadFile'",

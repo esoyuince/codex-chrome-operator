@@ -6,8 +6,8 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main class="popup">
-    <header class="popup-header">
+  <main class="panel">
+    <header class="panel-header">
       <div>
         <h1>Codex Operator</h1>
         <p id="summary">Checking Chrome operator status...</p>
@@ -22,12 +22,6 @@
         <div id="native-error" class="detail">No native error reported.</div>
       </article>
 
-      <article class="status-card">
-        <div class="label">Profile binding</div>
-        <div id="profile-state" class="value">Checking...</div>
-        <div id="profile-detail" class="detail">Reading chrome.storage.local...</div>
-      </article>
-
       <article class="status-card wide">
         <div class="label">Active tab</div>
         <div id="active-tab-title" class="value">Checking...</div>
@@ -36,10 +30,19 @@
           <dd id="active-tab-origin">...</dd>
           <dt>Loading</dt>
           <dd id="active-tab-loading">...</dd>
-          <dt>Host access</dt>
-          <dd id="host-permission">...</dd>
+          <dt>Site access</dt>
+          <dd id="site-access">...</dd>
         </dl>
       </article>
+    </section>
+
+    <section class="blocked-sites" aria-label="Blocked site settings">
+      <div class="label">Blocked sites</div>
+      <textarea id="blocked-sites" rows="4" spellcheck="false" placeholder="bank.example&#10;*.internal.example&#10;https://sensitive.example"></textarea>
+      <div class="blocked-sites-footer">
+        <span id="blocked-sites-detail" class="detail">No blocked sites configured.</span>
+        <button id="save-blocked-sites" type="button" class="secondary">Save</button>
+      </div>
     </section>
 
     <section class="next-step" aria-live="polite">
@@ -49,10 +52,9 @@
 
     <div class="actions">
       <button id="connect" type="button">Connect</button>
-      <button id="grant-host" type="button" class="secondary" hidden>Grant host access</button>
       <button id="refresh" type="button" class="secondary">Refresh</button>
     </div>
   </main>
-  <script src="popup.js"></script>
+  <script src="sidepanel.js"></script>
 </body>
 </html>

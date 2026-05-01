@@ -30,17 +30,18 @@ const ERROR_CODES = Object.freeze({
 
   NO_ACTIVE_TAB: 'NO_ACTIVE_TAB',
   DOMAIN_NOT_APPROVED: 'DOMAIN_NOT_APPROVED',
+  SITE_BLOCKED_BY_USER_SETTINGS: 'SITE_BLOCKED_BY_USER_SETTINGS',
   HOST_PERMISSION_REQUIRED: 'HOST_PERMISSION_REQUIRED',
   HOST_PERMISSION_NOT_GRANTED: 'HOST_PERMISSION_NOT_GRANTED',
   HOST_PERMISSION_REQUEST_REQUIRED: 'HOST_PERMISSION_REQUEST_REQUIRED',
   HOST_PERMISSION_REVOKED: 'HOST_PERMISSION_REVOKED',
   ACTIVE_TAB_GRANT_UNAVAILABLE: 'ACTIVE_TAB_GRANT_UNAVAILABLE',
+  DEBUGGER_UNSUPPORTED_PAGE: 'DEBUGGER_UNSUPPORTED_PAGE',
+  DEBUGGER_ACTION_FAILED: 'DEBUGGER_ACTION_FAILED',
+  ACTION_PREFLIGHT_FAILED: 'ACTION_PREFLIGHT_FAILED',
   PROFILE_NOT_CONFIGURED: 'PROFILE_NOT_CONFIGURED',
   PROFILE_NOT_FOUND: 'PROFILE_NOT_FOUND',
   PROFILE_MISMATCH: 'PROFILE_MISMATCH',
-  PROFILE_BINDING_MISSING: 'PROFILE_BINDING_MISSING',
-  PROFILE_BINDING_VERSION_MISMATCH: 'PROFILE_BINDING_VERSION_MISMATCH',
-  PROFILE_BINDING_STALE: 'PROFILE_BINDING_STALE',
   PROFILE_EXTENSION_NOT_INSTALLED: 'PROFILE_EXTENSION_NOT_INSTALLED',
   PROFILE_HOST_PERMISSION_MISSING: 'PROFILE_HOST_PERMISSION_MISSING',
   PROFILE_LOGIN_STATE_UNVERIFIED: 'PROFILE_LOGIN_STATE_UNVERIFIED',
@@ -145,8 +146,6 @@ function validateHello(hello, options = {}) {
     'extensionVersion',
     'bridgeVersion',
     'sessionBootstrapId',
-    'profileBindingState',
-    'profileBindingSource',
     'capabilities'
   ];
 
@@ -161,88 +160,58 @@ function validateHello(hello, options = {}) {
   }
 
   if (options.expectedExtensionId && hello.extensionId !== options.expectedExtensionId) {
-    return fail(ERROR_CODES.EXTENSION_ID_MISMATCH, 'Extension id does not match configured extension.');
+    return fail(ERROR_CODES.EXTENSION_ID_MISMATCH, 'Extension id does not match configured extension.', {
+      expectedExtensionId: options.expectedExtensionId,
+      actualExtensionId: hello.extensionId
+    });
   }
 
   if (options.expectedProtocolVersion && hello.protocolVersion !== options.expectedProtocolVersion) {
-    return fail(ERROR_CODES.PROTOCOL_VERSION_MISMATCH, 'Protocol version does not match daemon.');
+    return fail(ERROR_CODES.PROTOCOL_VERSION_MISMATCH, 'Protocol version does not match daemon.', {
+      expectedProtocolVersion: options.expectedProtocolVersion,
+      actualProtocolVersion: hello.protocolVersion
+    });
   }
 
   if (options.expectedExtensionVersion && hello.extensionVersion !== options.expectedExtensionVersion) {
-    return fail(ERROR_CODES.EXTENSION_VERSION_MISMATCH, 'Extension version does not match daemon.');
+    return fail(ERROR_CODES.EXTENSION_VERSION_MISMATCH, 'Extension version does not match daemon.', {
+      expectedExtensionVersion: options.expectedExtensionVersion,
+      actualExtensionVersion: hello.extensionVersion
+    });
   }
 
   if (options.expectedBridgeVersion && hello.bridgeVersion !== options.expectedBridgeVersion) {
-    return fail(ERROR_CODES.BRIDGE_VERSION_MISMATCH, 'Bridge version does not match daemon.');
+    return fail(ERROR_CODES.BRIDGE_VERSION_MISMATCH, 'Bridge version does not match daemon.', {
+      expectedBridgeVersion: options.expectedBridgeVersion,
+      actualBridgeVersion: hello.bridgeVersion
+    });
   }
 
   if (!Array.isArray(hello.capabilities) || hello.capabilities.length === 0) {
     return fail(ERROR_CODES.INVALID_SCHEMA, 'HELLO capabilities must be a non-empty array.');
   }
 
-  if (hello.profileBindingSource !== 'chrome.storage.local') {
-    return fail(ERROR_CODES.INVALID_SCHEMA, 'profileBindingSource must be chrome.storage.local.');
+  const bindingState = hello.profileBindingState || 'not-required';
+  if (!['not-required', 'missing', 'dev-unbound', 'bound'].includes(bindingState)) {
+    return fail(ERROR_CODES.INVALID_SCHEMA, 'profileBindingState must be not-required, bound, missing, or dev-unbound.');
   }
 
-  if (hello.profileBindingState === 'missing') {
-    if (hasValue(hello.profileBindingId) || hasValue(hello.profileBindingVersion)) {
-      return fail(ERROR_CODES.INVALID_SCHEMA, 'Unbound setup HELLO must omit profile binding id and version.');
-    }
-    if (!options.allowUnboundSetup) {
-      return fail(ERROR_CODES.PROFILE_BINDING_MISSING, 'Profile binding is required for production work.');
-    }
-    return ok({ profileBindingStatus: 'setup-unbound' });
-  }
-
-  if (hello.profileBindingState === 'dev-unbound') {
-    if (hasValue(hello.profileBindingId) || hasValue(hello.profileBindingVersion)) {
-      return fail(ERROR_CODES.INVALID_SCHEMA, 'Dev-unbound HELLO must omit profile binding id and version.');
-    }
-    if (!options.allowDevUnbound) {
-      return fail(ERROR_CODES.PROFILE_BINDING_MISSING, 'Dev-unbound profile binding is disabled.');
-    }
-    return ok({ profileBindingStatus: 'dev-unbound' });
-  }
-
-  if (hello.profileBindingState !== 'bound') {
-    return fail(ERROR_CODES.INVALID_SCHEMA, 'profileBindingState must be bound, missing, or dev-unbound.');
-  }
-
-  if (!hasValue(hello.profileBindingId) || !hasValue(hello.profileBindingVersion)) {
-    return fail(ERROR_CODES.PROFILE_BINDING_MISSING, 'Bound HELLO requires profile binding id and version.');
-  }
-
-  if (
-    options.expectedProfileBindingId &&
-    hello.profileBindingId !== options.expectedProfileBindingId
-  ) {
-    return fail(ERROR_CODES.PROFILE_MISMATCH, 'Profile binding id does not match configured profile.');
-  }
-
-  if (options.expectedProfileBindingVersion !== undefined) {
-    if (hello.profileBindingVersion < options.expectedProfileBindingVersion) {
-      return fail(ERROR_CODES.PROFILE_BINDING_STALE, 'Profile binding version is stale.');
-    }
-    if (hello.profileBindingVersion !== options.expectedProfileBindingVersion) {
-      return fail(
-        ERROR_CODES.PROFILE_BINDING_VERSION_MISMATCH,
-        'Profile binding version does not match configured profile.'
-      );
-    }
-  }
-
-  return ok({ profileBindingStatus: 'verified' });
+  return ok({ profileBindingStatus: 'not-required' });
 }
 
 function assertReadyForRealSiteAction(state) {
-  if (!state || !state.profileVerified) {
-    return fail(ERROR_CODES.PROFILE_BINDING_MISSING, 'Profile binding must be verified first.');
-  }
   if (!state.domainApproved) {
     return fail(ERROR_CODES.DOMAIN_NOT_APPROVED, 'Domain approval is required before action.');
   }
-  if (!state.hostPermissionGranted) {
-    return fail(ERROR_CODES.HOST_PERMISSION_REQUIRED, 'Chrome host permission is required before action.');
+  if (state.siteBlocked) {
+    return fail(
+      ERROR_CODES.SITE_BLOCKED_BY_USER_SETTINGS,
+      'Origin is blocked by user extension settings.',
+      {
+        origin: state.origin || null,
+        blockedPattern: state.blockedPattern || null
+      }
+    );
   }
   return ok();
 }

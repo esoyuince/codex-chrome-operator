@@ -1,7 +1,7 @@
 {
   "adapterProtocolVersion": "1.0",
   "toolSchemaVersion": "2026-04-29.m1",
-  "toolDefinitionsHash": "aef0c07ef2e1b5f2f837c2ed4dfd4011b850d64be5aa4eb70a4d98ab1e9b419e",
+  "toolDefinitionsHash": "9796b6d440c927078aa051ddebe6c371c313532ef94d600fc0f9cac2b54858d2",
   "toolCount": 26,
   "toolNames": [
     "codex_chrome_status",

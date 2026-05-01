@@ -5,24 +5,20 @@ const POLICY_ERROR_CODES = new Set([
   'HOST_PERMISSION_NOT_GRANTED',
   'HOST_PERMISSION_REQUEST_REQUIRED',
   'DOMAIN_NOT_APPROVED',
+  'SITE_BLOCKED_BY_USER_SETTINGS',
   'PROFILE_NOT_CONFIGURED',
   'PROFILE_MISMATCH',
-  'PROFILE_BINDING_MISSING',
-  'PROFILE_BINDING_VERSION_MISMATCH',
-  'PROFILE_BINDING_STALE',
   'EXTENSION_DISCONNECTED',
   'EMERGENCY_STOPPED',
   'CHECKOUT_BLOCKED',
   'SITE_PROFILE_UNAVAILABLE',
+  'SITE_BLOCKED_BY_USER_SETTINGS',
   'BOUNDED_FULL_AUTO_ACTION_NOT_ALLOWED'
 ]);
 
 const PROFILE_ERROR_CODES = new Set([
   'PROFILE_NOT_CONFIGURED',
-  'PROFILE_MISMATCH',
-  'PROFILE_BINDING_MISSING',
-  'PROFILE_BINDING_VERSION_MISMATCH',
-  'PROFILE_BINDING_STALE'
+  'PROFILE_MISMATCH'
 ]);
 
 const STOP_ONLY_ERROR_CODES = new Set([
@@ -36,38 +32,21 @@ function originArguments(origin) {
 }
 
 function hostPermissionActions(error) {
-  const actions = [];
-  if (error.permissionUrl) {
-    actions.push({
-      kind: 'open-permission-page',
-      permissionUrl: error.permissionUrl,
-      requiresUserGesture: true
-    });
-  } else {
-    actions.push({
-      kind: 'prepare-origin',
-      origin: error.origin || null,
-      operatorCli: error.origin ? ['prepare-origin', error.origin] : null,
-      toolName: error.origin ? 'codex_chrome_prepare_origin' : null,
-      arguments: error.origin ? { origin: error.origin } : null,
-      requiresUserGesture: true
-    });
-  }
-  actions.push(
+  return [
     {
-      kind: 'wait-for-user-grant',
+      kind: 'reload-extension',
       origin: error.origin || null,
+      description: 'The installed extension is missing its required all-sites access. Reload or reinstall the packaged extension, then retry readiness.',
       requiresUserGesture: true
     },
     {
-      kind: 'retry-tool',
+      kind: 'retry-readiness',
       origin: error.origin || null,
       toolName: error.origin ? 'codex_chrome_readiness' : null,
       arguments: error.origin ? { origin: error.origin } : null,
       requiresFreshReadiness: true
     }
-  );
-  return actions;
+  ];
 }
 
 function profileActions(error) {
@@ -86,7 +65,7 @@ function profileActions(error) {
       toolName: 'codex_chrome_profile_onboard',
       arguments: {},
       operatorCli: ['profile-onboard'],
-      requiresUserGesture: true
+      requiresUserGesture: false
     }
   ];
 
@@ -117,6 +96,20 @@ function buildPolicyHints(error = {}) {
     'HOST_PERMISSION_REQUEST_REQUIRED'
   ].includes(error.code)) {
     nextActions = hostPermissionActions(error);
+  } else if (error.code === 'SITE_BLOCKED_BY_USER_SETTINGS') {
+    nextActions = [{
+      kind: 'edit-blocked-sites',
+      origin: error.origin || null,
+      blockedPattern: error.blockedPattern || null,
+      description: 'Remove the origin from the extension blocked sites list before retrying.',
+      requiresUserGesture: true
+    }, {
+      kind: 'retry-readiness',
+      origin: error.origin || null,
+      toolName: error.origin ? 'codex_chrome_readiness' : null,
+      arguments: error.origin ? { origin: error.origin } : null,
+      requiresFreshReadiness: true
+    }];
   } else if (error.code === 'DOMAIN_NOT_APPROVED') {
     nextActions = [{
       kind: 'approve-domain',
@@ -157,7 +150,7 @@ function buildPolicyHints(error = {}) {
     category: 'policy',
     policyCode: error.code,
     origin: error.origin || null,
-    permissionUrl: error.permissionUrl || null,
+    permissionUrl: null,
     nextActions
   };
 }

@@ -1,0 +1,21 @@
+node_modules/
+npm-debug.log*
+
+# Local install/runtime state
+CodexChromeOperator/
+config.json
+token.txt
+state.json
+
+# Operator runtime artifacts
+audit/
+screenshots/
+artifacts/
+test-results/
+playwright-report/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.tmp
+*.log

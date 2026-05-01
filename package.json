@@ -1,6 +1,6 @@
 {
   "name": "codex-chrome-operator",
-  "version": "0.2.0",
+  "version": "0.2.5",
   "private": true,
   "description": "Codex-first Chrome operator bridge for Windows Chrome.",
   "main": "operator-daemon/daemon.js",

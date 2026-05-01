@@ -81,8 +81,10 @@ test('extractCleanSmokeEvidence summarizes live browser proof without full daemo
     ok: true,
     extensionId: 'fgkcpjfdphcpihkpbkjnhcdijocihiod',
     origin: 'http://127.0.0.1:18180',
-    waitReadyAfterPermission: true,
-    blockedBeforeHostPermission: 'HOST_PERMISSION_REQUIRED',
+    prepareOriginReady: true,
+    prepareOriginRequiresUserGesture: false,
+    waitReadyAfterSettings: true,
+    blockedByUserSettings: 'SITE_BLOCKED_BY_USER_SETTINGS',
     openObserveTitle: 'Codex Operator Basic Fixture',
     visualScreenshotArtifactId: 'shot_1',
     visualScreenshotBytes: 2048,
@@ -98,8 +100,7 @@ test('extractCleanSmokeEvidence summarizes live browser proof without full daemo
     gateHandoffResume: 'Gate resumed',
     emergencyBlocked: 'EMERGENCY_STOPPED',
     emergencyCleared: true,
-    reconnectBlocked: 'EXTENSION_DISCONNECTED',
-    reconnectRecoveredTitle: 'Codex Operator Basic Fixture',
+    postEmergencyObservedTitle: 'Codex Operator Basic Fixture',
     boundedFullAutoStarted: true,
     boundedFullAutoActions: 4,
     boundedFullAutoStopped: true,
@@ -143,8 +144,10 @@ test('extractCleanSmokeEvidence summarizes live browser proof without full daemo
     origin: 'http://127.0.0.1:18180',
     profileVerified: true,
     connectionState: 'EXTENSION_CONNECTED',
-    hostPermissionReady: true,
-    blockedBeforeHostPermission: 'HOST_PERMISSION_REQUIRED',
+    prepareOriginReady: true,
+    prepareOriginRequiresUserGesture: false,
+    blockedByUserSettings: 'SITE_BLOCKED_BY_USER_SETTINGS',
+    settingsReady: true,
     openObserveTitle: 'Codex Operator Basic Fixture',
     visualScreenshotArtifactId: 'shot_1',
     visualScreenshotBytes: 2048,
@@ -160,8 +163,7 @@ test('extractCleanSmokeEvidence summarizes live browser proof without full daemo
     gateHandoffResume: 'Gate resumed',
     emergencyBlocked: 'EMERGENCY_STOPPED',
     emergencyCleared: true,
-    reconnectBlocked: 'EXTENSION_DISCONNECTED',
-    reconnectRecoveredTitle: 'Codex Operator Basic Fixture',
+    postEmergencyObservedTitle: 'Codex Operator Basic Fixture',
     boundedFullAutoStarted: true,
     boundedFullAutoActions: 4,
     boundedFullAutoStopped: true,
@@ -201,7 +203,7 @@ test('runReleaseCheck attaches clean smoke evidence when the smoke gate succeeds
         ? JSON.stringify({
           ok: true,
           origin: 'http://127.0.0.1:18180',
-          waitReadyAfterPermission: true,
+          waitReadyAfterSettings: true,
           finalStatus: {
             profileVerified: true,
             connectionState: 'EXTENSION_CONNECTED'
@@ -219,7 +221,7 @@ test('runReleaseCheck attaches clean smoke evidence when the smoke gate succeeds
     origin: 'http://127.0.0.1:18180',
     profileVerified: true,
     connectionState: 'EXTENSION_CONNECTED',
-    hostPermissionReady: true
+    settingsReady: true
   });
   assert.equal(report.checks[0].evidence, undefined);
 });

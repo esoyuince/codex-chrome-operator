@@ -1,6 +1,5 @@
 'use strict';
 
-const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -49,21 +48,7 @@ function discoverChromeProfiles({ userDataDir = defaultChromeUserDataDir() } = {
     .sort((left, right) => left.profileDirectory.localeCompare(right.profileDirectory));
 }
 
-function generateProfileBindingId() {
-  return `profbind_${crypto.randomBytes(16).toString('base64url')}`;
-}
-
-function buildProfileSetupUrl({ extensionId, profileBindingId, profileBindingVersion }) {
-  const params = new URLSearchParams({
-    profileBindingId,
-    profileBindingVersion: String(profileBindingVersion)
-  });
-  return `chrome-extension://${extensionId}/profileSetup.html?${params.toString()}`;
-}
-
 module.exports = {
-  buildProfileSetupUrl,
   defaultChromeUserDataDir,
-  discoverChromeProfiles,
-  generateProfileBindingId
+  discoverChromeProfiles
 };

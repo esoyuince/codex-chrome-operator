@@ -17,8 +17,96 @@ function emptyState() {
     version: 1,
     domainApprovals: {},
     hostPermissions: {},
+    blockedOrigins: [],
     configuredProfile: null
   };
+}
+
+function normalizeConfiguredProfile(profile) {
+  if (!profile || typeof profile !== 'object') {
+    return null;
+  }
+  return {
+    userDataDir: profile.userDataDir,
+    profileDirectory: profile.profileDirectory,
+    profileLabel: profile.profileLabel || null
+  };
+}
+
+function normalizeHostPermissions(hostPermissions) {
+  if (!hostPermissions || typeof hostPermissions !== 'object') {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(hostPermissions)
+      .map(([origin, permission]) => {
+        if (!origin || !permission || typeof permission !== 'object') {
+          return null;
+        }
+        const normalized = {
+          origin: permission.origin || origin,
+          grantedAt: permission.grantedAt || null
+        };
+        return [origin, normalized];
+      })
+      .filter(Boolean)
+  );
+}
+
+function normalizeBlockedPattern(pattern) {
+  if (typeof pattern !== 'string') {
+    return null;
+  }
+  const value = pattern.trim().toLowerCase();
+  if (!value) {
+    return null;
+  }
+  if (value.startsWith('*.') && value.length > 2) {
+    return value.replace(/\/+$/, '');
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      if (url.protocol === 'http:' || url.protocol === 'https:') {
+        return url.origin;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return value.replace(/\/+$/, '');
+}
+
+function blockedPatternMatchesOrigin(pattern, origin) {
+  if (!pattern || !origin) {
+    return false;
+  }
+  let url;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  const normalizedPattern = normalizeBlockedPattern(pattern);
+  if (!normalizedPattern) {
+    return false;
+  }
+  const originValue = url.origin.toLowerCase();
+  const hostname = url.hostname.toLowerCase();
+  const host = url.host.toLowerCase();
+
+  if (normalizedPattern.includes('://')) {
+    return originValue === normalizedPattern;
+  }
+  if (normalizedPattern.startsWith('*.')) {
+    const suffix = normalizedPattern.slice(2);
+    return hostname === suffix || hostname.endsWith(`.${suffix}`);
+  }
+  if (normalizedPattern.includes(':')) {
+    return host === normalizedPattern;
+  }
+  return hostname === normalizedPattern;
 }
 
 class OperatorStateStore {
@@ -36,8 +124,9 @@ class OperatorStateStore {
       ...emptyState(),
       ...parsed,
       domainApprovals: parsed.domainApprovals || {},
-      hostPermissions: parsed.hostPermissions || {},
-      configuredProfile: parsed.configuredProfile || null
+      hostPermissions: normalizeHostPermissions(parsed.hostPermissions),
+      blockedOrigins: Array.isArray(parsed.blockedOrigins) ? parsed.blockedOrigins : [],
+      configuredProfile: normalizeConfiguredProfile(parsed.configuredProfile)
     };
   }
 
@@ -100,7 +189,6 @@ class OperatorStateStore {
   grantHostPermission(origin, metadata = {}) {
     const permission = {
       origin,
-      profileBindingId: metadata.profileBindingId || null,
       grantedAt: metadata.grantedAt || new Date().toISOString()
     };
     this.state.hostPermissions[origin] = permission;
@@ -108,10 +196,10 @@ class OperatorStateStore {
     return permission;
   }
 
-  syncHostPermissions({ profileBindingId, origins, syncedAt = new Date().toISOString() }) {
+  syncHostPermissions({ origins, syncedAt = new Date().toISOString() }) {
     const originSet = new Set(origins);
-    for (const [origin, permission] of Object.entries(this.state.hostPermissions)) {
-      if (permission.profileBindingId === profileBindingId && !originSet.has(origin)) {
+    for (const origin of Object.keys(this.state.hostPermissions)) {
+      if (!originSet.has(origin)) {
         delete this.state.hostPermissions[origin];
       }
     }
@@ -120,18 +208,12 @@ class OperatorStateStore {
       const existing = this.state.hostPermissions[origin];
       this.state.hostPermissions[origin] = {
         origin,
-        profileBindingId,
-        grantedAt: existing && existing.profileBindingId === profileBindingId
-          ? existing.grantedAt
-          : syncedAt
+        grantedAt: existing ? existing.grantedAt : syncedAt
       };
     }
 
     this.save();
-    return Object.fromEntries(
-      Object.entries(this.state.hostPermissions)
-        .filter(([, permission]) => permission.profileBindingId === profileBindingId)
-    );
+    return this.listHostPermissions();
   }
 
   getHostPermission(origin) {
@@ -142,13 +224,35 @@ class OperatorStateStore {
     return { ...this.state.hostPermissions };
   }
 
+  setBlockedOrigins(patterns = []) {
+    const normalized = Array.isArray(patterns)
+      ? patterns
+        .map((pattern) => normalizeBlockedPattern(pattern))
+        .filter(Boolean)
+      : [];
+    this.state.blockedOrigins = [...new Set(normalized)].sort();
+    this.save();
+    return this.listBlockedOrigins();
+  }
+
+  listBlockedOrigins() {
+    return [...this.state.blockedOrigins].sort();
+  }
+
+  blockedOriginMatch(origin) {
+    const pattern = this.listBlockedOrigins().find((entry) => blockedPatternMatchesOrigin(entry, origin));
+    return pattern ? { origin, pattern } : null;
+  }
+
+  isOriginBlocked(origin) {
+    return Boolean(this.blockedOriginMatch(origin));
+  }
+
   setConfiguredProfile(profile) {
     this.state.configuredProfile = {
       userDataDir: profile.userDataDir,
       profileDirectory: profile.profileDirectory,
-      profileLabel: profile.profileLabel || null,
-      profileBindingId: profile.profileBindingId,
-      profileBindingVersion: profile.profileBindingVersion
+      profileLabel: profile.profileLabel || null
     };
     this.save();
     return this.state.configuredProfile;
@@ -161,5 +265,7 @@ class OperatorStateStore {
 
 module.exports = {
   OperatorStateStore,
-  defaultStatePath
+  defaultStatePath,
+  normalizeBlockedPattern,
+  blockedPatternMatchesOrigin
 };

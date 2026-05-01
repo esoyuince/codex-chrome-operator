@@ -16,13 +16,20 @@ test('extensionIdFromPublicKeyDer returns Chrome id alphabet', () => {
   assert.match(extensionId, /^[a-p]{32}$/);
 });
 
+test('checked-in extension manifest uses broad required host access instead of optional per-site grants', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'extension', 'manifest.json'), 'utf8'));
+
+  assert.deepEqual(manifest.host_permissions, ['<all_urls>']);
+  assert.equal(manifest.optional_host_permissions, undefined);
+});
+
 test('ensureExtensionKey writes a manifest key once and keeps id stable', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-extension-'));
   const manifestPath = path.join(dir, 'manifest.json');
   fs.writeFileSync(manifestPath, JSON.stringify({
     manifest_version: 3,
     name: 'Test Extension',
-    version: '0.2.0'
+    version: '0.2.5'
   }), 'utf8');
 
   const first = ensureExtensionKey({ manifestPath });
@@ -42,7 +49,7 @@ test('ensure-extension-key CLI can derive JSON without mutating the manifest', (
   fs.writeFileSync(manifestPath, JSON.stringify({
     manifest_version: 3,
     name: 'Test Extension',
-    version: '0.2.0'
+    version: '0.2.5'
   }), 'utf8');
   const seeded = ensureExtensionKey({ manifestPath });
   const seededKey = JSON.parse(fs.readFileSync(manifestPath, 'utf8')).key;
@@ -72,7 +79,7 @@ test('ensure-extension-key CLI --no-write fails instead of creating a missing ke
   fs.writeFileSync(manifestPath, JSON.stringify({
     manifest_version: 3,
     name: 'Test Extension',
-    version: '0.2.0'
+    version: '0.2.5'
   }), 'utf8');
 
   const result = childProcess.spawnSync(process.execPath, [

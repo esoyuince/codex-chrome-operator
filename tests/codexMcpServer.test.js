@@ -289,7 +289,7 @@ test('MCP handler enriches approval, gate, policy, and manual handoff tool error
         code: 'HOST_PERMISSION_REQUIRED',
         message: 'Chrome host permission is required before action.',
         origin: 'https://example.com',
-        permissionUrl: 'chrome-extension://id/permissionRequest.html?origin=https%3A%2F%2Fexample.com'
+        permissionUrl: 'chrome-extension://id/obsolete-host-permission.html?origin=https%3A%2F%2Fexample.com'
       }
     },
     {
@@ -363,7 +363,8 @@ test('MCP handler enriches approval, gate, policy, and manual handoff tool error
     }
   });
   assert.equal(policy.result.structuredContent.adapterHints.category, 'policy');
-  assert.equal(policy.result.structuredContent.adapterHints.permissionUrl, 'chrome-extension://id/permissionRequest.html?origin=https%3A%2F%2Fexample.com');
+  assert.equal(policy.result.structuredContent.adapterHints.permissionUrl, null);
+  assert.equal(policy.result.structuredContent.adapterHints.nextActions[0].kind, 'reload-extension');
 
   const manual = await handleMessage({
     jsonrpc: '2.0',

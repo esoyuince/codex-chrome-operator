@@ -42,19 +42,19 @@ button.secondary {
   color: #17202a;
 }
 
-.popup {
+.panel {
   display: grid;
   gap: 12px;
 }
 
-.popup-header {
+.panel-header {
   align-items: flex-start;
   display: flex;
   gap: 12px;
   justify-content: space-between;
 }
 
-.popup-header p {
+.panel-header p {
   color: #566573;
   font-size: 12px;
   line-height: 1.35;
@@ -93,6 +93,7 @@ button.secondary {
 }
 
 .status-card,
+.blocked-sites,
 .next-step {
   background: #ffffff;
   border: 1px solid #d8dee4;
@@ -146,6 +147,34 @@ button.secondary {
   font-size: 12px;
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.blocked-sites {
+  display: grid;
+  gap: 8px;
+}
+
+.blocked-sites textarea {
+  border: 1px solid #c9d1d9;
+  border-radius: 6px;
+  box-sizing: border-box;
+  color: #17202a;
+  font: 12px/1.35 Consolas, "Courier New", monospace;
+  min-height: 86px;
+  padding: 8px;
+  resize: vertical;
+  width: 100%;
+}
+
+.blocked-sites-footer {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.blocked-sites-footer .detail {
+  margin-top: 0;
 }
 
 .actions {

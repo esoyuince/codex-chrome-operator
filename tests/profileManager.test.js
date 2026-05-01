@@ -5,7 +5,6 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  buildProfileSetupUrl,
   discoverChromeProfiles
 } = require('../operator-daemon/profileManager');
 
@@ -40,17 +39,4 @@ test('discoverChromeProfiles returns profile directories with labels', () => {
       userDataDir
     }
   ]);
-});
-
-test('buildProfileSetupUrl includes binding id and version', () => {
-  const url = buildProfileSetupUrl({
-    extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    profileBindingId: 'profbind_abc',
-    profileBindingVersion: 7
-  });
-
-  assert.equal(
-    url,
-    'chrome-extension://abcdefghijklmnopabcdefghijklmnop/profileSetup.html?profileBindingId=profbind_abc&profileBindingVersion=7'
-  );
 });

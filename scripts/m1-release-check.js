@@ -72,8 +72,10 @@ function extractCleanSmokeEvidence(stdout) {
   addDefined(evidence, 'origin', smoke.origin);
   addDefined(evidence, 'profileVerified', finalStatus.profileVerified);
   addDefined(evidence, 'connectionState', finalStatus.connectionState);
-  addDefined(evidence, 'hostPermissionReady', smoke.waitReadyAfterPermission);
-  addDefined(evidence, 'blockedBeforeHostPermission', smoke.blockedBeforeHostPermission);
+  addDefined(evidence, 'prepareOriginReady', smoke.prepareOriginReady);
+  addDefined(evidence, 'prepareOriginRequiresUserGesture', smoke.prepareOriginRequiresUserGesture);
+  addDefined(evidence, 'blockedByUserSettings', smoke.blockedByUserSettings);
+  addDefined(evidence, 'settingsReady', smoke.waitReadyAfterSettings);
   addDefined(evidence, 'openObserveTitle', smoke.openObserveTitle);
   addDefined(evidence, 'visualScreenshotArtifactId', smoke.visualScreenshotArtifactId);
   addDefined(evidence, 'visualScreenshotBytes', smoke.visualScreenshotBytes);
@@ -89,8 +91,7 @@ function extractCleanSmokeEvidence(stdout) {
   addDefined(evidence, 'gateHandoffResume', smoke.gateHandoffResume);
   addDefined(evidence, 'emergencyBlocked', smoke.emergencyBlocked);
   addDefined(evidence, 'emergencyCleared', smoke.emergencyCleared);
-  addDefined(evidence, 'reconnectBlocked', smoke.reconnectBlocked);
-  addDefined(evidence, 'reconnectRecoveredTitle', smoke.reconnectRecoveredTitle);
+  addDefined(evidence, 'postEmergencyObservedTitle', smoke.postEmergencyObservedTitle);
   addDefined(evidence, 'boundedFullAutoStarted', smoke.boundedFullAutoStarted);
   addDefined(evidence, 'boundedFullAutoActions', smoke.boundedFullAutoActions);
   addDefined(evidence, 'boundedFullAutoStopped', smoke.boundedFullAutoStopped);

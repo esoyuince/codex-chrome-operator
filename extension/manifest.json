@@ -1,37 +1,46 @@
 {
   "manifest_version": 3,
   "name": "Codex Chrome Operator",
-  "version": "0.2.0",
+  "version": "0.2.5",
   "description": "Codex-controlled Chrome operator bridge with guarded local automation.",
   "permissions": [
     "nativeMessaging",
     "scripting",
     "activeTab",
     "tabs",
-    "storage"
+    "storage",
+    "sidePanel",
+    "debugger",
+    "alarms"
   ],
-  "optional_host_permissions": [
-    "<all_urls>",
-    "https://play.google.com/*",
-    "https://www.hepsiburada.com/*",
-    "https://*/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*"
+  "host_permissions": [
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "Codex Operator"
+    "default_title": "Codex Operator",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
-  "icons": {},
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "web_accessible_resources": [
     {
       "resources": [
-        "bootstrap.html",
-        "permissionRequest.html",
-        "profileSetup.html"
+        "bootstrap.html"
       ],
       "matches": [
         "<all_urls>"

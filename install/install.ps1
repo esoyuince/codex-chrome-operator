@@ -130,8 +130,6 @@ Set-Content -LiteralPath $manifestPath -Value $manifest -Encoding ASCII
 $config = [ordered]@{
   port = 17391
   expectedExtensionId = $ExtensionId
-  expectedProfileBindingId = "profbind_developmentBinding01"
-  expectedProfileBindingVersion = 1
 } | ConvertTo-Json
 Set-Content -LiteralPath $configPath -Value $config -Encoding ASCII
 Set-Content -LiteralPath $extensionIdPath -Value $ExtensionId -NoNewline -Encoding ASCII

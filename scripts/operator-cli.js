@@ -805,14 +805,11 @@ function normalizeReadiness(readiness) {
     return null;
   }
   const missing = [];
-  if (!readiness.profileVerified) {
-    missing.push('profile');
-  }
   if (!readiness.domainApproved) {
     missing.push('domainApproval');
   }
-  if (!readiness.hostPermissionGranted) {
-    missing.push('hostPermission');
+  if (readiness.siteBlocked) {
+    missing.push('siteAllowed');
   }
   return {
     ...readiness,
@@ -821,31 +818,12 @@ function normalizeReadiness(readiness) {
   };
 }
 
-function permissionRequestUrlFromBootstrap(bootstrapUrl, origin) {
-  if (!bootstrapUrl || !origin) {
-    return null;
-  }
-  try {
-    const parsed = new URL(bootstrapUrl);
-    if (parsed.protocol !== 'chrome-extension:') {
-      return null;
-    }
-    return `chrome-extension://${parsed.hostname}/permissionRequest.html?origin=${encodeURIComponent(origin)}`;
-  } catch {
-    return null;
-  }
-}
-
 function readinessNextActions(readiness, status = {}, bootstrapUrl = null) {
   const origin = readiness && readiness.origin;
   const missing = Array.isArray(readiness && readiness.missing)
     ? readiness.missing
     : [];
   const actions = [];
-
-  if (missing.includes('profile')) {
-    actions.push(profileOnboardAction(status && status.configuredProfile));
-  }
 
   if (missing.includes('domainApproval')) {
     actions.push({
@@ -858,14 +836,13 @@ function readinessNextActions(readiness, status = {}, bootstrapUrl = null) {
     });
   }
 
-  if (missing.includes('hostPermission')) {
+  if (missing.includes('siteAllowed')) {
     actions.push({
-      kind: 'hostPermission',
+      kind: 'blockedSiteSettings',
       command: null,
-      url: permissionRequestUrlFromBootstrap(bootstrapUrl, origin),
       description: origin
-        ? `Grant Chrome optional host permission for ${origin} from the extension permission page.`
-        : 'Grant Chrome optional host permission from the extension permission page.',
+        ? `Remove ${origin} from the extension blocked sites list before browser work.`
+        : 'Remove the target origin from the extension blocked sites list before browser work.',
       requiresUserGesture: true
     });
   }
@@ -916,78 +893,9 @@ function profileOnboardAction(configuredProfile = null) {
       ? profileOnboardCommand(configuredProfile)
       : 'node scripts/operator-cli.js profile-onboard',
     description: configuredProfile
-      ? 'Run profile onboarding for the configured Chrome profile and click Bind Profile on the setup page.'
-      : 'Discover, bind, and verify the Chrome profile that should own this operator session.',
-    requiresUserGesture: true
-  };
-}
-
-function profileSetupAction(setupUrl) {
-  return {
-    kind: 'profileSetup',
-    url: setupUrl,
-    description: 'Open the profile setup URL in the selected Chrome profile to complete profile binding.',
-    requiresUserGesture: true
-  };
-}
-
-async function waitForProfileVerified({
-  settings,
-  requestId,
-  sendRpcFn = sendRpc,
-  timeoutMs = 15000,
-  pollIntervalMs = 250,
-  delayFn = delay
-}) {
-  const started = Date.now();
-  let attempts = 0;
-  let lastResponse = null;
-  let lastError = null;
-
-  while (Date.now() - started < timeoutMs) {
-    attempts += 1;
-    try {
-      const response = await sendRpcFn({
-        baseUrl: settings.baseUrl,
-        token: settings.token,
-        request: {
-          id: `${requestId}_profile_verify_${attempts}`,
-          method: 'operator.profile.verify',
-          params: {}
-        }
-      });
-      lastResponse = response;
-      if (response && response.ok && response.result && response.result.profileVerified === true) {
-        return {
-          ...response,
-          result: {
-            ...response.result,
-            profileWait: {
-              attempted: true,
-              verified: true,
-              elapsedMs: Date.now() - started,
-              attempts
-            }
-          }
-        };
-      }
-    } catch (error) {
-      lastError = error;
-    }
-    await delayFn(pollIntervalMs);
-  }
-
-  return {
-    id: requestId,
-    ok: false,
-    error: {
-      code: 'PROFILE_ONBOARD_VERIFY_TIMEOUT',
-      message: 'Timed out waiting for Chrome profile binding verification.',
-      timeoutMs,
-      attempts,
-      lastProfileStatus: lastResponse && lastResponse.ok ? lastResponse.result : null,
-      lastError: lastError ? lastError.message : null
-    }
+      ? 'Refresh the configured Chrome profile selection.'
+      : 'Discover and save the Chrome profile that should launch operator bootstrap tabs.',
+    requiresUserGesture: false
   };
 }
 
@@ -995,12 +903,7 @@ async function profileOnboard({
   settings,
   request,
   sendRpcFn = sendRpc,
-  launchBootstrapFn = launchBootstrapChrome,
-  waitForProfileVerifiedFn = waitForProfileVerified,
-  profileDoctorFn = profileDoctor,
-  openBootstrap = true,
-  profileWaitTimeoutMs = 15000,
-  profileWaitPollIntervalMs = 250
+  profileDoctorFn = profileDoctor
 }) {
   const params = request && request.params ? request.params : {};
   let selectedProfile = null;
@@ -1107,75 +1010,6 @@ async function profileOnboard({
     return bindResponse;
   }
 
-  const setupUrl = bindResponse.result && bindResponse.result.setupUrl;
-  if (!setupUrl) {
-    return {
-      id: request.id,
-      ok: false,
-      error: {
-        code: 'PROFILE_ONBOARD_SETUP_URL_MISSING',
-        message: 'Profile bind succeeded but did not return a setup URL.',
-        selectedProfile,
-        bind: bindResponse.result || null
-      }
-    };
-  }
-
-  const bootstrapLaunch = openBootstrap
-    ? launchBootstrapFn({
-      installDir: settings.installDir,
-      bootstrapUrl: setupUrl
-    })
-    : {
-      attempted: false,
-      launched: false,
-      skippedReason: 'NO_BOOTSTRAP',
-      bootstrapUrl: setupUrl
-    };
-
-  if (!bootstrapLaunch || !bootstrapLaunch.launched) {
-    return {
-      id: request.id,
-      ok: false,
-      error: {
-        code: openBootstrap ? 'PROFILE_ONBOARD_BOOTSTRAP_FAILED' : 'PROFILE_ONBOARD_BOOTSTRAP_SKIPPED',
-        message: openBootstrap
-          ? 'Chrome profile setup could not be launched automatically.'
-          : 'Chrome profile setup launch was skipped.',
-        selectedProfile,
-        bind: bindResponse.result,
-        setupUrl,
-        bootstrapLaunch,
-        nextActions: [profileSetupAction(setupUrl)]
-      }
-    };
-  }
-
-  const verifyResponse = await waitForProfileVerifiedFn({
-    settings,
-    requestId: request.id,
-    sendRpcFn,
-    timeoutMs: profileWaitTimeoutMs,
-    pollIntervalMs: profileWaitPollIntervalMs
-  });
-  if (!verifyResponse || !verifyResponse.ok) {
-    return {
-      id: request.id,
-      ok: false,
-      error: {
-        ...(verifyResponse && verifyResponse.error ? verifyResponse.error : {
-          code: 'PROFILE_ONBOARD_VERIFY_FAILED',
-          message: 'Profile verification did not complete.'
-        }),
-        selectedProfile,
-        bind: bindResponse.result,
-        setupUrl,
-        bootstrapLaunch,
-        nextActions: [profileSetupAction(setupUrl)]
-      }
-    };
-  }
-
   const doctorResponse = await profileDoctorFn({
     settings,
     request: {
@@ -1193,9 +1027,17 @@ async function profileOnboard({
       selection,
       selectedProfile,
       bind: bindResponse.result,
-      setupUrl,
-      bootstrapLaunch,
-      profileWait: verifyResponse.result,
+      setupUrl: null,
+      bootstrapLaunch: {
+        attempted: false,
+        launched: false,
+        skippedReason: 'PROFILE_SELECTION_ONLY'
+      },
+      profileWait: {
+        attempted: false,
+        verified: true,
+        skippedReason: 'PROFILE_SELECTION_ONLY'
+      },
       doctor: doctorResponse
     }
   };
@@ -1271,10 +1113,10 @@ async function profileDoctor({
     daemon: checkResult(true, {
       connectionState: status.connectionState || null
     }),
-    configuredProfile: checkResult(Boolean(configuredProfile), {
+    configuredProfile: checkResult(true, {
       profile: configuredProfile
     }),
-    profileVerified: checkResult(status.profileVerified === true, {
+    extensionConnected: checkResult(status.connectionState === 'EXTENSION_CONNECTED', {
       profileBindingStatus: status.profileBindingStatus || null,
       lastError: status.lastError || null
     }),
@@ -1293,12 +1135,7 @@ async function profileDoctor({
       : checkResult(true, { skipped: true })
   };
 
-  const profileAction = profileOnboardAction(configuredProfile);
-
   const nextActions = [];
-  if (!checks.configuredProfile.ok || !checks.profileVerified.ok) {
-    nextActions.push(profileAction);
-  }
   if (readiness && !readiness.ready) {
     nextActions.push(...readinessNextActions(readiness, status));
   }
@@ -1504,7 +1341,6 @@ async function prepareOrigin({
   );
   const nextActions = readiness ? readinessNextActions(readiness, ensureResponse.result.status, bootstrapUrl) : [];
   const nextAction = nextActions.find((action) => action.requiresUserGesture) || nextActions[0] || null;
-  const permissionAction = nextActions.find((action) => action.kind === 'hostPermission') || null;
 
   return {
     id: request.id,
@@ -1518,7 +1354,7 @@ async function prepareOrigin({
       ensureStarted: ensureResponse.result,
       nextActions,
       nextAction,
-      permissionUrl: permissionAction ? permissionAction.url : null,
+      permissionUrl: null,
       requiresUserGesture: Boolean(nextAction && nextAction.requiresUserGesture),
       diagnostic: readiness && !readiness.ready
         ? {
@@ -1930,6 +1766,5 @@ module.exports = {
   usage,
   waitForActiveTabUrl,
   waitForExtensionConnection,
-  waitForProfileVerified,
   waitReady
 };

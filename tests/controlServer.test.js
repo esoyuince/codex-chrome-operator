@@ -50,8 +50,8 @@ function verifiedHello(capabilities = ['observe.v1', 'visualObserve.v1']) {
     type: 'HELLO',
     protocolVersion: '1.0',
     extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    extensionVersion: '0.2.0',
-    bridgeVersion: '0.2.0',
+    extensionVersion: '0.2.5',
+    bridgeVersion: '0.2.5',
     sessionBootstrapId: `boot_${Date.now()}`,
     profileBindingState: 'bound',
     profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -151,7 +151,9 @@ test('operator.ensureStarted summarizes target readiness for requested origin', 
       profileVerified: false,
       domainApproved: false,
       hostPermissionGranted: false,
-      missing: ['profile', 'domainApproval', 'hostPermission']
+      siteBlocked: false,
+      blockedPattern: null,
+      missing: ['domainApproval']
     });
   });
 });
@@ -502,15 +504,15 @@ test('operator.audit.tail exposes bounded full-auto action summaries', async () 
   });
 });
 
-test('extension.hello verifies profile binding and updates status', async () => {
+test('extension.hello connects without requiring profile binding', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     const result = await postJson(baseUrl, 'extension.hello', {
       hello: {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -522,7 +524,7 @@ test('extension.hello verifies profile binding and updates status', async () => 
 
     assert.equal(result.status, 200);
     assert.equal(result.body.ok, true);
-    assert.equal(result.body.result.profileBindingStatus, 'verified');
+    assert.equal(result.body.result.profileBindingStatus, 'not-required');
 
     const status = await postJson(baseUrl, 'operator.status');
     assert.equal(status.body.result.connectionState, 'EXTENSION_CONNECTED');
@@ -530,26 +532,26 @@ test('extension.hello verifies profile binding and updates status', async () => 
   });
 });
 
-test('extension.hello accepts unbound setup state without unlocking page work', async () => {
+test('extension.hello accepts unbound legacy state and unlocks guarded page work', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     const result = await postJson(baseUrl, 'extension.hello', {
       hello: {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_setup',
         profileBindingState: 'missing',
         profileBindingSource: 'chrome.storage.local',
-        capabilities: ['profileSetup.v1']
+        capabilities: ['observe.v1']
       }
     });
 
     assert.equal(result.status, 200);
     assert.equal(result.body.ok, true);
-    assert.equal(result.body.result.connectionState, 'EXTENSION_CONNECTED_SETUP_ONLY');
-    assert.equal(result.body.result.profileBindingStatus, 'setup-unbound');
+    assert.equal(result.body.result.connectionState, 'EXTENSION_CONNECTED');
+    assert.equal(result.body.result.profileBindingStatus, 'not-required');
 
     await postJson(baseUrl, 'operator.approveDomain', {
       origin: 'https://example.com'
@@ -558,15 +560,15 @@ test('extension.hello accepts unbound setup state without unlocking page work', 
       origin: 'https://example.com'
     });
 
-    const blocked = await postJson(baseUrl, 'page.observe', {
+    const readiness = await postJson(baseUrl, 'operator.verifyReadiness', {
       origin: 'https://example.com'
     });
-    assert.equal(blocked.body.ok, false);
-    assert.equal(blocked.body.error.code, ERROR_CODES.PROFILE_BINDING_MISSING);
+    assert.equal(readiness.body.ok, true);
+    assert.equal(readiness.body.result.ready, true);
 
     const status = await postJson(baseUrl, 'operator.status');
-    assert.equal(status.body.result.profileVerified, false);
-    assert.equal(status.body.result.profileBindingStatus, 'setup-unbound');
+    assert.equal(status.body.result.profileVerified, true);
+    assert.equal(status.body.result.profileBindingStatus, 'not-required');
   });
 });
 
@@ -578,7 +580,7 @@ test('extension.hello rejects daemon extension bridge version mismatch', async (
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
         extensionVersion: '0.3.0',
-        bridgeVersion: '0.2.0',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -594,21 +596,23 @@ test('extension.hello rejects daemon extension bridge version mismatch', async (
     const status = await postJson(baseUrl, 'operator.status');
     assert.equal(status.body.result.connectionState, 'DAEMON_RUNNING_EXTENSION_DISCONNECTED');
     assert.equal(status.body.result.version.protocolVersion, '1.0');
-    assert.equal(status.body.result.version.extensionVersion, '0.2.0');
-    assert.equal(status.body.result.version.bridgeVersion, '0.2.0');
+    assert.equal(status.body.result.version.extensionVersion, '0.2.5');
+    assert.equal(status.body.result.version.bridgeVersion, '0.2.5');
     assert.equal(status.body.result.version.lastMismatch.code, ERROR_CODES.EXTENSION_VERSION_MISMATCH);
+    assert.equal(status.body.result.version.lastMismatch.expectedExtensionVersion, '0.2.5');
+    assert.equal(status.body.result.version.lastMismatch.actualExtensionVersion, '0.3.0');
   });
 });
 
-test('page.observe fails closed before host permission is granted', async () => {
+test('page.observe queues once profile and domain are ready without per-site host permission', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {
       hello: {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -621,25 +625,69 @@ test('page.observe fails closed before host permission is granted', async () => 
       origin: 'https://example.com'
     });
 
-    const result = await postJson(baseUrl, 'page.observe', {
+    const observePromise = postJson(baseUrl, 'page.observe', {
       origin: 'https://example.com'
+    });
+
+    const command = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: {
+        title: 'Example',
+        url: 'https://example.com/'
+      }
+    });
+    assert.equal(command.method, 'page.observe');
+    assert.equal(command.params.origin, 'https://example.com');
+
+    const result = await observePromise;
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.title, 'Example');
+  });
+});
+
+test('page.type fails closed for user blocked sites before queueing browser work', async () => {
+  await withServer(makeSession(), async (baseUrl, session) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: verifiedHello(['observe.v1'])
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://bank.example'
+    });
+    await postJson(baseUrl, 'extension.blockedOriginsSynced', {
+      blockedOrigins: ['bank.example']
+    });
+
+    const result = await postJson(baseUrl, 'page.type', {
+      origin: 'https://bank.example',
+      handle: 'el_1',
+      text: 'super secret typed text'
     });
 
     assert.equal(result.status, 200);
     assert.equal(result.body.ok, false);
-    assert.equal(result.body.error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+    assert.equal(result.body.error.code, ERROR_CODES.SITE_BLOCKED_BY_USER_SETTINGS);
+    assert.equal(result.body.error.blockedPattern, 'bank.example');
+    assert.equal(session.pendingCommands.size, 0);
+
+    const status = await postJson(baseUrl, 'operator.status');
+    const failureEvent = status.body.result.recentEvents.find((event) => (
+      event.type === 'pageCommandFailed' && event.method === 'page.type'
+    ));
+    assert.equal(failureEvent.errorCode, ERROR_CODES.SITE_BLOCKED_BY_USER_SETTINGS);
+    assert.equal(JSON.stringify(failureEvent).includes('super secret typed text'), false);
   });
 });
 
-test('page.visualObserve fails closed before host permission is granted', async () => {
+test('page.visualObserve queues once profile and domain are ready without per-site host permission', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {
       hello: {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -652,13 +700,29 @@ test('page.visualObserve fails closed before host permission is granted', async 
       origin: 'https://example.com'
     });
 
-    const result = await postJson(baseUrl, 'page.visualObserve', {
+    const observePromise = postJson(baseUrl, 'page.visualObserve', {
       origin: 'https://example.com'
     });
 
+    const command = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: {
+        title: 'Visual',
+        url: 'https://example.com/',
+        screenshot: {
+          mimeType: 'image/png',
+          dataUrl: 'data:image/png;base64,aGVsbG8=',
+          bytesApprox: 5
+        }
+      }
+    });
+    assert.equal(command.method, 'page.visualObserve');
+    assert.equal(command.params.origin, 'https://example.com');
+
+    const result = await observePromise;
     assert.equal(result.status, 200);
-    assert.equal(result.body.ok, false);
-    assert.equal(result.body.error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.title, 'Visual');
   });
 });
 
@@ -669,8 +733,8 @@ test('page.observe queues extension command and resolves from bridge delivery', 
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -722,6 +786,42 @@ test('page.observe queues extension command and resolves from bridge delivery', 
     const status = await postJson(baseUrl, 'operator.status');
     assert.equal(status.body.result.activeTab.url, 'https://example.com/basic');
     assert.equal(status.body.result.activeTab.loadingState, 'complete');
+  });
+});
+
+test('bridge.poll wait mode resolves immediately when a command is queued', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const pollPromise = postJson(baseUrl, 'bridge.poll', {
+      wait: true,
+      timeoutMs: 1000
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const observePromise = postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+
+    const command = await pollPromise;
+    assert.equal(command.body.ok, true);
+    assert.equal(command.body.result.command.method, 'page.observe');
+    assert.equal(command.body.result.command.params.origin, 'https://example.com');
+
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          title: 'Long poll delivered'
+        }
+      }
+    });
+
+    const result = await observePromise;
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.title, 'Long poll delivered');
   });
 });
 
@@ -849,8 +949,8 @@ test('page.visualObserve queues extension command and resolves from bridge deliv
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1012,8 +1112,8 @@ test('operator.screenshots.cleanup removes stored visual artifacts', async () =>
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1187,13 +1287,10 @@ test('page.uploadFile queues redacted validated file metadata and returns upload
   });
 });
 
-test('page.prepareCart fails closed before readiness gates complete', async () => {
+test('page.prepareCart fails closed before domain approval is granted', async () => {
   await withServer(makeSession(), async (baseUrl, session) => {
     await postJson(baseUrl, 'extension.hello', {
       hello: verifiedHello(['observe.v1', 'cartPreparation.v1'])
-    });
-    await postJson(baseUrl, 'operator.approveDomain', {
-      origin: 'http://127.0.0.1:18180'
     });
 
     const result = await postJson(baseUrl, 'page.prepareCart', {
@@ -1204,7 +1301,7 @@ test('page.prepareCart fails closed before readiness gates complete', async () =
     });
 
     assert.equal(result.body.ok, false);
-    assert.equal(result.body.error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+    assert.equal(result.body.error.code, ERROR_CODES.DOMAIN_NOT_APPROVED);
     assert.equal(session.pendingCommands.size, 0);
   });
 });
@@ -1494,8 +1591,8 @@ test('operator.emergencyStop cancels pending page actions and blocks new ones un
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1574,8 +1671,8 @@ test('extension disconnect cancels pending commands and reconnect requires a fre
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1633,8 +1730,8 @@ test('extension disconnect cancels pending commands and reconnect requires a fre
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_def',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1656,8 +1753,8 @@ test('successful page command clears stale lastError', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1669,18 +1766,21 @@ test('successful page command clears stale lastError', async () => {
     await postJson(baseUrl, 'operator.approveDomain', {
       origin: 'https://example.com'
     });
+    await postJson(baseUrl, 'extension.blockedOriginsSynced', {
+      blockedOrigins: ['example.com']
+    });
 
     const failClosed = await postJson(baseUrl, 'page.observe', {
       origin: 'https://example.com'
     });
     assert.equal(failClosed.body.ok, false);
-    assert.equal(failClosed.body.error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+    assert.equal(failClosed.body.error.code, ERROR_CODES.SITE_BLOCKED_BY_USER_SETTINGS);
 
     const statusAfterError = await postJson(baseUrl, 'operator.status');
-    assert.equal(statusAfterError.body.result.lastError.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+    assert.equal(statusAfterError.body.result.lastError.code, ERROR_CODES.SITE_BLOCKED_BY_USER_SETTINGS);
 
-    await postJson(baseUrl, 'extension.hostPermissionGranted', {
-      origin: 'https://example.com'
+    await postJson(baseUrl, 'extension.blockedOriginsSynced', {
+      blockedOrigins: []
     });
 
     const observePromise = postJson(baseUrl, 'page.observe', {
@@ -1714,8 +1814,8 @@ test('local high-risk click can be approved and replayed once', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1791,8 +1891,8 @@ test('gate handoff errors pause actions without creating approval requests', asy
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1847,8 +1947,8 @@ test('real-origin high-risk approval replay is blocked in M1', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',

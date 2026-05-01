@@ -106,10 +106,10 @@ The adapter currently exposes 26 strict tools:
 Setup tools keep Codex-first browser work out of implicit Chrome UI gestures.
 `codex_chrome_prepare_origin` routes through the same origin preparation path as
 `prepare-origin`, `codex_chrome_readiness` checks `operator.verifyReadiness`,
-`codex_chrome_profile_doctor` diagnoses profile binding and active-tab state,
-and `codex_chrome_profile_onboard` runs the profile discovery, bind, setup, and
-verify workflow. Profile and permission `adapterHints` point to these tools
-when the caller can recover through the adapter surface.
+`codex_chrome_profile_doctor` diagnoses configured Chrome profile and active-tab
+state, and `codex_chrome_profile_onboard` runs profile discovery and saves the
+profile used for future bootstrap tabs. Profile and permission `adapterHints`
+point to these tools when the caller can recover through the adapter surface.
 
 Approval and rejection tools require an explicit `userDecision` argument:
 `"approve"` for `codex_chrome_approval_approve` and `"reject"` for
@@ -123,9 +123,9 @@ for the user to complete the gate in Chrome before retrying with a fresh
 observation.
 
 Policy hints are returned for blockers such as `HOST_PERMISSION_REQUIRED`,
-`DOMAIN_NOT_APPROVED`, profile binding errors, extension disconnects, and
-emergency stop. Host permission hints include the permission page URL when the
-daemon provides it and mark the step as requiring a user gesture.
+`DOMAIN_NOT_APPROVED`, profile configuration errors, extension disconnects, and
+emergency stop. Host permission hints describe reload/reinstall recovery because
+the packaged extension uses broad required host access.
 
 Visual tools return screenshot artifact references, metadata, or structured
 analysis. `codex_chrome_visual_analyze` routes to `page.visualAnalyze` with a
@@ -138,7 +138,7 @@ handoff.
 `codex_chrome_upload_file` routes to `page.uploadFile` with `origin`, target
 `handle`, optional `ruleset`, optional `verifyPreview`, and a `files` array. The
 upload surface remains guarded/draft-only: daemon policy, domain approval,
-profile binding, host permissions, and approval prompts still decide whether a
+blocked-site settings, host access, and approval prompts still decide whether a
 file interaction can run. Results return redacted file references; raw `path`
 fields are redacted while safe file basenames and hashes may remain visible.
 
@@ -159,5 +159,5 @@ profile explicitly enables real-site execution, and disabled real-site profile
 errors must not be converted into approval prompts.
 
 High-risk browser actions cannot be bypassed through this adapter. The operator
-daemon still controls guarded mode, approval prompts, profile binding, host
-permissions, audit logging, and emergency stop state.
+daemon still controls guarded mode, approval prompts, blocked-site settings,
+host access, audit logging, and emergency stop state.

@@ -21,7 +21,6 @@ test('OperatorStateStore persists domain approvals and host permissions', () => 
     expiresAt: '2999-01-01T00:00:00.000Z'
   });
   first.grantHostPermission('https://example.com', {
-    profileBindingId: 'profbind_test',
     grantedAt: '2026-04-29T12:00:00.000Z'
   });
 
@@ -34,12 +33,11 @@ test('OperatorStateStore persists domain approvals and host permissions', () => 
   });
   assert.deepEqual(second.getHostPermission('https://example.com'), {
     origin: 'https://example.com',
-    profileBindingId: 'profbind_test',
     grantedAt: '2026-04-29T12:00:00.000Z'
   });
 });
 
-test('OperatorStateStore persists configured profile binding', () => {
+test('OperatorStateStore persists configured profile selection without binding metadata', () => {
   const statePath = tempStatePath();
   const first = new OperatorStateStore({ statePath });
 
@@ -55,31 +53,59 @@ test('OperatorStateStore persists configured profile binding', () => {
   assert.deepEqual(second.getConfiguredProfile(), {
     userDataDir: 'C:/Chrome/User Data',
     profileDirectory: 'Profile 1',
-    profileLabel: 'Play Console',
-    profileBindingId: 'profbind_profile',
-    profileBindingVersion: 4
+    profileLabel: 'Play Console'
   });
 });
 
-test('OperatorStateStore syncs host permissions for one profile binding', () => {
+test('OperatorStateStore strips legacy binding metadata when loading state', () => {
+  const statePath = tempStatePath();
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  fs.writeFileSync(statePath, JSON.stringify({
+    version: 1,
+    hostPermissions: {
+      'https://example.com': {
+        origin: 'https://example.com',
+        profileBindingId: 'profbind_legacy',
+        grantedAt: '2026-04-29T12:00:00.000Z'
+      }
+    },
+    configuredProfile: {
+      userDataDir: 'C:/Chrome/User Data',
+      profileDirectory: 'Profile 1',
+      profileLabel: 'Play Console',
+      profileBindingId: 'profbind_legacy',
+      profileBindingVersion: 4
+    }
+  }), 'utf8');
+
+  const store = new OperatorStateStore({ statePath });
+
+  assert.deepEqual(store.getHostPermission('https://example.com'), {
+    origin: 'https://example.com',
+    grantedAt: '2026-04-29T12:00:00.000Z'
+  });
+  assert.deepEqual(store.getConfiguredProfile(), {
+    userDataDir: 'C:/Chrome/User Data',
+    profileDirectory: 'Profile 1',
+    profileLabel: 'Play Console'
+  });
+});
+
+test('OperatorStateStore syncs host permissions as one profile-independent set', () => {
   const statePath = tempStatePath();
   const store = new OperatorStateStore({ statePath });
 
   store.grantHostPermission('https://keep.example', {
-    profileBindingId: 'profbind_current',
     grantedAt: '2026-04-29T12:00:00.000Z'
   });
   store.grantHostPermission('https://remove.example', {
-    profileBindingId: 'profbind_current',
     grantedAt: '2026-04-29T12:00:00.000Z'
   });
   store.grantHostPermission('https://other.example', {
-    profileBindingId: 'profbind_other',
     grantedAt: '2026-04-29T12:00:00.000Z'
   });
 
   const synced = store.syncHostPermissions({
-    profileBindingId: 'profbind_current',
     origins: ['https://keep.example', 'https://new.example'],
     syncedAt: '2026-04-29T13:00:00.000Z'
   });
@@ -89,8 +115,34 @@ test('OperatorStateStore syncs host permissions for one profile binding', () => 
     'https://new.example'
   ]);
   assert.equal(store.getHostPermission('https://remove.example'), null);
-  assert.equal(store.getHostPermission('https://other.example').profileBindingId, 'profbind_other');
-  assert.equal(store.getHostPermission('https://new.example').profileBindingId, 'profbind_current');
+  assert.equal(store.getHostPermission('https://other.example'), null);
+  assert.deepEqual(store.getHostPermission('https://new.example'), {
+    origin: 'https://new.example',
+    grantedAt: '2026-04-29T13:00:00.000Z'
+  });
+});
+
+test('OperatorStateStore persists user blocked site settings', () => {
+  const statePath = tempStatePath();
+  const first = new OperatorStateStore({ statePath });
+
+  first.setBlockedOrigins([
+    'https://bank.example',
+    '*.internal.example',
+    'news.example'
+  ]);
+
+  const second = new OperatorStateStore({ statePath });
+
+  assert.deepEqual(second.listBlockedOrigins(), [
+    '*.internal.example',
+    'https://bank.example',
+    'news.example'
+  ]);
+  assert.equal(second.isOriginBlocked('https://bank.example'), true);
+  assert.equal(second.isOriginBlocked('https://login.internal.example'), true);
+  assert.equal(second.isOriginBlocked('https://news.example'), true);
+  assert.equal(second.isOriginBlocked('https://safe.example'), false);
 });
 
 test('OperatorStateStore filters expired approvals and revokes approval state', () => {

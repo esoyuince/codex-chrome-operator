@@ -51,15 +51,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File install\doctor.ps1
 
 The doctor output is JSON. `ok: true` is the expected installed state.
 
-## First Profile Setup
+## Optional Profile Selection
 
-Bind and verify the Chrome profile that owns the operator session:
+Profile binding is no longer a readiness gate. If you want the operator to use a
+specific Chrome profile for bootstrap tabs, save that profile selection:
 
 ```powershell
 npm run operator:cli -- profile-onboard
 ```
 
-Use the opened setup page in Chrome, then rerun:
+Then inspect the configured profile, active tab, and readiness state:
 
 ```powershell
 npm run operator:cli -- profile-doctor
@@ -87,8 +88,9 @@ Inside Codex, the visible tool prefix should be `codex_chrome_*`.
 
 ## First Origin
 
-Prepare an origin and grant the optional host permission from the extension
-permission page:
+Prepare an origin. The extension uses broad required host access, so there is no
+per-site host-permission request page; users exclude sites from the extension
+side panel instead.
 
 ```powershell
 npm run operator:cli -- prepare-origin https://example.com

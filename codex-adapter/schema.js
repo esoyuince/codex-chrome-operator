@@ -53,7 +53,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'codex_chrome_profile_doctor',
-    description: 'Diagnose daemon, profile binding, active tab, and readiness state for the optional origin.',
+    description: 'Diagnose daemon, configured Chrome profile, active tab, and readiness state for the optional origin.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,

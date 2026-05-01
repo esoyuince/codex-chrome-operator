@@ -1,9 +1,17 @@
 'use strict';
 
-importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js', 'cartWorkflow.js');
+importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js', 'cartWorkflow.js', 'debuggerActions.js');
 
 const NATIVE_HOST = 'com.codex.chrome_operator';
-const PROFILE_BINDING_SOURCE = 'chrome.storage.local';
+const BLOCKED_ORIGINS_KEY = 'blockedOrigins';
+const NATIVE_RECONNECT_ALARM = 'operator.nativeReconnect';
+const NATIVE_RECONNECT_PERIOD_MINUTES = 0.5;
+const FATAL_NATIVE_ERROR_CODES = new Set([
+  'EXTENSION_ID_MISMATCH',
+  'PROTOCOL_VERSION_MISMATCH',
+  'EXTENSION_VERSION_MISMATCH',
+  'BRIDGE_VERSION_MISMATCH'
+]);
 const {
   hasBroadHostPermission,
   permissionPatternsToOrigins
@@ -11,31 +19,23 @@ const {
 const {
   captureVisibleTabWithRetry
 } = globalThis.CodexVisualCapture;
+const {
+  runDebuggerAction
+} = globalThis.CodexDebuggerActions;
 
 let nativePort = null;
 let lastNativeError = null;
 let connectionState = 'DISCONNECTED';
+let suppressNextNativeReconnect = false;
 
 function requestId(prefix = 'ext') {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-async function getProfileBinding() {
-  const result = await chrome.storage.local.get([
-    'profileBindingId',
-    'profileBindingVersion'
-  ]);
-  if (!result.profileBindingId || !result.profileBindingVersion) {
-    return {
-      profileBindingState: 'missing',
-      profileBindingSource: PROFILE_BINDING_SOURCE
-    };
-  }
+function getProfileBinding() {
   return {
-    profileBindingState: 'bound',
-    profileBindingId: result.profileBindingId,
-    profileBindingVersion: result.profileBindingVersion,
-    profileBindingSource: PROFILE_BINDING_SOURCE
+    profileBindingState: 'not-required',
+    profileBindingSource: 'implicit-extension'
   };
 }
 
@@ -45,9 +45,9 @@ async function buildHello() {
     protocolVersion: '1.0',
     extensionId: chrome.runtime.id,
     extensionVersion: chrome.runtime.getManifest().version,
-    bridgeVersion: '0.2.0',
+    bridgeVersion: '0.2.5',
     sessionBootstrapId: requestId('boot'),
-    ...(await getProfileBinding()),
+    ...getProfileBinding(),
     capabilities: [
       'observe.v1',
       'visualObserve.v1',
@@ -57,7 +57,8 @@ async function buildHello() {
       'fileUpload.v1',
       'cartPreparation.v1',
       'guarded.v1',
-      'gateHandoff.v1'
+      'gateHandoff.v1',
+      'actions.cdp.v1'
     ]
   };
 }
@@ -88,6 +89,139 @@ async function sendHello() {
   });
 }
 
+async function scheduleNativeReconnect() {
+  if (!chrome.alarms || !chrome.alarms.create) {
+    return;
+  }
+  await chrome.alarms.create(NATIVE_RECONNECT_ALARM, {
+    delayInMinutes: NATIVE_RECONNECT_PERIOD_MINUTES,
+    periodInMinutes: NATIVE_RECONNECT_PERIOD_MINUTES
+  });
+}
+
+async function clearNativeReconnect() {
+  if (!chrome.alarms || !chrome.alarms.clear) {
+    return;
+  }
+  await chrome.alarms.clear(NATIVE_RECONNECT_ALARM);
+}
+
+function normalizeBlockedPattern(pattern) {
+  if (typeof pattern !== 'string') {
+    return null;
+  }
+  const value = pattern.trim().toLowerCase();
+  if (!value) {
+    return null;
+  }
+  if (value.startsWith('*.') && value.length > 2) {
+    return value.replace(/\/+$/, '');
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      if (url.protocol === 'http:' || url.protocol === 'https:') {
+        return url.origin;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return value.replace(/\/+$/, '');
+}
+
+function blockedPatternMatchesOrigin(pattern, origin) {
+  if (!pattern || !origin) {
+    return false;
+  }
+  let url;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  const normalizedPattern = normalizeBlockedPattern(pattern);
+  if (!normalizedPattern) {
+    return false;
+  }
+  const originValue = url.origin.toLowerCase();
+  const hostname = url.hostname.toLowerCase();
+  const host = url.host.toLowerCase();
+
+  if (normalizedPattern.includes('://')) {
+    return originValue === normalizedPattern;
+  }
+  if (normalizedPattern.startsWith('*.')) {
+    const suffix = normalizedPattern.slice(2);
+    return hostname === suffix || hostname.endsWith(`.${suffix}`);
+  }
+  if (normalizedPattern.includes(':')) {
+    return host === normalizedPattern;
+  }
+  return hostname === normalizedPattern;
+}
+
+async function getBlockedOrigins() {
+  const result = await chrome.storage.local.get([BLOCKED_ORIGINS_KEY]);
+  const raw = Array.isArray(result[BLOCKED_ORIGINS_KEY]) ? result[BLOCKED_ORIGINS_KEY] : [];
+  return [...new Set(raw.map((pattern) => normalizeBlockedPattern(pattern)).filter(Boolean))].sort();
+}
+
+async function setBlockedOrigins(patterns) {
+  const blockedOrigins = [...new Set(
+    (Array.isArray(patterns) ? patterns : [])
+      .map((pattern) => normalizeBlockedPattern(pattern))
+      .filter(Boolean)
+  )].sort();
+  await chrome.storage.local.set({ [BLOCKED_ORIGINS_KEY]: blockedOrigins });
+  return blockedOrigins;
+}
+
+async function blockedOriginMatch(origin) {
+  const blockedOrigins = await getBlockedOrigins();
+  const pattern = blockedOrigins.find((entry) => blockedPatternMatchesOrigin(entry, origin));
+  return pattern ? { origin, pattern } : null;
+}
+
+async function syncBlockedOrigins() {
+  if (!nativePort) {
+    return;
+  }
+  postNativeRpc('extension.blockedOriginsSynced', {
+    blockedOrigins: await getBlockedOrigins()
+  });
+}
+
+function isFatalNativeResponse(message) {
+  return Boolean(
+    message &&
+    message.ok === false &&
+    message.error &&
+    FATAL_NATIVE_ERROR_CODES.has(message.error.code)
+  );
+}
+
+async function closeNativeAfterFatalResponse(message) {
+  const error = message.error || {};
+  lastNativeError = error.message || error.code || 'Native handshake rejected.';
+  connectionState = 'ERROR';
+  await chrome.storage.local.set({
+    connectionState,
+    lastNativeError,
+    lastNativeResponse: message
+  });
+  if (nativePort) {
+    const port = nativePort;
+    nativePort = null;
+    suppressNextNativeReconnect = true;
+    try {
+      port.disconnect();
+    } catch {
+      // The native port may have already closed after the rejected HELLO.
+    }
+  }
+}
+
 async function grantedHostPermissionOrigins() {
   const permissions = await chrome.permissions.getAll();
   const origins = permissions.origins || [];
@@ -98,28 +232,24 @@ async function grantedHostPermissionOrigins() {
 }
 
 async function syncGrantedHostPermissions() {
-  const binding = await getProfileBinding();
-  if (binding.profileBindingState !== 'bound') {
-    return;
-  }
-
   const origins = await grantedHostPermissionOrigins();
   if (origins === null) {
     return;
   }
 
   postNativeRpc('extension.hostPermissionsSynced', {
-    profileBindingId: binding.profileBindingId,
     origins
   });
 }
 
-async function connectNative({ refreshHello = false } = {}) {
+async function connectNative({ refreshHello = false, retryOnFailure = false } = {}) {
   if (nativePort) {
     if (refreshHello) {
       await sendHello();
       await syncGrantedHostPermissions();
+      await syncBlockedOrigins();
     }
+    await clearNativeReconnect();
     return;
   }
   try {
@@ -130,6 +260,8 @@ async function connectNative({ refreshHello = false } = {}) {
     });
     nativePort.onDisconnect.addListener(() => {
       lastNativeError = chrome.runtime.lastError ? chrome.runtime.lastError.message : null;
+      const shouldReconnect = !suppressNextNativeReconnect;
+      suppressNextNativeReconnect = false;
       postNativeRpcNoThrow('extension.disconnected', {
         source: 'native-port',
         reason: lastNativeError || 'Native port disconnected.'
@@ -137,21 +269,37 @@ async function connectNative({ refreshHello = false } = {}) {
       connectionState = 'DISCONNECTED';
       nativePort = null;
       chrome.storage.local.set({ connectionState, lastNativeError });
+      if (shouldReconnect) {
+        scheduleNativeReconnect().catch((error) => {
+          lastNativeError = error.message;
+          chrome.storage.local.set({ lastNativeError });
+        });
+      }
     });
 
     await sendHello();
     await syncGrantedHostPermissions();
+    await syncBlockedOrigins();
     connectionState = 'CONNECTED';
+    await clearNativeReconnect();
     await chrome.storage.local.set({ connectionState, lastNativeError: null });
   } catch (error) {
     lastNativeError = error.message;
     connectionState = 'ERROR';
     nativePort = null;
     await chrome.storage.local.set({ connectionState, lastNativeError });
+    if (retryOnFailure) {
+      await scheduleNativeReconnect();
+    }
   }
 }
 
 async function handleNativeMessage(message) {
+  if (isFatalNativeResponse(message)) {
+    await closeNativeAfterFatalResponse(message);
+    return;
+  }
+
   if (message && message.type === 'command') {
     const response = await handleOperatorCommand(message);
     if (nativePort) {
@@ -244,6 +392,7 @@ async function syncPermissionsAfterChange() {
     await connectNative();
     if (nativePort) {
       await syncGrantedHostPermissions();
+      await syncBlockedOrigins();
     }
   } catch (error) {
     lastNativeError = error.message;
@@ -255,6 +404,24 @@ async function ensureContentScript(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
     files: ['actionPolicy.js', 'gateDetector.js', 'pageHandles.js', 'pageWait.js', 'fileUpload.js', 'cartWorkflow.js', 'contentScript.js']
+  });
+}
+
+async function openOperatorSidePanel(tab) {
+  const tabId = tab && tab.id;
+  if (chrome.sidePanel && tabId) {
+    await chrome.sidePanel.setOptions({
+      tabId,
+      path: 'sidepanel.html',
+      enabled: true
+    });
+    await chrome.sidePanel.open({ tabId });
+    return;
+  }
+  await chrome.tabs.create({
+    active: true,
+    url: chrome.runtime.getURL('sidepanel.html'),
+    ...(tab && tab.windowId ? { windowId: tab.windowId } : {})
   });
 }
 
@@ -314,11 +481,52 @@ async function requireActiveTabForOrigin(origin) {
       }
     };
   }
-  if (!(await hasHostPermission(activeOrigin))) {
-    return { ok: false, error: { code: 'HOST_PERMISSION_REQUIRED', origin: activeOrigin } };
+  const blocked = await blockedOriginMatch(activeOrigin);
+  if (blocked) {
+    return {
+      ok: false,
+      error: {
+        code: 'SITE_BLOCKED_BY_USER_SETTINGS',
+        message: 'Origin is blocked by user extension settings.',
+        origin: activeOrigin,
+        blockedPattern: blocked.pattern
+      }
+    };
   }
   await ensureContentScript(tab.id);
   return { ok: true, tab, origin: activeOrigin };
+}
+
+async function preflightDebuggerAction(ready, action, params) {
+  if (action === 'scroll' && !params.handle) {
+    return { ok: true };
+  }
+
+  const preflight = await chrome.tabs.sendMessage(ready.tab.id, {
+    type: 'content.resolveActionTarget',
+    action,
+    handle: params.handle
+  });
+  if (!preflight || !preflight.ok) {
+    return preflight || {
+      ok: false,
+      error: {
+        code: 'ACTION_PREFLIGHT_FAILED',
+        message: 'Action target preflight failed.'
+      }
+    };
+  }
+
+  const risk = preflight.result && preflight.result.risk;
+  const approvedHighRisk = risk &&
+    params.approval &&
+    params.approval.allowHighRisk === true &&
+    params.approval.approvalKind === risk.approvalKind;
+  if (risk && !approvedHighRisk) {
+    return { ok: false, error: risk };
+  }
+
+  return { ok: true, result: preflight.result };
 }
 
 async function handleOperatorCommand(command) {
@@ -329,6 +537,19 @@ async function handleOperatorCommand(command) {
       const tab = await activeTabInfo();
       if (!tab || !tab.id) {
         return { ok: false, error: { code: 'NO_ACTIVE_TAB' } };
+      }
+      const targetOrigin = new URL(params.url).origin;
+      const blocked = await blockedOriginMatch(targetOrigin);
+      if (blocked) {
+        return {
+          ok: false,
+          error: {
+            code: 'SITE_BLOCKED_BY_USER_SETTINGS',
+            message: 'Origin is blocked by user extension settings.',
+            origin: targetOrigin,
+            blockedPattern: blocked.pattern
+          }
+        };
       }
       const targetTab = isExtensionPageTab(tab)
         ? await chrome.tabs.create({ active: true, url: params.url, windowId: tab.windowId })
@@ -429,17 +650,24 @@ async function handleOperatorCommand(command) {
       return { ok: false, error: { code: 'UNKNOWN_METHOD' } };
     }
 
-    return chrome.tabs.sendMessage(ready.tab.id, {
-      type: 'content.action',
+    const preflight = await preflightDebuggerAction(ready, action, params);
+    if (!preflight.ok) {
+      return preflight;
+    }
+
+    return runDebuggerAction({
+      chromeApi: chrome,
+      tab: ready.tab,
       action,
-      handle: params.handle,
-      text: params.text,
-      value: params.value,
-      checked: params.checked,
-      deltaX: params.deltaX,
-      deltaY: params.deltaY,
-      key: params.key,
-      approval: params.approval
+      params: {
+        handle: params.handle,
+        text: params.text,
+        value: params.value,
+        checked: params.checked,
+        deltaX: params.deltaX,
+        deltaY: params.deltaY,
+        key: params.key
+      }
     });
   } catch (error) {
     return {
@@ -466,12 +694,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message && message.type === 'operator.blockedOriginsStatus') {
+      const blockedOrigins = await getBlockedOrigins();
+      const match = message.origin
+        ? blockedOrigins.find((pattern) => blockedPatternMatchesOrigin(pattern, message.origin))
+        : null;
+      sendResponse({
+        ok: true,
+        origin: message.origin || null,
+        blockedOrigins,
+        blocked: Boolean(match),
+        blockedPattern: match || null
+      });
+      return;
+    }
+
+    if (message && message.type === 'operator.setBlockedOrigins') {
+      const blockedOrigins = await setBlockedOrigins(message.blockedOrigins);
+      await connectNative();
+      await syncBlockedOrigins();
+      sendResponse({ ok: true, blockedOrigins });
+      return;
+    }
+
     if (message && message.type === 'operator.hostPermissionGranted') {
       await connectNative();
-      const binding = await getProfileBinding();
       postNativeRpc('extension.hostPermissionGranted', {
-        origin: message.origin,
-        profileBindingId: binding.profileBindingId
+        origin: message.origin
       });
       await syncGrantedHostPermissions();
       sendResponse({ ok: true, origin: message.origin });
@@ -504,8 +753,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
       const origin = new URL(tab.url).origin;
-      if (!(await hasHostPermission(origin))) {
-        sendResponse({ ok: false, error: { code: 'HOST_PERMISSION_REQUIRED', origin } });
+      const blocked = await blockedOriginMatch(origin);
+      if (blocked) {
+        sendResponse({
+          ok: false,
+          error: {
+            code: 'SITE_BLOCKED_BY_USER_SETTINGS',
+            origin,
+            blockedPattern: blocked.pattern
+          }
+        });
         return;
       }
       await ensureContentScript(tab.id);
@@ -519,8 +776,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+function configureSidePanelBehavior() {
+  if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  }
+}
+
+function wakeNativeBridge() {
+  connectNative({ retryOnFailure: true }).catch((error) => {
+    lastNativeError = error.message;
+    chrome.storage.local.set({ lastNativeError });
+  });
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ connectionState: 'DISCONNECTED' });
+  configureSidePanelBehavior();
+  wakeNativeBridge();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  configureSidePanelBehavior();
+  wakeNativeBridge();
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm && alarm.name === NATIVE_RECONNECT_ALARM) {
+    wakeNativeBridge();
+  }
+});
+
+chrome.action.onClicked.addListener((tab) => {
+  openOperatorSidePanel(tab).catch((error) => {
+    lastNativeError = error.message;
+    chrome.storage.local.set({ lastNativeError });
+  });
 });
 
 chrome.permissions.onAdded.addListener(syncPermissionsAfterChange);

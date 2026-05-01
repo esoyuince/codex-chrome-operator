@@ -10,9 +10,7 @@ const {
 } = require('./protocol');
 const { AuditLog } = require('./auditLog');
 const {
-  buildProfileSetupUrl,
-  discoverChromeProfiles,
-  generateProfileBindingId
+  discoverChromeProfiles
 } = require('./profileManager');
 const {
   ScreenshotStore,
@@ -53,6 +51,7 @@ function clearsLastErrorOnSuccess(method) {
     'operator.approveDomain',
     'operator.revokeDomain',
     'extension.hostPermissionGranted',
+    'extension.blockedOriginsSynced',
     'operator.profile.bind',
     'operator.profile.verify',
     'operator.profiles.discover',
@@ -164,17 +163,16 @@ function summarizeReadiness({
   origin,
   profileVerified,
   domainApproved,
-  hostPermissionGranted
+  hostPermissionGranted,
+  siteBlocked = false,
+  blockedPattern = null
 }) {
   const missing = [];
-  if (!profileVerified) {
-    missing.push('profile');
-  }
   if (!domainApproved) {
     missing.push('domainApproval');
   }
-  if (!hostPermissionGranted) {
-    missing.push('hostPermission');
+  if (siteBlocked) {
+    missing.push('siteAllowed');
   }
   return {
     origin,
@@ -182,6 +180,8 @@ function summarizeReadiness({
     profileVerified,
     domainApproved,
     hostPermissionGranted,
+    siteBlocked: Boolean(siteBlocked),
+    blockedPattern,
     missing
   };
 }
@@ -257,18 +257,11 @@ function summarizeActiveTabForEvent(tab) {
 class SessionManager {
   constructor(config = {}) {
     this.stateStore = config.stateStore || new OperatorStateStore({ statePath: config.statePath });
-    const configuredProfile = this.stateStore.getConfiguredProfile();
     this.config = {
       expectedExtensionId: config.expectedExtensionId || 'development-extension-id',
-      expectedProfileBindingId: (configuredProfile && configuredProfile.profileBindingId)
-        || config.expectedProfileBindingId
-        || 'profbind_developmentBinding01',
-      expectedProfileBindingVersion: (configuredProfile && configuredProfile.profileBindingVersion)
-        || config.expectedProfileBindingVersion
-        || 1,
       expectedProtocolVersion: config.expectedProtocolVersion || '1.0',
-      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.0',
-      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.0',
+      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.5',
+      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.5',
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       visualAnalyzerRegistry: config.visualAnalyzerRegistry || createVisualAnalyzerRegistry(),
@@ -285,7 +278,7 @@ class SessionManager {
     this.siteProfiles = this.config.siteProfiles;
     this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
     this.profileVerified = false;
-    this.profileBindingStatus = 'unverified';
+    this.profileBindingStatus = 'not-required';
     this.bridgeInstanceId = null;
     this.connectionId = null;
     this.lastDisconnect = null;
@@ -295,7 +288,9 @@ class SessionManager {
     this.lastError = null;
     this.commandQueue = [];
     this.pendingCommands = new Map();
+    this.pendingBridgePolls = new Map();
     this.nextCommandId = 1;
+    this.nextBridgePollId = 1;
     this.pendingApprovals = new Map();
     this.nextApprovalId = 1;
     this.lastVersionMismatch = null;
@@ -321,6 +316,7 @@ class SessionManager {
       profileBindingStatus: this.profileBindingStatus,
       approvedOrigins: this.activeDomainApprovalOrigins(),
       hostPermissionOrigins: [...this.hostPermissions],
+      blockedOrigins: this.stateStore.listBlockedOrigins(),
       domainApprovals: this.stateStore.listDomainApprovals(),
       configuredProfile: this.stateStore.getConfiguredProfile(),
       pendingApprovals: this.listApprovalRecords({ status: 'pending' }),
@@ -374,6 +370,9 @@ class SessionManager {
         break;
       case 'extension.hostPermissionsSynced':
         response = this.hostPermissionsSynced(id, params);
+        break;
+      case 'extension.blockedOriginsSynced':
+        response = this.blockedOriginsSynced(id, params);
         break;
       case 'extension.activeTabUpdated':
         response = this.activeTabUpdated(id, params);
@@ -451,7 +450,7 @@ class SessionManager {
         response = await this.routePageCommand(id, request.method, params);
         break;
       case 'bridge.poll':
-        response = this.pollBridge(id, params);
+        response = await this.pollBridge(id, params);
         break;
       case 'bridge.deliver':
         response = this.deliverBridgeResponse(id, params);
@@ -569,6 +568,16 @@ class SessionManager {
       return;
     }
 
+    if (method === 'extension.blockedOriginsSynced') {
+      this.recordRecentEvent({
+        type: 'blockedOrigins',
+        method,
+        result,
+        errorCode
+      });
+      return;
+    }
+
     if (method.startsWith('page.') && !response.ok) {
       this.recordRecentEvent({
         type: 'pageCommandFailed',
@@ -652,7 +661,7 @@ class SessionManager {
       this.bridgeInstanceId &&
       bridgeInstanceId &&
       bridgeInstanceId !== this.bridgeInstanceId &&
-      ['EXTENSION_CONNECTED', 'EXTENSION_CONNECTED_SETUP_ONLY'].includes(this.connectionState)
+      this.connectionState === 'EXTENSION_CONNECTED'
     ) {
       return rpcError(id, {
         code: ERROR_CODES.EXTENSION_DISCONNECTED,
@@ -666,11 +675,7 @@ class SessionManager {
       expectedExtensionId: this.config.expectedExtensionId,
       expectedProtocolVersion: this.config.expectedProtocolVersion,
       expectedExtensionVersion: this.config.expectedExtensionVersion,
-      expectedBridgeVersion: this.config.expectedBridgeVersion,
-      expectedProfileBindingId: this.config.expectedProfileBindingId,
-      expectedProfileBindingVersion: this.config.expectedProfileBindingVersion,
-      allowUnboundSetup: true,
-      allowDevUnbound: true
+      expectedBridgeVersion: this.config.expectedBridgeVersion
     });
 
     if (!result.ok) {
@@ -689,16 +694,14 @@ class SessionManager {
 
     this.lastVersionMismatch = null;
     this.profileBindingStatus = result.profileBindingStatus;
-    this.profileVerified = result.profileBindingStatus === 'verified';
+    this.profileVerified = true;
     this.bridgeInstanceId = bridgeInstanceId;
     const previousState = this.connectionState;
     this.connectionId = makeConnectionId();
     if (previousState === 'RECONNECTING') {
       this.reconnectCount += 1;
     }
-    this.connectionState = this.profileVerified
-      ? 'EXTENSION_CONNECTED'
-      : 'EXTENSION_CONNECTED_SETUP_ONLY';
+    this.connectionState = 'EXTENSION_CONNECTED';
     this.updateActiveTab(params.activeTab || null);
 
     return rpcOk(id, {
@@ -747,20 +750,12 @@ class SessionManager {
 
   ensureStarted(id, params = {}) {
     const status = this.status();
-    const extensionConnected = [
-      'EXTENSION_CONNECTED',
-      'EXTENSION_CONNECTED_SETUP_ONLY'
-    ].includes(status.connectionState);
+    const extensionConnected = status.connectionState === 'EXTENSION_CONNECTED';
     const bootstrapUrl = `chrome-extension://${this.config.expectedExtensionId}/bootstrap.html?session=${makeBootstrapSessionId()}`;
     let readiness = null;
     if (params.origin || params.url) {
       const origin = originFromParams(params);
-      readiness = summarizeReadiness({
-        origin,
-        profileVerified: this.profileVerified,
-        domainApproved: this.hasDomainApproval(origin),
-        hostPermissionGranted: this.hasHostPermission(origin)
-      });
+      readiness = summarizeReadiness(this.readinessStateForOrigin(origin));
     }
 
     return rpcOk(id, {
@@ -806,12 +801,14 @@ class SessionManager {
       reconnectRequired: true,
       previousConnectionId
     });
+    const cancelledPolls = this.cancelBridgePolls();
 
     return rpcOk(id, {
       connectionState: this.connectionState,
       source: this.lastDisconnect.source,
       previousConnectionId,
-      ...cancelled
+      ...cancelled,
+      ...cancelledPolls
     });
   }
 
@@ -869,10 +866,7 @@ class SessionManager {
         message: 'origin is required.'
       });
     }
-    this.stateStore.grantHostPermission(origin, {
-      profileBindingId: params.profileBindingId || this.config.expectedProfileBindingId,
-      grantedAt: params.grantedAt
-    });
+    this.stateStore.grantHostPermission(origin, { grantedAt: params.grantedAt });
     this.hostPermissions = new Set(this.activeHostPermissionOrigins());
     return rpcOk(id, { origin, hostPermissionGranted: true });
   }
@@ -893,18 +887,35 @@ class SessionManager {
       });
     }
 
-    const profileBindingId = params.profileBindingId || this.config.expectedProfileBindingId;
     this.stateStore.syncHostPermissions({
-      profileBindingId,
       origins: params.origins,
       syncedAt: params.syncedAt
     });
     this.hostPermissions = new Set(this.activeHostPermissionOrigins());
 
     return rpcOk(id, {
-      profileBindingId,
       hostPermissionOrigins: [...this.hostPermissions]
     });
+  }
+
+  blockedOriginsSynced(id, params) {
+    const bridgeCheck = this.checkBridgeInstance(params);
+    if (!bridgeCheck.ok) {
+      return rpcOk(id, {
+        ignored: true,
+        reason: 'bridgeInstanceMismatch',
+        blockedOrigins: this.stateStore.listBlockedOrigins()
+      });
+    }
+    if (!Array.isArray(params.blockedOrigins)) {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_SCHEMA,
+        message: 'blockedOrigins array is required.'
+      });
+    }
+
+    const blockedOrigins = this.stateStore.setBlockedOrigins(params.blockedOrigins);
+    return rpcOk(id, { blockedOrigins });
   }
 
   activeHostPermissionOrigins() {
@@ -914,16 +925,23 @@ class SessionManager {
 
   hasHostPermission(origin) {
     const permission = this.stateStore.getHostPermission(origin);
-    if (!permission) {
-      return false;
-    }
+    return Boolean(permission);
+  }
 
-    const configuredProfile = this.stateStore.getConfiguredProfile();
-    const expectedProfileBindingId = configuredProfile
-      ? configuredProfile.profileBindingId
-      : this.config.expectedProfileBindingId;
+  blockedOriginMatch(origin) {
+    return this.stateStore.blockedOriginMatch(origin);
+  }
 
-    return permission.profileBindingId === expectedProfileBindingId;
+  readinessStateForOrigin(origin) {
+    const blocked = this.blockedOriginMatch(origin);
+    return {
+      origin,
+      profileVerified: this.profileVerified,
+      domainApproved: this.hasDomainApproval(origin),
+      hostPermissionGranted: this.hasHostPermission(origin),
+      siteBlocked: Boolean(blocked),
+      blockedPattern: blocked ? blocked.pattern : null
+    };
   }
 
   discoverProfiles(id, params) {
@@ -942,31 +960,16 @@ class SessionManager {
       });
     }
 
-    const profileBindingId = params.profileBindingId || generateProfileBindingId();
-    const profileBindingVersion = params.profileBindingVersion || 1;
     const configuredProfile = this.stateStore.setConfiguredProfile({
       userDataDir: params.userDataDir,
       profileDirectory: params.profileDirectory,
-      profileLabel: params.profileLabel,
-      profileBindingId,
-      profileBindingVersion
+      profileLabel: params.profileLabel
     });
 
-    this.config.expectedProfileBindingId = profileBindingId;
-    this.config.expectedProfileBindingVersion = profileBindingVersion;
-    this.profileVerified = false;
-    this.profileBindingStatus = 'binding-pending';
-    this.connectionState = 'EXTENSION_CONNECTED_SETUP_ONLY';
+    this.profileBindingStatus = 'not-required';
     this.hostPermissions = new Set(this.activeHostPermissionOrigins());
 
-    return rpcOk(id, {
-      ...configuredProfile,
-      setupUrl: buildProfileSetupUrl({
-        extensionId: this.config.expectedExtensionId,
-        profileBindingId,
-        profileBindingVersion
-      })
-    });
+    return rpcOk(id, configuredProfile);
   }
 
   verifyProfile(id) {
@@ -987,20 +990,9 @@ class SessionManager {
 
   verifyReadiness(id, params) {
     const origin = params.origin || (params.url ? new URL(params.url).origin : undefined);
-    const profileVerified = this.profileVerified;
-    const domainApproved = this.hasDomainApproval(origin);
-    const hostPermissionGranted = this.hasHostPermission(origin);
-    const summary = summarizeReadiness({
-      origin,
-      profileVerified,
-      domainApproved,
-      hostPermissionGranted
-    });
-    const readiness = assertReadyForRealSiteAction({
-      profileVerified,
-      domainApproved,
-      hostPermissionGranted
-    });
+    const readinessState = this.readinessStateForOrigin(origin);
+    const summary = summarizeReadiness(readinessState);
+    const readiness = assertReadyForRealSiteAction(readinessState);
     return rpcOk(id, {
       ...summary,
       ready: readiness.ok,
@@ -1044,30 +1036,6 @@ class SessionManager {
     const validation = validateBoundedFullAutoContract(contract);
     if (!validation.ok) {
       return rpcError(id, validation.error);
-    }
-
-    if (
-      contract.profileBindingId &&
-      contract.profileBindingId !== this.config.expectedProfileBindingId
-    ) {
-      return rpcError(id, {
-        code: ERROR_CODES.BOUNDED_FULL_AUTO_PROFILE_MISMATCH,
-        message: 'Bounded Full Auto contract profile binding does not match configured profile.',
-        expectedProfileBindingId: this.config.expectedProfileBindingId,
-        actualProfileBindingId: contract.profileBindingId
-      });
-    }
-
-    if (
-      contract.profileBindingVersion !== undefined &&
-      contract.profileBindingVersion !== this.config.expectedProfileBindingVersion
-    ) {
-      return rpcError(id, {
-        code: ERROR_CODES.BOUNDED_FULL_AUTO_PROFILE_MISMATCH,
-        message: 'Bounded Full Auto contract profile binding version does not match configured profile.',
-        expectedProfileBindingVersion: this.config.expectedProfileBindingVersion,
-        actualProfileBindingVersion: contract.profileBindingVersion
-      });
     }
 
     const startedAtMs = Date.now();
@@ -1373,11 +1341,7 @@ class SessionManager {
       return rpcError(id, target.error);
     }
     const origin = prepareCart ? prepareCart.origin : (target ? target.origin : originFromParams(params));
-    const readiness = assertReadyForRealSiteAction({
-      profileVerified: this.profileVerified,
-      domainApproved: this.hasDomainApproval(origin),
-      hostPermissionGranted: this.hasHostPermission(origin)
-    });
+    const readiness = assertReadyForRealSiteAction(this.readinessStateForOrigin(origin));
 
     if (!readiness.ok) {
       return rpcError(id, readiness.error);
@@ -1579,6 +1543,20 @@ class SessionManager {
     };
   }
 
+  cancelBridgePolls() {
+    const cancelledBridgePolls = this.pendingBridgePolls.size;
+    for (const poll of this.pendingBridgePolls.values()) {
+      clearTimeout(poll.timeout);
+      poll.resolve(rpcOk(poll.requestId, {
+        command: null,
+        cancelled: true,
+        reason: 'bridgeDisconnected'
+      }));
+    }
+    this.pendingBridgePolls.clear();
+    return { cancelledBridgePolls };
+  }
+
   activateEmergencyStop(id, params = {}) {
     this.emergencyStop = {
       active: true,
@@ -1709,9 +1687,8 @@ class SessionManager {
     }
 
     const readiness = assertReadyForRealSiteAction({
-      profileVerified: this.profileVerified,
-      domainApproved: this.approvedOrigins.has(record.origin),
-      hostPermissionGranted: this.hasHostPermission(record.origin)
+      ...this.readinessStateForOrigin(record.origin),
+      domainApproved: this.approvedOrigins.has(record.origin)
     });
     if (!readiness.ok) {
       return rpcError(id, readiness.error);
@@ -1746,7 +1723,6 @@ class SessionManager {
       method,
       params
     };
-    this.commandQueue.push(command);
     this.recordRecentEvent({
       type: 'pageCommandQueued',
       method,
@@ -1778,10 +1754,23 @@ class SessionManager {
         resolve,
         timeout
       });
+      this.commandQueue.push(command);
+      this.flushBridgePolls();
     });
   }
 
-  pollBridge(id, params = {}) {
+  flushBridgePolls() {
+    while (this.pendingBridgePolls.size > 0 && this.commandQueue.length > 0) {
+      const [pollId, poll] = this.pendingBridgePolls.entries().next().value;
+      this.pendingBridgePolls.delete(pollId);
+      clearTimeout(poll.timeout);
+      poll.resolve(rpcOk(poll.requestId, {
+        command: this.commandQueue.shift()
+      }));
+    }
+  }
+
+  async pollBridge(id, params = {}) {
     const bridgeCheck = this.checkBridgeInstance(params);
     if (!bridgeCheck.ok) {
       return rpcOk(id, {
@@ -1791,8 +1780,31 @@ class SessionManager {
         currentBridgeInstanceId: this.bridgeInstanceId
       });
     }
-    return rpcOk(id, {
-      command: this.commandQueue.shift() || null
+    const command = this.commandQueue.shift() || null;
+    if (command || params.wait !== true) {
+      return rpcOk(id, { command });
+    }
+
+    const requestedTimeoutMs = Number(params.timeoutMs);
+    const timeoutMs = Number.isFinite(requestedTimeoutMs)
+      ? Math.min(30000, Math.max(100, requestedTimeoutMs))
+      : 25000;
+
+    return new Promise((resolve) => {
+      const pollId = `poll_${this.nextBridgePollId++}`;
+      const timeout = setTimeout(() => {
+        this.pendingBridgePolls.delete(pollId);
+        resolve(rpcOk(id, { command: null, timedOut: true }));
+      }, timeoutMs);
+      if (typeof timeout.unref === 'function') {
+        timeout.unref();
+      }
+      this.pendingBridgePolls.set(pollId, {
+        requestId: id,
+        resolve,
+        timeout
+      });
+      this.flushBridgePolls();
     });
   }
 

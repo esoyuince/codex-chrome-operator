@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Codex Chrome Operator icon">
+  <defs>
+    <linearGradient id="bg" x1="20" y1="12" x2="110" y2="118" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#172033"/>
+      <stop offset="1" stop-color="#0a1020"/>
+    </linearGradient>
+    <linearGradient id="cursor" x1="44" y1="42" x2="82" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dbeafe"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#bg)"/>
+  <path d="M83 32a37 37 0 1 0 0 64" fill="none" stroke="#38bdf8" stroke-width="11" stroke-linecap="round"/>
+  <path d="M50 39 91 66 72 73 82 96 69 102 59 80 43 92z" fill="url(#cursor)" stroke="#0f172a" stroke-width="4" stroke-linejoin="round"/>
+  <circle cx="94" cy="34" r="10" fill="#22c55e" stroke="#dcfce7" stroke-width="4"/>
+</svg>

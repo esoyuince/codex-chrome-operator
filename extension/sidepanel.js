@@ -5,15 +5,15 @@ const els = {
   badge: document.getElementById('status-badge'),
   connection: document.getElementById('connection'),
   nativeError: document.getElementById('native-error'),
-  profileState: document.getElementById('profile-state'),
-  profileDetail: document.getElementById('profile-detail'),
   tabTitle: document.getElementById('active-tab-title'),
   tabOrigin: document.getElementById('active-tab-origin'),
   tabLoading: document.getElementById('active-tab-loading'),
-  hostPermission: document.getElementById('host-permission'),
+  siteAccess: document.getElementById('site-access'),
+  blockedSites: document.getElementById('blocked-sites'),
+  blockedSitesDetail: document.getElementById('blocked-sites-detail'),
+  saveBlockedSites: document.getElementById('save-blocked-sites'),
   nextStep: document.getElementById('next-step'),
   connect: document.getElementById('connect'),
-  grantHost: document.getElementById('grant-host'),
   refresh: document.getElementById('refresh')
 };
 
@@ -33,11 +33,6 @@ function formatError(error) {
   return error.message || String(error);
 }
 
-function originPattern(origin) {
-  const url = new URL(origin);
-  return `${url.protocol}//${url.host}/*`;
-}
-
 function formatTabTitle(tab) {
   if (!tab) {
     return 'No active tab';
@@ -48,8 +43,6 @@ function formatTabTitle(tab) {
 async function readStorage() {
   try {
     return await chrome.storage.local.get([
-      'profileBindingId',
-      'profileBindingVersion',
       'connectionState',
       'lastNativeError'
     ]);
@@ -93,47 +86,28 @@ async function readActiveTabFallback() {
   }
 }
 
-async function hasHostPermission(origin) {
-  if (!origin || origin === 'null') {
-    return { available: false, granted: false, reason: 'No web origin' };
-  }
+async function readBlockedOriginsStatus(origin) {
   try {
     const response = await chrome.runtime.sendMessage({
-      type: 'operator.hasHostPermission',
+      type: 'operator.blockedOriginsStatus',
       origin
     });
     return {
-      available: true,
-      granted: Boolean(response && response.granted)
+      blockedOrigins: Array.isArray(response && response.blockedOrigins) ? response.blockedOrigins : [],
+      blocked: Boolean(response && response.blocked),
+      blockedPattern: response && response.blockedPattern ? response.blockedPattern : null
     };
-  } catch (messageError) {
-    try {
-      return {
-        available: true,
-        granted: await chrome.permissions.contains({ origins: [originPattern(origin)] })
-      };
-    } catch (permissionError) {
-      return {
-        available: false,
-        granted: false,
-        reason: formatError(permissionError) || formatError(messageError)
-      };
-    }
-  }
-}
-
-function profileFromStorage(storage) {
-  if (storage.profileBindingId && storage.profileBindingVersion) {
+  } catch (error) {
     return {
-      state: 'bound',
-      id: storage.profileBindingId,
-      version: storage.profileBindingVersion
+      blockedOrigins: [],
+      blocked: false,
+      blockedPattern: null,
+      error: formatError(error)
     };
   }
-  return { state: 'missing' };
 }
 
-function chooseNextStep({ connectionState, nativeError, statusError, profile, tab, permission }) {
+function chooseNextStep({ connectionState, nativeError, statusError, tab, blockedStatus }) {
   if (nativeError || connectionState === 'ERROR') {
     return 'Native bridge error detected. Reinstall or restart the native host, then use Connect.';
   }
@@ -143,26 +117,23 @@ function chooseNextStep({ connectionState, nativeError, statusError, profile, ta
   if (statusError) {
     return 'Background status failed. Reload the extension, then refresh this panel.';
   }
-  if (profile.state !== 'bound') {
-    return 'This Chrome profile is not bound. Open the daemon setup link and bind this profile.';
-  }
   if (!tab || !tab.origin || tab.origin === 'null') {
     return 'Open the site you want Codex to operate, then refresh this panel.';
   }
-  if (!permission.granted) {
-    return 'Grant host access for the active origin before asking Codex to observe or act.';
+  if (blockedStatus.blocked) {
+    return 'Remove the active origin from blocked sites before asking Codex to observe or act.';
   }
   return 'Ready for Codex operator commands on this active origin.';
 }
 
-function setBadge(connectionState, profile, permission, nativeError) {
+function setBadge(connectionState, blockedStatus, nativeError) {
   els.badge.className = 'badge';
   if (nativeError || connectionState === 'ERROR') {
     els.badge.classList.add('badge-error');
     els.badge.textContent = 'Needs repair';
     return;
   }
-  if (connectionState === 'CONNECTED' && profile.state === 'bound' && permission.granted) {
+  if (connectionState === 'CONNECTED' && !blockedStatus.blocked) {
     els.badge.classList.add('badge-ok');
     els.badge.textContent = 'Ready';
     return;
@@ -175,57 +146,54 @@ async function refresh() {
   els.summary.textContent = 'Checking Chrome operator status...';
   els.connect.disabled = true;
   els.refresh.disabled = true;
-  els.grantHost.hidden = true;
+  els.saveBlockedSites.disabled = true;
 
   const storage = await readStorage();
   const status = await readStatus();
   const fallbackTab = status.ok ? null : await readActiveTabFallback();
   const tab = (status && status.activeTab) || fallbackTab;
-  const profile = profileFromStorage(storage);
   const connectionState = (status && status.connectionState) || storage.connectionState || 'UNKNOWN';
   const nativeError = (status && status.lastNativeError) || storage.lastNativeError || null;
   const statusError = status.statusError || null;
-  const permission = await hasHostPermission(tab && tab.origin);
+  const blockedStatus = await readBlockedOriginsStatus(tab && tab.origin);
 
   currentOrigin = tab && tab.origin && tab.origin !== 'null' ? tab.origin : null;
 
   setText(els.connection, connectionState);
   setText(els.nativeError, nativeError ? `Native error: ${nativeError}` : 'No native error reported.');
 
-  setText(els.profileState, profile.state === 'bound' ? 'Bound' : 'Missing');
-  setText(
-    els.profileDetail,
-    profile.state === 'bound'
-      ? `id: ${profile.id} / version: ${profile.version}`
-      : storage.storageError
-        ? `Storage read failed: ${storage.storageError}`
-        : 'No profileBindingId/profileBindingVersion in chrome.storage.local.'
-  );
-
   setText(els.tabTitle, formatTabTitle(tab));
   setText(els.tabOrigin, tab && tab.origin ? tab.origin : 'none');
   setText(els.tabLoading, tab && tab.loadingState ? tab.loadingState : 'unknown');
   setText(
-    els.hostPermission,
-    permission.available ? (permission.granted ? 'Granted' : 'Missing') : (permission.reason || 'Not available')
+    els.siteAccess,
+    blockedStatus.blocked ? `Blocked by ${blockedStatus.blockedPattern}` : 'Allowed'
+  );
+  els.blockedSites.value = blockedStatus.blockedOrigins.join('\n');
+  setText(
+    els.blockedSitesDetail,
+    blockedStatus.error
+      ? `Blocked-site settings unavailable: ${blockedStatus.error}`
+      : blockedStatus.blockedOrigins.length === 0
+        ? 'No blocked sites configured.'
+        : `${blockedStatus.blockedOrigins.length} blocked site${blockedStatus.blockedOrigins.length === 1 ? '' : 's'} saved.`
   );
 
   els.nextStep.textContent = chooseNextStep({
     connectionState,
     nativeError,
     statusError,
-    profile,
     tab,
-    permission
+    blockedStatus
   });
   els.summary.textContent = status.statusError
     ? 'Background status failed; showing storage and tab fallback state.'
     : 'Live status from the extension background service worker.';
 
-  setBadge(connectionState, profile, permission, nativeError);
-  els.grantHost.hidden = !currentOrigin || permission.granted;
+  setBadge(connectionState, blockedStatus, nativeError);
   els.connect.disabled = false;
   els.refresh.disabled = false;
+  els.saveBlockedSites.disabled = false;
 }
 
 els.connect.addEventListener('click', async () => {
@@ -240,35 +208,35 @@ els.connect.addEventListener('click', async () => {
 
 els.refresh.addEventListener('click', refresh);
 
-els.grantHost.addEventListener('click', async () => {
-  if (!currentOrigin) {
-    return;
-  }
-  els.grantHost.disabled = true;
+els.saveBlockedSites.addEventListener('click', async () => {
+  els.saveBlockedSites.disabled = true;
   try {
-    const granted = await chrome.permissions.request({ origins: [originPattern(currentOrigin)] });
-    if (granted) {
-      await chrome.runtime.sendMessage({
-        type: 'operator.hostPermissionGranted',
-        origin: currentOrigin
-      });
-    }
-    els.nextStep.textContent = granted ? 'Host access granted.' : 'Host access was not granted.';
+    const blockedOrigins = els.blockedSites.value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const response = await chrome.runtime.sendMessage({
+      type: 'operator.setBlockedOrigins',
+      blockedOrigins
+    });
+    const count = Array.isArray(response && response.blockedOrigins) ? response.blockedOrigins.length : 0;
+    els.nextStep.textContent = `Blocked-site settings saved (${count}).`;
   } catch (error) {
-    els.nextStep.textContent = `Host access request failed: ${formatError(error) || 'unknown error'}`;
+    els.nextStep.textContent = `Blocked-site save failed: ${formatError(error) || 'unknown error'}`;
   } finally {
-    els.grantHost.disabled = false;
+    els.saveBlockedSites.disabled = false;
     await refresh();
   }
 });
 
 refresh().catch((error) => {
   setText(els.connection, 'UNKNOWN');
-  setText(els.nativeError, `Popup render failed: ${formatError(error) || 'unknown error'}`);
-  els.summary.textContent = 'Popup rendered in fallback mode.';
-  els.nextStep.textContent = 'Reload the extension popup. If this repeats, inspect the extension console.';
+  setText(els.nativeError, `Side panel render failed: ${formatError(error) || 'unknown error'}`);
+  els.summary.textContent = 'Side panel rendered in fallback mode.';
+  els.nextStep.textContent = 'Reload the extension side panel. If this repeats, inspect the extension console.';
   els.badge.className = 'badge badge-error';
   els.badge.textContent = 'Popup error';
   els.connect.disabled = false;
   els.refresh.disabled = false;
+  els.saveBlockedSites.disabled = false;
 });

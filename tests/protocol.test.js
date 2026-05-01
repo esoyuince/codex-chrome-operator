@@ -13,8 +13,8 @@ function boundHello(overrides = {}) {
     type: 'HELLO',
     protocolVersion: '1.0',
     extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    extensionVersion: '0.2.0',
-    bridgeVersion: '0.2.0',
+    extensionVersion: '0.2.5',
+    bridgeVersion: '0.2.5',
     sessionBootstrapId: 'boot_abc',
     profileBindingState: 'bound',
     profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -25,20 +25,23 @@ function boundHello(overrides = {}) {
   };
 }
 
-test('validateHello accepts production bound profile metadata', () => {
-  const result = validateHello(boundHello(), {
+test('validateHello accepts extension HELLO without profile binding', () => {
+  const result = validateHello(boundHello({
+    profileBindingState: 'not-required',
+    profileBindingId: undefined,
+    profileBindingVersion: undefined,
+    profileBindingSource: 'implicit-extension'
+  }), {
     expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    expectedProfileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
-    expectedProfileBindingVersion: 3,
     allowUnboundSetup: false,
     allowDevUnbound: false
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.profileBindingStatus, 'verified');
+  assert.equal(result.profileBindingStatus, 'not-required');
 });
 
-test('validateHello rejects missing profile binding for production work', () => {
+test('validateHello treats missing legacy profile binding as not required', () => {
   const result = validateHello(boundHello({
     profileBindingState: 'missing',
     profileBindingId: undefined,
@@ -51,26 +54,11 @@ test('validateHello rejects missing profile binding for production work', () => 
     allowDevUnbound: false
   });
 
-  assert.equal(result.ok, false);
-  assert.equal(result.error.code, ERROR_CODES.PROFILE_BINDING_MISSING);
-});
-
-test('validateHello accepts unbound setup hello only for setup flows', () => {
-  const result = validateHello(boundHello({
-    profileBindingState: 'missing',
-    profileBindingId: undefined,
-    profileBindingVersion: undefined
-  }), {
-    expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    allowUnboundSetup: true,
-    allowDevUnbound: false
-  });
-
   assert.equal(result.ok, true);
-  assert.equal(result.profileBindingStatus, 'setup-unbound');
+  assert.equal(result.profileBindingStatus, 'not-required');
 });
 
-test('validateHello rejects unbound setup hello carrying binding fields', () => {
+test('validateHello accepts legacy binding fields without using them', () => {
   const result = validateHello(boundHello({
     profileBindingState: 'missing'
   }), {
@@ -79,11 +67,11 @@ test('validateHello rejects unbound setup hello carrying binding fields', () => 
     allowDevUnbound: false
   });
 
-  assert.equal(result.ok, false);
-  assert.equal(result.error.code, ERROR_CODES.INVALID_SCHEMA);
+  assert.equal(result.ok, true);
+  assert.equal(result.profileBindingStatus, 'not-required');
 });
 
-test('validateHello rejects stale profile binding version', () => {
+test('validateHello ignores stale legacy profile binding version', () => {
   const result = validateHello(boundHello({ profileBindingVersion: 2 }), {
     expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
     expectedProfileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -92,45 +80,68 @@ test('validateHello rejects stale profile binding version', () => {
     allowDevUnbound: false
   });
 
-  assert.equal(result.ok, false);
-  assert.equal(result.error.code, ERROR_CODES.PROFILE_BINDING_STALE);
+  assert.equal(result.ok, true);
+  assert.equal(result.profileBindingStatus, 'not-required');
 });
 
 test('validateHello rejects protocol extension and bridge version mismatch', () => {
   const commonOptions = {
     expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
     expectedProtocolVersion: '1.0',
-    expectedExtensionVersion: '0.2.0',
-    expectedBridgeVersion: '0.2.0',
+    expectedExtensionVersion: '0.2.5',
+    expectedBridgeVersion: '0.2.5',
     expectedProfileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
     expectedProfileBindingVersion: 3,
     allowUnboundSetup: false,
     allowDevUnbound: false
   };
 
-  assert.equal(validateHello(boundHello({ protocolVersion: '2.0' }), commonOptions).error.code, ERROR_CODES.PROTOCOL_VERSION_MISMATCH);
-  assert.equal(validateHello(boundHello({ extensionVersion: '0.3.0' }), commonOptions).error.code, ERROR_CODES.EXTENSION_VERSION_MISMATCH);
-  assert.equal(validateHello(boundHello({ bridgeVersion: '0.3.0' }), commonOptions).error.code, ERROR_CODES.BRIDGE_VERSION_MISMATCH);
+  const protocolMismatch = validateHello(boundHello({ protocolVersion: '2.0' }), commonOptions);
+  assert.equal(protocolMismatch.error.code, ERROR_CODES.PROTOCOL_VERSION_MISMATCH);
+  assert.equal(protocolMismatch.error.expectedProtocolVersion, '1.0');
+  assert.equal(protocolMismatch.error.actualProtocolVersion, '2.0');
+
+  const extensionMismatch = validateHello(boundHello({ extensionVersion: '0.3.0' }), commonOptions);
+  assert.equal(extensionMismatch.error.code, ERROR_CODES.EXTENSION_VERSION_MISMATCH);
+  assert.equal(extensionMismatch.error.expectedExtensionVersion, '0.2.5');
+  assert.equal(extensionMismatch.error.actualExtensionVersion, '0.3.0');
+
+  const bridgeMismatch = validateHello(boundHello({ bridgeVersion: '0.3.0' }), commonOptions);
+  assert.equal(bridgeMismatch.error.code, ERROR_CODES.BRIDGE_VERSION_MISMATCH);
+  assert.equal(bridgeMismatch.error.expectedBridgeVersion, '0.2.5');
+  assert.equal(bridgeMismatch.error.actualBridgeVersion, '0.3.0');
 });
 
-test('assertReadyForRealSiteAction fails closed without profile or host permission', () => {
+test('assertReadyForRealSiteAction gates domain and user blocked sites without profile binding', () => {
   assert.equal(assertReadyForRealSiteAction({
     profileVerified: false,
     domainApproved: true,
     hostPermissionGranted: true
-  }).error.code, ERROR_CODES.PROFILE_BINDING_MISSING);
+  }).ok, true);
 
   assert.equal(assertReadyForRealSiteAction({
     profileVerified: true,
     domainApproved: true,
     hostPermissionGranted: false
-  }).error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+  }).ok, true);
 
   assert.equal(assertReadyForRealSiteAction({
     profileVerified: true,
     domainApproved: false,
     hostPermissionGranted: true
   }).error.code, ERROR_CODES.DOMAIN_NOT_APPROVED);
+
+  const blocked = assertReadyForRealSiteAction({
+    origin: 'https://bank.example',
+    profileVerified: true,
+    domainApproved: true,
+    hostPermissionGranted: false,
+    siteBlocked: true,
+    blockedPattern: 'bank.example'
+  });
+  assert.equal(blocked.error.code, ERROR_CODES.SITE_BLOCKED_BY_USER_SETTINGS);
+  assert.equal(blocked.error.origin, 'https://bank.example');
+  assert.equal(blocked.error.blockedPattern, 'bank.example');
 });
 
 test('validateBoundedFullAutoContract allows bounded non-final cart preparation only', () => {

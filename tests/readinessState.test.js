@@ -79,7 +79,7 @@ test('domain approval and host permission survive daemon session restart', async
   });
 });
 
-test('operator.profile.bind configures expected binding and verifyReadiness reports missing host permission', async () => {
+test('operator.profile.bind configures profile selection and verifyReadiness is ready without per-site host permission', async () => {
   const paths = tempPaths();
 
   await withServer(makeSession(paths), async (baseUrl) => {
@@ -92,17 +92,17 @@ test('operator.profile.bind configures expected binding and verifyReadiness repo
     });
 
     assert.equal(bind.ok, true);
-    assert.equal(bind.result.profileBindingId, 'profbind_boundProfile01');
-    assert.equal(bind.result.profileBindingVersion, 2);
-    assert.match(bind.result.setupUrl, /^chrome-extension:\/\/abcdefghijklmnopabcdefghijklmnop\/profileSetup\.html\?/);
+    assert.equal(bind.result.profileBindingId, undefined);
+    assert.equal(bind.result.profileBindingVersion, undefined);
+    assert.equal(bind.result.setupUrl, undefined);
 
     const hello = await postJson(baseUrl, 'extension.hello', {
       hello: {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_boundProfile01',
@@ -121,13 +121,54 @@ test('operator.profile.bind configures expected binding and verifyReadiness repo
       origin: 'https://example.com'
     });
     assert.equal(readiness.ok, true);
-    assert.equal(readiness.result.ready, false);
-    assert.deepEqual(readiness.result.missing, ['hostPermission']);
-    assert.equal(readiness.result.error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+    assert.equal(readiness.result.ready, true);
+    assert.deepEqual(readiness.result.missing, []);
+    assert.equal(readiness.result.hostPermissionGranted, false);
+    assert.equal(readiness.result.error, null);
   });
 });
 
-test('readiness ignores persisted host permission from a different profile binding', async () => {
+test('extension.blockedOriginsSynced blocks readiness for user blocked sites', async () => {
+  const paths = tempPaths();
+
+  await withServer(makeSession(paths), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_developmentBinding01',
+        profileBindingVersion: 1,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://login.internal.example'
+    });
+    const sync = await postJson(baseUrl, 'extension.blockedOriginsSynced', {
+      blockedOrigins: ['*.internal.example', 'https://bank.example']
+    });
+    assert.equal(sync.ok, true);
+    assert.deepEqual(sync.result.blockedOrigins, ['*.internal.example', 'https://bank.example']);
+
+    const readiness = await postJson(baseUrl, 'operator.verifyReadiness', {
+      origin: 'https://login.internal.example'
+    });
+    assert.equal(readiness.ok, true);
+    assert.equal(readiness.result.ready, false);
+    assert.equal(readiness.result.siteBlocked, true);
+    assert.equal(readiness.result.blockedPattern, '*.internal.example');
+    assert.deepEqual(readiness.result.missing, ['siteAllowed']);
+    assert.equal(readiness.result.error.code, ERROR_CODES.SITE_BLOCKED_BY_USER_SETTINGS);
+  });
+});
+
+test('readiness treats persisted host permission as profile-independent', async () => {
   const paths = tempPaths();
 
   await withServer(makeSession(paths), async (baseUrl) => {
@@ -153,8 +194,8 @@ test('readiness ignores persisted host permission from a different profile bindi
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_newProfile',
@@ -169,13 +210,14 @@ test('readiness ignores persisted host permission from a different profile bindi
       origin: 'https://example.com'
     });
     assert.equal(readiness.ok, true);
-    assert.equal(readiness.result.ready, false);
-    assert.deepEqual(readiness.result.missing, ['hostPermission']);
-    assert.equal(readiness.result.error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+    assert.equal(readiness.result.ready, true);
+    assert.equal(readiness.result.hostPermissionGranted, true);
+    assert.deepEqual(readiness.result.missing, []);
+    assert.equal(readiness.result.error, null);
   });
 });
 
-test('extension.hostPermissionsSynced replaces current profile permission set', async () => {
+test('extension.hostPermissionsSynced replaces the profile-independent permission set', async () => {
   const paths = tempPaths();
 
   await withServer(makeSession(paths), async (baseUrl) => {
@@ -190,8 +232,8 @@ test('extension.hostPermissionsSynced replaces current profile permission set', 
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_syncProfile',
@@ -226,12 +268,13 @@ test('extension.hostPermissionsSynced replaces current profile permission set', 
       origin: 'https://remove.example'
     });
     assert.equal(readiness.ok, true);
-    assert.equal(readiness.result.ready, false);
-    assert.deepEqual(readiness.result.missing, ['hostPermission']);
+    assert.equal(readiness.result.ready, true);
+    assert.equal(readiness.result.hostPermissionGranted, false);
+    assert.deepEqual(readiness.result.missing, []);
   });
 });
 
-test('readiness ignores host permission that does not match expected binding before profile setup', async () => {
+test('readiness does not require matching host permission once profile and domain are ready', async () => {
   const paths = tempPaths();
 
   await withServer(makeSession(paths), async (baseUrl) => {
@@ -247,8 +290,8 @@ test('readiness ignores host permission that does not match expected binding bef
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_developmentBinding01',
@@ -262,8 +305,9 @@ test('readiness ignores host permission that does not match expected binding bef
       origin: 'https://example.com'
     });
     assert.equal(readiness.ok, true);
-    assert.equal(readiness.result.ready, false);
-    assert.deepEqual(readiness.result.missing, ['hostPermission']);
+    assert.equal(readiness.result.ready, true);
+    assert.equal(readiness.result.hostPermissionGranted, true);
+    assert.deepEqual(readiness.result.missing, []);
   });
 });
 
@@ -276,8 +320,8 @@ test('expired domain approval is not ready even when host permission exists', as
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_developmentBinding01',
@@ -318,8 +362,8 @@ test('operator.revokeDomain removes approval but keeps host permission metadata'
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_developmentBinding01',
@@ -398,8 +442,8 @@ test('status recentEvents includes page command readiness failures', async () =>
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.0',
-        bridgeVersion: '0.2.0',
+        extensionVersion: '0.2.5',
+        bridgeVersion: '0.2.5',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_developmentBinding01',
@@ -411,6 +455,9 @@ test('status recentEvents includes page command readiness failures', async () =>
     await postJson(baseUrl, 'operator.approveDomain', {
       origin: 'https://example.com'
     });
+    await postJson(baseUrl, 'extension.blockedOriginsSynced', {
+      blockedOrigins: ['example.com']
+    });
 
     const result = await postJson(baseUrl, 'page.type', {
       origin: 'https://example.com',
@@ -418,7 +465,7 @@ test('status recentEvents includes page command readiness failures', async () =>
       text: 'super secret typed text'
     });
     assert.equal(result.ok, false);
-    assert.equal(result.error.code, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+    assert.equal(result.error.code, ERROR_CODES.SITE_BLOCKED_BY_USER_SETTINGS);
 
     const status = await postJson(baseUrl, 'operator.status');
     const failureEvent = status.result.recentEvents.find((event) => (
@@ -428,7 +475,7 @@ test('status recentEvents includes page command readiness failures', async () =>
     assert.equal(failureEvent.origin, 'https://example.com');
     assert.equal(failureEvent.actionKind, 'type');
     assert.equal(failureEvent.result, 'error');
-    assert.equal(failureEvent.errorCode, ERROR_CODES.HOST_PERMISSION_REQUIRED);
+    assert.equal(failureEvent.errorCode, ERROR_CODES.SITE_BLOCKED_BY_USER_SETTINGS);
     assert.equal(JSON.stringify(failureEvent).includes('super secret typed text'), false);
   });
 });

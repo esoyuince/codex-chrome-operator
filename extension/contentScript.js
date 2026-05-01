@@ -354,6 +354,37 @@ async function runAction(message) {
   return { ok: false, error: { code: 'UNKNOWN_ACTION' } };
 }
 
+async function resolveActionTarget(message) {
+  const detectedGates = globalThis.CodexGateDetector
+    ? globalThis.CodexGateDetector.detectGates(document)
+    : [];
+  const gateError = globalThis.CodexGateDetector
+    ? globalThis.CodexGateDetector.firstGateError(detectedGates)
+    : null;
+  if (gateError) {
+    return { ok: false, error: gateError };
+  }
+
+  const resolved = resolveHandle(message.handle);
+  if (!resolved.ok) {
+    return { ok: false, error: resolved.error };
+  }
+
+  const target = elementSummary(resolved.element, message.handle);
+  const risk = globalThis.CodexActionPolicy.classifyActionRisk({
+    action: message.action,
+    target
+  });
+
+  return {
+    ok: true,
+    result: {
+      target,
+      risk
+    }
+  };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     if (message && message.type === 'content.observe') {
@@ -402,6 +433,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message && message.type === 'content.action') {
       sendResponse(await runAction(message));
+      return;
+    }
+
+    if (message && message.type === 'content.resolveActionTarget') {
+      sendResponse(await resolveActionTarget(message));
       return;
     }
 

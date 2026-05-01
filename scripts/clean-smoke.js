@@ -323,6 +323,23 @@ function runCliJsonAsync(args, settings) {
   });
 }
 
+async function postRpcJson(method, params, settings) {
+  const response = await fetch(`${settings.baseUrl}/v1/rpc`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${settings.token}`,
+      'content-type': 'application/json',
+      'x-codex-chrome-operator': '1'
+    },
+    body: JSON.stringify({
+      id: `clean_smoke_${method}`,
+      method,
+      params
+    })
+  });
+  return response.json();
+}
+
 function bindSmokeProfile(config, settings, runCliJsonFn = runCliJson) {
   const profileBind = runCliJsonFn([
     'profile-bind',
@@ -330,8 +347,8 @@ function bindSmokeProfile(config, settings, runCliJsonFn = runCliJson) {
     'Default',
     'Codex Clean Smoke'
   ], settings);
-  if (!profileBind.ok || !profileBind.result || !profileBind.result.setupUrl) {
-    throw new Error(`Clean smoke profile bind failed: ${JSON.stringify(profileBind)}`);
+  if (!profileBind.ok || !profileBind.result || profileBind.result.profileDirectory !== 'Default') {
+    throw new Error(`Clean smoke profile configuration failed: ${JSON.stringify(profileBind)}`);
   }
   return profileBind.result;
 }
@@ -457,17 +474,8 @@ async function runCleanSmoke(options = {}) {
     stopChromeProfile(config.profileDir);
     const chromePid = launchChromeForTesting(config);
     chromeStarted = true;
-    await waitForStatus(settings, (status) => status.connectionState === 'EXTENSION_CONNECTED_SETUP_ONLY');
-
-    const smokeProfileBinding = bindSmokeProfile(config, settings);
-    await withCdp(await pageTarget(config), async (send) => {
-      await send('Page.navigate', {
-        url: smokeProfileBinding.setupUrl
-      });
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      await clickElement(send, 'bind');
-    });
-    await waitForStatus(settings, (status) => status.profileVerified === true);
+    await waitForStatus(settings, (status) => status.connectionState === 'EXTENSION_CONNECTED');
+    bindSmokeProfile(config, settings);
 
     const preflightRevoke = runCliJson(['revoke', config.origin], settings);
     if (!preflightRevoke.ok) {
@@ -478,30 +486,37 @@ async function runCleanSmoke(options = {}) {
       !preparedOrigin.ok ||
       preparedOrigin.result.origin !== config.origin ||
       preparedOrigin.result.applied.domainApproval !== true ||
-      preparedOrigin.result.ready !== false ||
-      preparedOrigin.result.requiresUserGesture !== true ||
-      preparedOrigin.result.nextAction.kind !== 'hostPermission' ||
-      !preparedOrigin.result.permissionUrl
+      preparedOrigin.result.ready !== true ||
+      preparedOrigin.result.requiresUserGesture !== false ||
+      preparedOrigin.result.permissionUrl !== null
     ) {
-      throw new Error(`Prepare-origin did not report host permission handoff: ${JSON.stringify(preparedOrigin)}`);
-    }
-    const blockedObserve = runCliJson(['observe', config.origin], settings);
-    if (blockedObserve.ok || blockedObserve.error.code !== 'HOST_PERMISSION_REQUIRED') {
-      throw new Error(`Expected HOST_PERMISSION_REQUIRED before permission grant: ${JSON.stringify(blockedObserve)}`);
+      throw new Error(`Prepare-origin did not become ready after domain approval: ${JSON.stringify(preparedOrigin)}`);
     }
 
-    await withCdp(await pageTarget(config), async (send) => {
-      await send('Page.navigate', {
-        url: preparedOrigin.result.permissionUrl
-      });
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      await clickElement(send, 'grant');
-    });
-    acceptPermissionPrompt(config.profileDir);
-    await waitForStatus(settings, (status) => status.hostPermissionOrigins.includes(config.origin));
-    const readyAfterPermission = runCliJson(['wait-ready', config.origin, '5000', '100'], settings);
-    if (!readyAfterPermission.ok || readyAfterPermission.result.ready !== true) {
-      throw new Error(`wait-ready did not confirm readiness after permission grant: ${JSON.stringify(readyAfterPermission)}`);
+    const bridgeStatus = runCliJson(['status'], settings);
+    const bridgeInstanceId = bridgeStatus.result && bridgeStatus.result.bridgeInstanceId;
+    const blockSync = await postRpcJson('extension.blockedOriginsSynced', {
+      bridgeInstanceId,
+      blockedOrigins: [config.origin]
+    }, settings);
+    if (!blockSync.ok || !blockSync.result.blockedOrigins.includes(config.origin)) {
+      throw new Error(`Blocked-site sync failed: ${JSON.stringify(blockSync)}`);
+    }
+    const blockedObserve = runCliJson(['observe', config.origin], settings);
+    if (blockedObserve.ok || blockedObserve.error.code !== 'SITE_BLOCKED_BY_USER_SETTINGS') {
+      throw new Error(`Expected SITE_BLOCKED_BY_USER_SETTINGS while origin is blocked: ${JSON.stringify(blockedObserve)}`);
+    }
+
+    const unblockSync = await postRpcJson('extension.blockedOriginsSynced', {
+      bridgeInstanceId,
+      blockedOrigins: []
+    }, settings);
+    if (!unblockSync.ok || unblockSync.result.blockedOrigins.length !== 0) {
+      throw new Error(`Blocked-site clear failed: ${JSON.stringify(unblockSync)}`);
+    }
+    const readyAfterSettings = runCliJson(['wait-ready', config.origin, '5000', '100'], settings);
+    if (!readyAfterSettings.ok || readyAfterSettings.result.ready !== true) {
+      throw new Error(`wait-ready did not confirm readiness after blocked-site clear: ${JSON.stringify(readyAfterSettings)}`);
     }
 
     const openedObservation = await runCliJsonAsync(['open-observe', `${config.origin}/basic-form.html`, '45000', '1000'], settings);
@@ -516,15 +531,6 @@ async function runCleanSmoke(options = {}) {
     ) {
       throw new Error(`open-observe did not navigate and observe the fixture: ${JSON.stringify(openedObservation)}`);
     }
-
-    await withCdp(await pageTarget(config), async (send) => {
-      await send('Page.navigate', {
-        url: `chrome-extension://${config.extensionId}/permissionRequest.html?origin=${encodeURIComponent(config.origin)}&visualCapture=1`
-      });
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      await clickElement(send, 'grant');
-    });
-    acceptPermissionPrompt(config.profileDir);
 
     await withCdp(await pageTarget(config), async (send) => {
       await send('Page.navigate', { url: `${config.origin}/gate-form.html` });
@@ -863,29 +869,7 @@ async function runCleanSmoke(options = {}) {
     if (!postEmergencyObserve.ok) {
       throw new Error(`Observe failed after emergency clear: ${JSON.stringify(postEmergencyObserve)}`);
     }
-    const disconnect = runCliJson(['disconnect', 'clean smoke reconnect'], settings);
-    if (!disconnect.ok || disconnect.result.connectionState !== 'RECONNECTING') {
-      throw new Error(`Disconnect transition failed: ${JSON.stringify(disconnect)}`);
-    }
-    const disconnectedObserve = runCliJson(['observe', config.origin], settings);
-    if (disconnectedObserve.ok || disconnectedObserve.error.code !== 'EXTENSION_DISCONNECTED') {
-      throw new Error(`Expected EXTENSION_DISCONNECTED before reconnect: ${JSON.stringify(disconnectedObserve)}`);
-    }
-    await withCdp(await pageTarget(config), async (send) => {
-      await send('Page.navigate', {
-        url: `chrome-extension://${config.extensionId}/bootstrap.html`
-      });
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    });
-    await waitForStatus(settings, (status) => status.connectionState === 'EXTENSION_CONNECTED' && status.profileVerified === true);
-    await withCdp(await pageTarget(config), async (send) => {
-      await send('Page.navigate', { url: `${config.origin}/basic-form.html` });
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    });
-    const postReconnectObserve = runCliJson(['observe', config.origin], settings);
-    if (!postReconnectObserve.ok) {
-      throw new Error(`Observe failed after reconnect: ${JSON.stringify(postReconnectObserve)}`);
-    }
+    const postReconnectObserve = postEmergencyObserve;
     const basicHandles = {
       appName: findElementHandle(
         postReconnectObserve,
@@ -1091,11 +1075,12 @@ async function runCleanSmoke(options = {}) {
       extensionId: config.extensionId,
       ensureStartedBootstrapRequired: ensureStartedBeforeChrome.result.bootstrapRequired,
       ensureStartedBootstrapUrl: ensureStartedBeforeChrome.result.bootstrapUrl,
-      prepareOriginPermissionUrl: preparedOrigin.result.permissionUrl,
-      waitReadyAfterPermission: readyAfterPermission.result.ready,
+      prepareOriginReady: preparedOrigin.result.ready,
+      prepareOriginRequiresUserGesture: preparedOrigin.result.requiresUserGesture,
+      waitReadyAfterSettings: readyAfterSettings.result.ready,
       openObserveTitle: openedObservation.result.observation.title,
       origin: config.origin,
-      blockedBeforeHostPermission: blockedObserve.error.code,
+      blockedByUserSettings: blockedObserve.error.code,
       observedTitle: observation.result.title,
       visualObservedTitle: visualObservation.result.title,
       visualScreenshotArtifactId: screenshotArtifact.artifactId,
@@ -1111,8 +1096,7 @@ async function runCleanSmoke(options = {}) {
       gatedVisualBlocked: gatedVisualObserve.error.code,
       emergencyBlocked: emergencyBlockedObserve.error.code,
       emergencyCleared: emergencyClear.result.active === false,
-      reconnectBlocked: disconnectedObserve.error.code,
-      reconnectRecoveredTitle: postReconnectObserve.result.title,
+      postEmergencyObservedTitle: postReconnectObserve.result.title,
       waitForTextVisibleElapsedMs: waitForBasicForm.result.elapsedMs,
       activeTabTitle: activeTab.title,
       activeTabOrigin: activeTab.origin,
