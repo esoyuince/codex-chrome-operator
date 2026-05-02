@@ -1664,7 +1664,19 @@ async function openObserve({
     request: {
       id: `${request.id}_observe`,
       method: 'page.observe',
-      params: { origin }
+      params: {
+        origin,
+        ...(request.params.mode === undefined ? {} : { mode: request.params.mode }),
+        ...(request.params.maxActionableHandles === undefined ? {} : {
+          maxActionableHandles: request.params.maxActionableHandles
+        }),
+        ...(request.params.summaryMaxChars === undefined ? {} : {
+          summaryMaxChars: request.params.summaryMaxChars
+        }),
+        ...(request.params.sincePageStateId === undefined ? {} : {
+          sincePageStateId: request.params.sincePageStateId
+        })
+      }
     }
   });
   if (!observation || !observation.ok) {

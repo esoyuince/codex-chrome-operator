@@ -12,18 +12,36 @@ const {
 test('listTools exposes strict versioned Codex browser tool definitions', () => {
   const tools = listTools();
   const openObserve = tools.find((tool) => tool.name === 'codex_chrome_open_observe');
+  const observe = tools.find((tool) => tool.name === 'codex_chrome_observe');
+  const status = tools.find((tool) => tool.name === 'codex_chrome_status');
   const profileOnboard = tools.find((tool) => tool.name === 'codex_chrome_profile_onboard');
   const uploadFile = tools.find((tool) => tool.name === 'codex_chrome_upload_file');
   const cartPrepare = tools.find((tool) => tool.name === 'codex_chrome_cart_prepare');
+  const extract = tools.find((tool) => tool.name === 'codex_chrome_extract');
   const readPage = tools.find((tool) => tool.name === 'codex_chrome_read_page');
   const batch = tools.find((tool) => tool.name === 'codex_chrome_batch');
+  const visualObserve = tools.find((tool) => tool.name === 'codex_chrome_visual_observe');
 
   assert.equal(ADAPTER_PROTOCOL_VERSION, '1.0');
+  assert.ok(status);
+  assert.equal(status.inputSchema.type, 'object');
+  assert.equal(status.inputSchema.additionalProperties, false);
+  assert.deepEqual(status.inputSchema.required, []);
+  assert.deepEqual(status.inputSchema.properties.detail.enum, ['compact', 'full']);
   assert.ok(openObserve);
   assert.equal(openObserve.inputSchema.type, 'object');
   assert.equal(openObserve.inputSchema.additionalProperties, false);
   assert.deepEqual(openObserve.inputSchema.required, ['url']);
+  assert.deepEqual(openObserve.inputSchema.properties.mode.enum, ['tiny', 'medium', 'full']);
+  assert.equal(openObserve.inputSchema.properties.maxActionableHandles.minimum, 1);
+  assert.equal(openObserve.inputSchema.properties.summaryMaxChars.minimum, 1);
+  assert.equal(openObserve.inputSchema.properties.sincePageStateId.type, 'string');
   assert.equal(openObserve.outputContract.untrusted, true);
+  assert.ok(observe);
+  assert.deepEqual(observe.inputSchema.properties.mode.enum, ['tiny', 'medium', 'full']);
+  assert.equal(observe.inputSchema.properties.maxActionableHandles.minimum, 1);
+  assert.equal(observe.inputSchema.properties.summaryMaxChars.minimum, 1);
+  assert.equal(observe.inputSchema.properties.sincePageStateId.type, 'string');
   assert.ok(profileOnboard);
   assert.equal(profileOnboard.inputSchema.type, 'object');
   assert.equal(profileOnboard.inputSchema.additionalProperties, false);
@@ -43,6 +61,15 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.match(cartPrepare.description, /stop before checkout\/payment/i);
   assert.equal(cartPrepare.outputContract.untrusted, true);
   assert.equal(cartPrepare.outputContract.rawScreenshotBytes, false);
+  assert.ok(extract);
+  assert.equal(extract.inputSchema.type, 'object');
+  assert.equal(extract.inputSchema.additionalProperties, false);
+  assert.deepEqual(extract.inputSchema.required, ['origin', 'intent']);
+  assert.equal(extract.inputSchema.properties.origin.type, 'string');
+  assert.equal(extract.inputSchema.properties.intent.type, 'string');
+  assert.equal(extract.inputSchema.properties.maxCandidates.type, 'number');
+  assert.equal(extract.inputSchema.properties.maxCandidates.minimum, 1);
+  assert.match(extract.description, /intent-scoped/i);
   assert.ok(readPage);
   assert.deepEqual(readPage.inputSchema.required, ['origin']);
   assert.equal(readPage.inputSchema.properties.maxChars.type, 'number');
@@ -51,6 +78,12 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.deepEqual(batch.inputSchema.required, ['origin', 'actions']);
   assert.equal(batch.inputSchema.properties.actions.type, 'array');
   assert.equal(batch.inputSchema.properties.actions.items.additionalProperties, false);
+  assert.ok(visualObserve);
+  assert.deepEqual(visualObserve.inputSchema.required, ['origin']);
+  assert.equal(visualObserve.inputSchema.properties.maxBytes.minimum, 1);
+  assert.deepEqual(visualObserve.inputSchema.properties.mode.enum, ['tiny', 'medium', 'full']);
+  assert.equal(visualObserve.inputSchema.properties.reason.type, 'string');
+  assert.match(visualObserve.description, /visual verification/i);
   assert.match(toolDefinitionsHash(), /^[a-f0-9]{64}$/);
   assert.equal(toolDefinitionsHash(), toolDefinitionsHash());
 });
@@ -76,9 +109,39 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     validateToolInput('codex_chrome_open_observe', {
       url: 'https://example.com',
       timeoutMs: 1000,
-      pollIntervalMs: 25
+      pollIntervalMs: 25,
+      mode: 'medium',
+      maxActionableHandles: 35,
+      summaryMaxChars: 900,
+      sincePageStateId: 'state_1'
     }).ok,
     true
+  );
+  assert.equal(validateToolInput('codex_chrome_open_observe', {
+    url: 'https://example.com',
+    mode: 'wide'
+  }).error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(validateToolInput('codex_chrome_open_observe', {
+    url: 'https://example.com',
+    maxActionableHandles: 0
+  }).error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(validateToolInput('codex_chrome_observe', {
+    origin: 'https://example.com/path',
+    mode: 'tiny',
+    maxActionableHandles: 12,
+    summaryMaxChars: 300,
+    sincePageStateId: 'state_1'
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_observe', {
+    origin: 'https://example.com',
+    summaryMaxChars: 0
+  }).error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(validateToolInput('codex_chrome_status', {}).ok, true);
+  assert.equal(validateToolInput('codex_chrome_status', { detail: 'compact' }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_status', { detail: 'full' }).ok, true);
+  assert.equal(
+    validateToolInput('codex_chrome_status', { detail: 'verbose' }).error.code,
+    'INVALID_TOOL_INPUT'
   );
   assert.equal(
     validateToolInput('codex_chrome_upload_file', {
@@ -185,14 +248,60 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     true
   );
   assert.equal(
+    validateToolInput('codex_chrome_extract', {
+      origin: 'https://shop.example/path',
+      intent: 'shopping.productCandidates',
+      maxCandidates: 3
+    }).ok,
+    true
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_extract', {
+      origin: 'https://shop.example',
+      intent: 'shopping.productCandidates',
+      maxCandidates: 0
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_extract', {
+      origin: 'https://shop.example',
+      intent: 'shopping.productCandidates',
+      includeDom: true
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_visual_observe', {
+      origin: 'https://example.com/path',
+      mode: 'medium',
+      maxBytes: 120000,
+      reason: 'DOM confidence low around product tiles'
+    }).ok,
+    true
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_visual_observe', {
+      origin: 'https://example.com/path',
+      maxBytes: 0
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
     validateToolInput('codex_chrome_batch', {
       origin: 'https://example.com',
       actions: [{
-        action: 'observe'
+        action: 'observe',
+        sincePageStateId: 'state_previous',
+        mode: 'tiny',
+        maxActionableHandles: 10,
+        summaryMaxChars: 300
       }, {
         action: 'fill',
         handle: 'el_state_0',
-        text: 'Draft'
+        text: 'Draft',
+        postActionSnapshot: 'delta',
+        sincePageStateId: 'state_previous'
       }, {
         action: 'pressKey',
         handle: 'el_state_0',
@@ -206,6 +315,36 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     validateToolInput('codex_chrome_batch', {
       origin: 'https://example.com',
       actions: [{
+        action: 'observe',
+        sincePageStateId: 'state_previous'
+      }]
+    }).ok,
+    true
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_fill', {
+      origin: 'https://example.com',
+      handle: 'el_state_0',
+      text: 'Draft',
+      postActionSnapshot: 'delta',
+      sincePageStateId: 'state_previous',
+      maxActionableHandles: 10
+    }).ok,
+    true
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_fill', {
+      origin: 'https://example.com',
+      handle: 'el_state_0',
+      text: 'Draft',
+      postActionSnapshot: 'full'
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_batch', {
+      origin: 'https://example.com',
+      actions: [{
         action: 'fill',
         handle: 'el_state_0',
         text: 'Draft',
@@ -214,6 +353,70 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     }).error.code,
     'INVALID_TOOL_INPUT'
   );
+});
+
+test('CodexChromeToolAdapter defaults status to compact, forwards detail, and attaches telemetry', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      if (request.params.detail === 'compact') {
+        return {
+          ok: true,
+          result: {
+            connectionState: 'EXTENSION_CONNECTED',
+            pendingApprovalCount: 0,
+            approvedOriginCount: 1,
+            blockedOriginCount: 0,
+            domainApprovalCount: 1,
+            hostPermissionOriginCount: 1
+          }
+        };
+      }
+      return {
+        ok: true,
+        result: {
+          connectionState: 'EXTENSION_CONNECTED',
+          recentEvents: [{ type: 'unit' }],
+          approvedOrigins: ['https://example.com']
+        }
+      };
+    }
+  });
+
+  const compact = await adapter.executeTool({
+    toolName: 'codex_chrome_status',
+    input: {}
+  });
+  const full = await adapter.executeTool({
+    toolName: 'codex_chrome_status',
+    input: { detail: 'full' }
+  });
+  const invalid = await adapter.executeTool({
+    toolName: 'codex_chrome_status',
+    input: { detail: 'verbose' }
+  });
+
+  assert.deepEqual(calls.map((call) => call.params), [
+    { detail: 'compact' },
+    { detail: 'full' }
+  ]);
+  assert.equal(compact.ok, true);
+  assert.equal(compact.telemetry.budgetName, 'codex_chrome_status.compact');
+  assert.equal(compact.telemetry.resultChars, JSON.stringify(compact.result).length);
+  assert.equal(compact.telemetry.approxResultTokens, Math.ceil(compact.telemetry.resultChars / 4));
+  assert.equal(compact.telemetry.approxResponseTokens, Math.ceil(compact.telemetry.responseChars / 4));
+  assert.equal(typeof compact.telemetry.responseChars, 'number');
+  assert.equal(full.telemetry.budgetName, 'codex_chrome_status');
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(invalid.telemetry.budgetName, 'codex_chrome_status');
+  assert.equal(calls.length, 2);
 });
 
 test('CodexChromeToolAdapter routes compact read page and batch actions with normalized origins', async () => {
@@ -342,6 +545,42 @@ test('CodexChromeToolAdapter routes cart preparation with normalized origin and 
     criteria: {},
     cartActionAllowed: true
   });
+});
+
+test('CodexChromeToolAdapter forwards intent-scoped extraction with normalized origin', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: { method: request.method, params: request.params }
+      };
+    }
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_extract',
+    input: {
+      origin: 'https://shop.example/products?q=perfume',
+      intent: 'shopping.productCandidates',
+      maxCandidates: 4
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.method, 'page.extract');
+  assert.deepEqual(response.result.params, {
+    origin: 'https://shop.example',
+    intent: 'shopping.productCandidates',
+    maxCandidates: 4
+  });
+  assert.deepEqual(calls.map((request) => request.method), ['page.extract']);
 });
 
 test('CodexChromeToolAdapter routes upload file with normalized origin and optional controls', async () => {
@@ -475,6 +714,136 @@ test('CodexChromeToolAdapter routes visual analyze with normalized origin and op
   assert.equal(calls[0].method, 'page.visualAnalyze');
 });
 
+test('CodexChromeToolAdapter routes visual observe with normalized origin and screenshot budget options', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          method: request.method,
+          params: request.params
+        }
+      };
+    }
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_visual_observe',
+    input: {
+      origin: 'https://example.com/deep/path?x=1#section',
+      mode: 'medium',
+      maxActionableHandles: 12,
+      summaryMaxChars: 400,
+      sincePageStateId: 'state_visual_1',
+      maxBytes: 120000,
+      reason: 'visual verification after DOM uncertainty'
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.method, 'page.visualObserve');
+  assert.deepEqual(response.result.params, {
+    origin: 'https://example.com',
+    mode: 'medium',
+    maxActionableHandles: 12,
+    summaryMaxChars: 400,
+    sincePageStateId: 'state_visual_1',
+    maxBytes: 120000,
+    reason: 'visual verification after DOM uncertainty'
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'page.visualObserve');
+});
+
+test('CodexChromeToolAdapter forwards observe options with normalized origins', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          method: request.method,
+          params: request.params
+        }
+      };
+    }
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_observe',
+    input: {
+      origin: 'https://example.com/path?x=1',
+      mode: 'medium',
+      maxActionableHandles: 15,
+      summaryMaxChars: 600,
+      sincePageStateId: 'state_previous'
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.deepEqual(response.result.params, {
+    origin: 'https://example.com',
+    mode: 'medium',
+    maxActionableHandles: 15,
+    summaryMaxChars: 600,
+    sincePageStateId: 'state_previous'
+  });
+  assert.equal(calls[0].method, 'page.observe');
+});
+
+test('CodexChromeToolAdapter telemetry gates compact observe result size', async () => {
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async () => ({
+      ok: true,
+      result: {
+        origin: 'https://example.com',
+        url: 'https://example.com/list',
+        title: 'Compact List',
+        observationMode: 'tiny',
+        visibleTextSummary: 'Search results with a bounded visible summary.',
+        elements: Array.from({ length: 30 }, (_, index) => ({
+          handle: `el_state_${index}`,
+          tag: 'button',
+          role: 'button',
+          label: `Action ${index}`
+        })),
+        landmarks: [{ tag: 'main', role: 'main', label: 'Results' }]
+      }
+    })
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_observe',
+    input: {
+      origin: 'https://example.com',
+      mode: 'tiny'
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.telemetry.budgetName, 'codex_chrome_observe');
+  assert.ok(response.telemetry.resultChars < 8000, 'tiny observe should stay under the compact result budget');
+  assert.ok(response.telemetry.approxResultTokens < 2000, 'tiny observe should stay under the compact token budget');
+});
+
 test('CodexChromeToolAdapter executes open observe through the orchestration path', async () => {
   const calls = [];
   const adapter = new CodexChromeToolAdapter({
@@ -507,7 +876,11 @@ test('CodexChromeToolAdapter executes open observe through the orchestration pat
     input: {
       url: 'https://example.com/path',
       timeoutMs: 1500,
-      pollIntervalMs: 25
+      pollIntervalMs: 25,
+      mode: 'full',
+      maxActionableHandles: 80,
+      summaryMaxChars: 1800,
+      sincePageStateId: 'state_open'
     }
   });
 
@@ -523,7 +896,11 @@ test('CodexChromeToolAdapter executes open observe through the orchestration pat
     url: 'https://example.com/path',
     origin: 'https://example.com',
     timeoutMs: 1500,
-    pollIntervalMs: 25
+    pollIntervalMs: 25,
+    mode: 'full',
+    maxActionableHandles: 80,
+    summaryMaxChars: 1800,
+    sincePageStateId: 'state_open'
   });
 });
 
@@ -683,7 +1060,14 @@ test('CodexChromeToolAdapter exposes and routes basic DOM action tools', async (
   });
 
   const checks = [
-    ['codex_chrome_type', 'page.type', { origin: 'https://example.com', handle: 'el_0', text: 'hello' }],
+    ['codex_chrome_type', 'page.type', {
+      origin: 'https://example.com',
+      handle: 'el_0',
+      text: 'hello',
+      postActionSnapshot: 'delta',
+      sincePageStateId: 'state_previous',
+      maxActionableHandles: 8
+    }],
     ['codex_chrome_clear', 'page.clear', { origin: 'https://example.com', handle: 'el_0' }],
     ['codex_chrome_focus', 'page.focus', { origin: 'https://example.com', handle: 'el_0' }],
     ['codex_chrome_select', 'page.select', { origin: 'https://example.com', handle: 'el_1', value: 'tr' }],

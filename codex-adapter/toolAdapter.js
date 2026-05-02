@@ -62,6 +62,9 @@ function validationError(message, details = {}) {
 }
 
 function validateValue(name, value, schema) {
+  if (schema.enum && !schema.enum.includes(value)) {
+    return validationError(`${name} must be one of: ${schema.enum.join(', ')}.`, { field: name });
+  }
   if (schema.type === 'array') {
     if (!Array.isArray(value)) {
       return validationError(`${name} must be array.`, { field: name });
@@ -200,6 +203,58 @@ function redactRawVisualData(value) {
   return redacted;
 }
 
+function jsonCharLength(value) {
+  return JSON.stringify(value === undefined ? null : value).length;
+}
+
+function approxTokens(chars) {
+  return Math.ceil(chars / 4);
+}
+
+function budgetNameForResponse(toolName, payload) {
+  if (
+    toolName === 'codex_chrome_status' &&
+    payload &&
+    payload.ok === true &&
+    payload.result &&
+    Object.prototype.hasOwnProperty.call(payload.result, 'pendingApprovalCount') &&
+    !Object.prototype.hasOwnProperty.call(payload.result, 'recentEvents') &&
+    !Object.prototype.hasOwnProperty.call(payload.result, 'approvedOrigins')
+  ) {
+    return 'codex_chrome_status.compact';
+  }
+  return toolName;
+}
+
+function attachTelemetry(toolName, payload) {
+  const resultPayload = payload.ok ? payload.result : payload.error;
+  const resultChars = jsonCharLength(resultPayload);
+  const telemetry = {
+    resultChars,
+    responseChars: 0,
+    approxResultTokens: approxTokens(resultChars),
+    approxResponseTokens: 0,
+    budgetName: budgetNameForResponse(toolName, payload)
+  };
+  const enriched = {
+    ...payload,
+    telemetry
+  };
+  let responseChars = jsonCharLength(enriched);
+  for (let index = 0; index < 3; index += 1) {
+    enriched.telemetry.responseChars = responseChars;
+    enriched.telemetry.approxResponseTokens = approxTokens(responseChars);
+    const nextResponseChars = jsonCharLength(enriched);
+    if (nextResponseChars === responseChars) {
+      break;
+    }
+    responseChars = nextResponseChars;
+  }
+  enriched.telemetry.responseChars = jsonCharLength(enriched);
+  enriched.telemetry.approxResponseTokens = approxTokens(enriched.telemetry.responseChars);
+  return enriched;
+}
+
 function wrapToolResponse(toolName, response) {
   const base = {
     toolName,
@@ -209,20 +264,20 @@ function wrapToolResponse(toolName, response) {
     untrusted: true
   };
   if (!response || !response.ok) {
-    return {
+    return attachTelemetry(toolName, {
       ...base,
       ok: false,
       error: redactRawVisualData(response && response.error ? response.error : {
         code: 'TOOL_EXECUTION_FAILED',
         message: `${toolName} failed without a structured response.`
       })
-    };
+    });
   }
-  return {
+  return attachTelemetry(toolName, {
     ...base,
     ok: true,
     result: redactRawVisualData(response.result)
-  };
+  });
 }
 
 function invalidToolInput(toolName, message, details = {}) {
@@ -263,6 +318,31 @@ function pickDefined(input, fields) {
   );
 }
 
+function observeOptions(input) {
+  return pickDefined(input, ['mode', 'maxActionableHandles', 'summaryMaxChars', 'sincePageStateId']);
+}
+
+function postActionSnapshotOptions(input) {
+  return pickDefined(input, [
+    'postActionSnapshot',
+    'sincePageStateId',
+    'mode',
+    'maxActionableHandles',
+    'summaryMaxChars'
+  ]);
+}
+
+function visualObserveOptions(input) {
+  return pickDefined(input, [
+    'mode',
+    'maxActionableHandles',
+    'summaryMaxChars',
+    'sincePageStateId',
+    'maxBytes',
+    'reason'
+  ]);
+}
+
 class CodexChromeToolAdapter {
   constructor({
     settings,
@@ -289,7 +369,9 @@ class CodexChromeToolAdapter {
     let response;
     switch (toolName) {
       case 'codex_chrome_status':
-        response = await this.sendRpc('operator.status', {});
+        response = await this.sendRpc('operator.status', {
+          detail: input.detail || 'compact'
+        });
         break;
       case 'codex_chrome_prepare_origin':
         response = await this.prepareOrigin(input);
@@ -309,12 +391,22 @@ class CodexChromeToolAdapter {
         response = await this.openObserve(input);
         break;
       case 'codex_chrome_observe':
-        response = await this.sendRpc('page.observe', { origin: input.origin });
+        response = await this.sendRpc('page.observe', {
+          origin: normalizeOrigin(input.origin),
+          ...observeOptions(input)
+        });
         break;
       case 'codex_chrome_read_page':
         response = await this.sendRpc('page.readPage', {
           origin: normalizeOrigin(input.origin),
           ...pickDefined(input, ['filter', 'depth', 'maxChars', 'refId'])
+        });
+        break;
+      case 'codex_chrome_extract':
+        response = await this.sendRpc('page.extract', {
+          origin: normalizeOrigin(input.origin),
+          intent: input.intent,
+          ...(input.maxCandidates === undefined ? {} : { maxCandidates: input.maxCandidates })
         });
         break;
       case 'codex_chrome_batch':
@@ -325,7 +417,10 @@ class CodexChromeToolAdapter {
         });
         break;
       case 'codex_chrome_visual_observe':
-        response = await this.sendRpc('page.visualObserve', { origin: input.origin });
+        response = await this.sendRpc('page.visualObserve', {
+          origin: normalizeOrigin(input.origin),
+          ...visualObserveOptions(input)
+        });
         break;
       case 'codex_chrome_visual_analyze':
         response = await this.sendRpc('page.visualAnalyze', {
@@ -357,40 +452,46 @@ class CodexChromeToolAdapter {
         response = await this.sendRpc('page.fill', {
           origin: input.origin,
           handle: input.handle,
-          text: input.text
+          text: input.text,
+          ...postActionSnapshotOptions(input)
         });
         break;
       case 'codex_chrome_type':
         response = await this.sendRpc('page.type', {
           origin: input.origin,
           handle: input.handle,
-          text: input.text
+          text: input.text,
+          ...postActionSnapshotOptions(input)
         });
         break;
       case 'codex_chrome_clear':
         response = await this.sendRpc('page.clear', {
           origin: input.origin,
-          handle: input.handle
+          handle: input.handle,
+          ...postActionSnapshotOptions(input)
         });
         break;
       case 'codex_chrome_focus':
         response = await this.sendRpc('page.focus', {
           origin: input.origin,
-          handle: input.handle
+          handle: input.handle,
+          ...postActionSnapshotOptions(input)
         });
         break;
       case 'codex_chrome_select':
         response = await this.sendRpc('page.select', {
           origin: input.origin,
           handle: input.handle,
-          value: input.value
+          value: input.value,
+          ...postActionSnapshotOptions(input)
         });
         break;
       case 'codex_chrome_check':
         response = await this.sendRpc('page.check', {
           origin: input.origin,
           handle: input.handle,
-          checked: input.checked
+          checked: input.checked,
+          ...postActionSnapshotOptions(input)
         });
         break;
       case 'codex_chrome_scroll':
@@ -398,20 +499,23 @@ class CodexChromeToolAdapter {
           origin: input.origin,
           handle: input.handle,
           deltaX: input.deltaX,
-          deltaY: input.deltaY
+          deltaY: input.deltaY,
+          ...postActionSnapshotOptions(input)
         });
         break;
       case 'codex_chrome_press_key':
         response = await this.sendRpc('page.pressKey', {
           origin: input.origin,
           handle: input.handle,
-          key: input.key
+          key: input.key,
+          ...postActionSnapshotOptions(input)
         });
         break;
       case 'codex_chrome_click':
         response = await this.sendRpc('page.click', {
           origin: input.origin,
-          handle: input.handle
+          handle: input.handle,
+          ...postActionSnapshotOptions(input)
         });
         break;
       case 'codex_chrome_approvals_list':
@@ -482,7 +586,8 @@ class CodexChromeToolAdapter {
       url,
       origin: new URL(url).origin,
       timeoutMs: input.timeoutMs,
-      pollIntervalMs: input.pollIntervalMs
+      pollIntervalMs: input.pollIntervalMs,
+      ...observeOptions(input)
     });
     return this.openObserveFn({
       settings: this.settings,

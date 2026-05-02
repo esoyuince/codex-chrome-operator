@@ -9,6 +9,10 @@ const els = {
   tabOrigin: document.getElementById('active-tab-origin'),
   tabLoading: document.getElementById('active-tab-loading'),
   siteAccess: document.getElementById('site-access'),
+  permissionSafe: document.getElementById('permission-safe'),
+  permissionAction: document.getElementById('permission-action'),
+  permissionCritical: document.getElementById('permission-critical'),
+  pendingApprovals: document.getElementById('pending-approvals'),
   blockedSites: document.getElementById('blocked-sites'),
   blockedSitesDetail: document.getElementById('blocked-sites-detail'),
   saveBlockedSites: document.getElementById('save-blocked-sites'),
@@ -18,6 +22,11 @@ const els = {
 };
 
 let currentOrigin = null;
+const APPROVAL_MESSAGE_TYPES = {
+  approve: 'operator.approvals.approve',
+  reject: 'operator.approvals.reject',
+  run: 'operator.approvals.run'
+};
 
 function setText(element, value) {
   element.textContent = value || 'none';
@@ -54,6 +63,28 @@ async function readStorage() {
 async function readStatus() {
   try {
     return await chrome.runtime.sendMessage({ type: 'operator.status' });
+  } catch (error) {
+    return {
+      ok: false,
+      statusError: formatError(error)
+    };
+  }
+}
+
+async function readDaemonStatus() {
+  try {
+    return await chrome.runtime.sendMessage({ type: 'operator.daemonStatus' });
+  } catch (error) {
+    return {
+      ok: false,
+      statusError: formatError(error)
+    };
+  }
+}
+
+async function readApprovals() {
+  try {
+    return await chrome.runtime.sendMessage({ type: 'operator.approvals.list' });
   } catch (error) {
     return {
       ok: false,
@@ -107,7 +138,14 @@ async function readBlockedOriginsStatus(origin) {
   }
 }
 
-function chooseNextStep({ connectionState, nativeError, statusError, tab, blockedStatus }) {
+function chooseNextStep({
+  connectionState,
+  nativeError,
+  statusError,
+  tab,
+  blockedStatus,
+  approvals
+}) {
   if (nativeError || connectionState === 'ERROR') {
     return 'Native bridge error detected. Reinstall or restart the native host, then use Connect.';
   }
@@ -122,6 +160,10 @@ function chooseNextStep({ connectionState, nativeError, statusError, tab, blocke
   }
   if (blockedStatus.blocked) {
     return 'Remove the active origin from blocked sites before asking Codex to observe or act.';
+  }
+  const pendingCount = approvals.filter((approval) => approval.status === 'pending').length;
+  if (pendingCount > 0) {
+    return `${pendingCount} risky approval${pendingCount === 1 ? '' : 's'} waiting for a user decision.`;
   }
   return 'Ready for Codex operator commands on this active origin.';
 }
@@ -142,6 +184,91 @@ function setBadge(connectionState, blockedStatus, nativeError) {
   els.badge.textContent = 'Action needed';
 }
 
+function setMiniBadge(element, state, text) {
+  element.className = `mini-badge ${state}`;
+  element.textContent = text;
+}
+
+function renderPermissions({ connectionState, tab, blockedStatus }) {
+  const ready = connectionState === 'CONNECTED' && tab && tab.origin && !blockedStatus.blocked;
+  setMiniBadge(els.permissionSafe, ready ? 'ok' : 'warn', ready ? 'Ready' : 'Blocked');
+  setMiniBadge(els.permissionAction, ready ? 'warn' : 'disabled', ready ? 'Guarded' : 'Unavailable');
+  setMiniBadge(els.permissionCritical, 'danger', 'One-time');
+}
+
+function approvalTitle(approval) {
+  const kind = approval.approvalKind || 'high-risk-action';
+  if (['checkout', 'payment', 'order-placement', 'purchase'].includes(kind)) {
+    return 'Purchase approval';
+  }
+  return `${kind} approval`;
+}
+
+function renderApproval(approval) {
+  const article = document.createElement('article');
+  article.className = `approval-card approval-${approval.status || 'unknown'}`;
+  const title = document.createElement('div');
+  title.className = 'approval-title';
+  title.textContent = approvalTitle(approval);
+
+  const meta = document.createElement('div');
+  meta.className = 'detail';
+  meta.textContent = [
+    approval.origin || 'unknown origin',
+    approval.targetSummary || null,
+    approval.status ? `status: ${approval.status}` : null
+  ].filter(Boolean).join(' | ');
+
+  const actions = document.createElement('div');
+  actions.className = 'approval-actions';
+  if (approval.status === 'pending') {
+    actions.append(
+      approvalButton(approval.approvalId, 'approve', 'Approve once'),
+      approvalButton(approval.approvalId, 'reject', 'Reject')
+    );
+  } else if (approval.status === 'approved') {
+    actions.append(approvalButton(approval.approvalId, 'run', 'Run approved'));
+  }
+
+  article.append(title, meta, actions);
+  return article;
+}
+
+function approvalButton(approvalId, action, label) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.dataset.approvalId = approvalId;
+  button.dataset.approvalAction = action;
+  if (action !== 'approve') {
+    button.className = 'secondary';
+  }
+  return button;
+}
+
+function renderApprovals(approvals, error) {
+  els.pendingApprovals.innerHTML = '';
+  if (error) {
+    const detail = document.createElement('div');
+    detail.className = 'detail';
+    detail.textContent = `Approval status unavailable: ${error}`;
+    els.pendingApprovals.append(detail);
+    return;
+  }
+
+  const visibleApprovals = approvals.filter((approval) => (
+    ['pending', 'approved'].includes(approval.status)
+  ));
+  if (visibleApprovals.length === 0) {
+    els.pendingApprovals.textContent = 'No pending approvals.';
+    return;
+  }
+
+  for (const approval of visibleApprovals) {
+    els.pendingApprovals.append(renderApproval(approval));
+  }
+}
+
 async function refresh() {
   els.summary.textContent = 'Checking Chrome operator status...';
   els.connect.disabled = true;
@@ -150,11 +277,25 @@ async function refresh() {
 
   const storage = await readStorage();
   const status = await readStatus();
+  const daemonStatus = await readDaemonStatus();
+  const approvalsStatus = await readApprovals();
   const fallbackTab = status.ok ? null : await readActiveTabFallback();
-  const tab = (status && status.activeTab) || fallbackTab;
-  const connectionState = (status && status.connectionState) || storage.connectionState || 'UNKNOWN';
-  const nativeError = (status && status.lastNativeError) || storage.lastNativeError || null;
-  const statusError = status.statusError || null;
+  const daemonResult = daemonStatus && daemonStatus.ok ? daemonStatus.result : null;
+  const tab = (status && status.activeTab) || (daemonResult && daemonResult.activeTab) || fallbackTab;
+  const connectionState = (daemonResult && daemonResult.connectionState) ||
+    (status && status.connectionState) ||
+    storage.connectionState ||
+    'UNKNOWN';
+  const nativeError = (daemonResult && daemonResult.lastError) ||
+    (status && status.lastNativeError) ||
+    storage.lastNativeError ||
+    null;
+  const statusError = status.statusError || daemonStatus.statusError || null;
+  const approvals = approvalsStatus && approvalsStatus.ok && approvalsStatus.result
+    ? approvalsStatus.result.approvals || []
+    : daemonResult && Array.isArray(daemonResult.pendingApprovals)
+      ? daemonResult.pendingApprovals
+      : [];
   const blockedStatus = await readBlockedOriginsStatus(tab && tab.origin);
 
   currentOrigin = tab && tab.origin && tab.origin !== 'null' ? tab.origin : null;
@@ -169,6 +310,8 @@ async function refresh() {
     els.siteAccess,
     blockedStatus.blocked ? `Blocked by ${blockedStatus.blockedPattern}` : 'Allowed'
   );
+  renderPermissions({ connectionState, tab, blockedStatus });
+  renderApprovals(approvals, approvalsStatus.statusError || null);
   els.blockedSites.value = blockedStatus.blockedOrigins.join('\n');
   setText(
     els.blockedSitesDetail,
@@ -184,7 +327,8 @@ async function refresh() {
     nativeError,
     statusError,
     tab,
-    blockedStatus
+    blockedStatus,
+    approvals
   });
   els.summary.textContent = status.statusError
     ? 'Background status failed; showing storage and tab fallback state.'
@@ -207,6 +351,37 @@ els.connect.addEventListener('click', async () => {
 });
 
 els.refresh.addEventListener('click', refresh);
+
+els.pendingApprovals.addEventListener('click', async (event) => {
+  const button = event.target.closest('button[data-approval-action]');
+  if (!button) {
+    return;
+  }
+  if (button.disabled) {
+    return;
+  }
+  const { approvalId, approvalAction } = button.dataset;
+  const messageType = APPROVAL_MESSAGE_TYPES[approvalAction];
+  if (!messageType) {
+    return;
+  }
+  button.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: messageType,
+      approvalId
+    });
+    if (!response || !response.ok) {
+      els.nextStep.textContent = `Approval ${approvalAction} failed: ${formatError(response && response.error) || 'unknown error'}`;
+    } else {
+      els.nextStep.textContent = `Approval ${approvalAction} completed.`;
+    }
+  } catch (error) {
+    els.nextStep.textContent = `Approval ${approvalAction} failed: ${formatError(error) || 'unknown error'}`;
+  } finally {
+    await refresh();
+  }
+});
 
 els.saveBlockedSites.addEventListener('click', async () => {
   els.saveBlockedSites.disabled = true;

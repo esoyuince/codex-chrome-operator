@@ -37,6 +37,50 @@ function defaultAuditPath() {
   );
 }
 
+function jsonCharLength(value) {
+  return JSON.stringify(value === undefined ? null : value).length;
+}
+
+function approxTokens(chars) {
+  return Math.ceil(chars / 4);
+}
+
+function telemetryBudgetName(method) {
+  return typeof method === 'string' && method ? method : 'rpc';
+}
+
+function attachRpcTelemetry(method, response) {
+  if (!response || typeof response !== 'object') {
+    return response;
+  }
+  const resultPayload = response.ok ? response.result : response.error;
+  const resultChars = jsonCharLength(resultPayload);
+  const telemetry = {
+    resultChars,
+    responseChars: 0,
+    approxResultTokens: approxTokens(resultChars),
+    approxResponseTokens: 0,
+    budgetName: telemetryBudgetName(method)
+  };
+  const enriched = {
+    ...response,
+    telemetry
+  };
+  let responseChars = jsonCharLength(enriched);
+  for (let index = 0; index < 3; index += 1) {
+    enriched.telemetry.responseChars = responseChars;
+    enriched.telemetry.approxResponseTokens = approxTokens(responseChars);
+    const nextResponseChars = jsonCharLength(enriched);
+    if (nextResponseChars === responseChars) {
+      break;
+    }
+    responseChars = nextResponseChars;
+  }
+  enriched.telemetry.responseChars = jsonCharLength(enriched);
+  enriched.telemetry.approxResponseTokens = approxTokens(enriched.telemetry.responseChars);
+  return enriched;
+}
+
 function rpcOk(id, result) {
   return { id, ok: true, result };
 }
@@ -74,6 +118,7 @@ function clearsLastErrorOnSuccess(method) {
 const PAGE_ACTION_KINDS = Object.freeze({
   'page.observe': 'observe',
   'page.readPage': 'observe',
+  'page.extract': 'observe',
   'page.visualObserve': 'screenshot',
   'page.visualAnalyze': 'screenshot',
   'page.uploadFile': 'upload',
@@ -122,7 +167,12 @@ const BATCH_ACTION_FIELDS = new Set([
   'filter',
   'depth',
   'maxChars',
-  'refId'
+  'refId',
+  'mode',
+  'maxActionableHandles',
+  'summaryMaxChars',
+  'sincePageStateId',
+  'postActionSnapshot'
 ]);
 
 const BATCH_ACTION_FIELD_TYPES = Object.freeze({
@@ -140,7 +190,12 @@ const BATCH_ACTION_FIELD_TYPES = Object.freeze({
   filter: 'string',
   depth: 'number',
   maxChars: 'number',
-  refId: 'string'
+  refId: 'string',
+  mode: 'string',
+  maxActionableHandles: 'number',
+  summaryMaxChars: 'number',
+  sincePageStateId: 'string',
+  postActionSnapshot: 'string'
 });
 
 const BATCH_ACTION_REQUIRED_FIELDS = Object.freeze({
@@ -343,8 +398,8 @@ class SessionManager {
     this.config = {
       expectedExtensionId: config.expectedExtensionId || 'development-extension-id',
       expectedProtocolVersion: config.expectedProtocolVersion || '1.0',
-      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.6',
-      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.6',
+      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.8',
+      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.8',
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       visualAnalyzerRegistry: config.visualAnalyzerRegistry || createVisualAnalyzerRegistry(),
@@ -389,8 +444,8 @@ class SessionManager {
     this.warmSessionCache = null;
   }
 
-  status() {
-    return {
+  status({ detail = 'full' } = {}) {
+    const fullStatus = {
       connectionState: this.connectionState,
       connectionId: this.connectionId,
       bridgeInstanceId: this.bridgeInstanceId,
@@ -420,15 +475,58 @@ class SessionManager {
       screenshotDir: this.config.screenshotDir,
       lastError: this.lastError
     };
+    return detail === 'compact' ? this.compactStatus(fullStatus) : fullStatus;
+  }
+
+  compactStatus(fullStatus = this.status({ detail: 'full' })) {
+    return {
+      connectionState: fullStatus.connectionState,
+      connectionId: fullStatus.connectionId,
+      bridgeInstanceId: fullStatus.bridgeInstanceId,
+      lastDisconnect: fullStatus.lastDisconnect,
+      reconnectCount: fullStatus.reconnectCount,
+      profileVerified: fullStatus.profileVerified,
+      profileBindingStatus: fullStatus.profileBindingStatus,
+      activeTab: fullStatus.activeTab ? { ...fullStatus.activeTab } : null,
+      warmSession: { ...fullStatus.warmSession },
+      pendingApprovalCount: fullStatus.pendingApprovals.length,
+      emergencyStop: { ...fullStatus.emergencyStop },
+      boundedFullAuto: this.compactBoundedFullAutoStatus(fullStatus.boundedFullAuto),
+      version: { ...fullStatus.version },
+      lastError: fullStatus.lastError,
+      approvedOriginCount: fullStatus.approvedOrigins.length,
+      blockedOriginCount: fullStatus.blockedOrigins.length,
+      domainApprovalCount: Object.keys(fullStatus.domainApprovals).length,
+      hostPermissionOriginCount: fullStatus.hostPermissionOrigins.length
+    };
+  }
+
+  compactBoundedFullAutoStatus(state = this.boundedFullAutoStatus()) {
+    const contract = state.contract || {};
+    return {
+      active: Boolean(state.active),
+      mode: contract.mode || null,
+      taskScope: contract.taskScope || null,
+      approvedOriginCount: Array.isArray(contract.approvedOrigins) ? contract.approvedOrigins.length : 0,
+      allowedActionKindCount: Array.isArray(contract.allowedActionKinds) ? contract.allowedActionKinds.length : 0,
+      blockedActionKindCount: Array.isArray(contract.blockedActionKinds) ? contract.blockedActionKinds.length : 0,
+      limits: contract.limits || {},
+      counters: state.counters || {},
+      startedAt: state.startedAt || null,
+      expiresAt: state.expiresAt || null,
+      stoppedAt: state.stoppedAt || null,
+      stopReason: state.stopReason || null,
+      lastOrigin: state.lastOrigin || null
+    };
   }
 
   async handleRpc(request) {
     const id = request && request.id;
     if (!request || typeof request.method !== 'string') {
-      return rpcError(id || null, {
+      return attachRpcTelemetry('rpc.invalidRequest', rpcError(id || null, {
         code: ERROR_CODES.INVALID_REQUEST,
         message: 'RPC request must include method.'
-      });
+      }));
     }
 
     const params = request.params || {};
@@ -436,7 +534,7 @@ class SessionManager {
 
     switch (request.method) {
       case 'operator.status':
-        response = rpcOk(id, this.status());
+        response = rpcOk(id, this.status({ detail: params.detail }));
         break;
       case 'operator.ensureStarted':
         response = this.ensureStarted(id, params);
@@ -519,6 +617,7 @@ class SessionManager {
         break;
       case 'page.observe':
       case 'page.readPage':
+      case 'page.extract':
       case 'page.batch':
       case 'page.visualObserve':
       case 'page.visualAnalyze':
@@ -552,6 +651,8 @@ class SessionManager {
         });
         break;
     }
+
+    response = attachRpcTelemetry(request.method, response);
 
     this.audit.append({
       ...this.buildAuditEntry({
@@ -1611,10 +1712,28 @@ class SessionManager {
           field
         });
       }
+      if (['maxActionableHandles', 'summaryMaxChars'].includes(field) && value < 1) {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, `Batch action field ${field} must be one or greater.`, {
+          actionIndex,
+          field
+        });
+      }
       return guardOk();
     }
     if (typeof value !== type) {
       return guardError(ERROR_CODES.INVALID_SCHEMA, `Batch action field ${field} must be ${type}.`, {
+        actionIndex,
+        field
+      });
+    }
+    if (field === 'mode' && !['tiny', 'medium', 'full'].includes(value)) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'Batch action field mode must be tiny, medium, or full.', {
+        actionIndex,
+        field
+      });
+    }
+    if (field === 'postActionSnapshot' && value !== 'delta') {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'Batch action field postActionSnapshot must be delta.', {
         actionIndex,
         field
       });
@@ -1988,8 +2107,12 @@ class SessionManager {
     }
     if (method === 'page.visualObserve' || method === 'page.visualAnalyze') {
       const materialized = this.materializeVisualObservation(extensionResponse.result, origin, {
-        policy: params.policy || {},
-        allowSensitive: params.allowSensitive
+        policy: {
+          ...(params.policy || {}),
+          ...(params.maxBytes === undefined ? {} : { maxBytes: params.maxBytes })
+        },
+        allowSensitive: params.allowSensitive,
+        reason: params.reason
       });
       if (!materialized.ok) {
         return rpcError(id, materialized.error);
@@ -2037,7 +2160,7 @@ class SessionManager {
     return rpcOk(id, extensionResponse.result);
   }
 
-  materializeVisualObservation(result, origin, { policy = {}, allowSensitive } = {}) {
+  materializeVisualObservation(result, origin, { policy = {}, allowSensitive, reason } = {}) {
     const screenshot = result && result.screenshot;
     if (!screenshot || !screenshot.dataUrl) {
       return rpcOk(null, result);
@@ -2060,7 +2183,9 @@ class SessionManager {
       const artifact = this.screenshotStore.saveDataUrl({
         dataUrl,
         origin,
-        reason: 'visualObserve'
+        reason: typeof reason === 'string' && reason.trim()
+          ? reason.trim().slice(0, 120)
+          : 'visualObserve'
       });
       return rpcOk(null, {
         ...result,

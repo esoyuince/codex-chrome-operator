@@ -622,6 +622,7 @@ test('openObserve stops before navigation when readiness requires a user gesture
 
 test('openObserve navigates and observes after readiness is confirmed', async () => {
   const calls = [];
+  const observeParams = [];
   const response = await openObserve({
     settings: {
       baseUrl: 'http://127.0.0.1:19091',
@@ -635,7 +636,11 @@ test('openObserve navigates and observes after readiness is confirmed', async ()
         url: 'https://example.com/path',
         origin: 'https://example.com',
         timeoutMs: 1000,
-        pollIntervalMs: 1
+        pollIntervalMs: 1,
+        mode: 'medium',
+        maxActionableHandles: 18,
+        summaryMaxChars: 500,
+        sincePageStateId: 'state_previous'
       }
     },
     prepareOriginFn: async () => {
@@ -684,6 +689,7 @@ test('openObserve navigates and observes after readiness is confirmed', async ()
         };
       }
       if (request.method === 'page.observe') {
+        observeParams.push(request.params);
         return {
           ok: true,
           result: {
@@ -703,6 +709,13 @@ test('openObserve navigates and observes after readiness is confirmed', async ()
     'operator.status',
     'page.observe:https://example.com'
   ]);
+  assert.deepEqual(observeParams, [{
+    origin: 'https://example.com',
+    mode: 'medium',
+    maxActionableHandles: 18,
+    summaryMaxChars: 500,
+    sincePageStateId: 'state_previous'
+  }]);
   assert.equal(response.ok, true);
   assert.equal(response.result.origin, 'https://example.com');
   assert.equal(response.result.url, 'https://example.com/path');

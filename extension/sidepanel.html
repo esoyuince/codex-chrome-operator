@@ -36,6 +36,38 @@
       </article>
     </section>
 
+    <section class="permissions" aria-label="Action permissions">
+      <div class="label">Action permissions</div>
+      <div class="permission-list">
+        <article class="permission-row">
+          <div>
+            <div class="permission-name">Read and observe</div>
+            <div class="detail">Observe, read, scroll, and screenshot.</div>
+          </div>
+          <span id="permission-safe" class="mini-badge">Checking</span>
+        </article>
+        <article class="permission-row">
+          <div>
+            <div class="permission-name">Guarded actions</div>
+            <div class="detail">Navigate, click, fill, upload, and prepare cart.</div>
+          </div>
+          <span id="permission-action" class="mini-badge">Checking</span>
+        </article>
+        <article class="permission-row critical">
+          <div>
+            <div class="permission-name">Place order / purchase</div>
+            <div class="detail">Checkout, payment, and final order placement require one-time approval.</div>
+          </div>
+          <span id="permission-critical" class="mini-badge">Approval</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="pending-approvals" aria-label="Pending approval requests">
+      <div class="label">Risky approvals pending</div>
+      <div id="pending-approvals" class="approval-list">No pending approvals.</div>
+    </section>
+
     <section class="blocked-sites" aria-label="Blocked site settings">
       <div class="label">Blocked sites</div>
       <textarea id="blocked-sites" rows="4" spellcheck="false" placeholder="bank.example&#10;*.internal.example&#10;https://sensitive.example"></textarea>

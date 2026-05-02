@@ -90,6 +90,15 @@ function isSensitiveElement(element) {
   );
 }
 
+function compactElementSummary(summary) {
+  return Object.fromEntries(Object.entries(summary).filter(([, value]) => {
+    if (value === null || value === undefined || value === false) {
+      return false;
+    }
+    return !(value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0);
+  }));
+}
+
 function elementSummary(element, handle) {
   const rect = element.getBoundingClientRect();
   const dataRisk = element.getAttribute('data-risk') || null;
@@ -110,7 +119,7 @@ function elementSummary(element, handle) {
 
   const visualRole = visualRoleForElement(element);
   const ratingValue = numericAttribute(element, 'data-rating');
-  return {
+  return compactElementSummary({
     handle,
     tag: element.tagName.toLowerCase(),
     role: element.getAttribute('role') || null,
@@ -139,7 +148,7 @@ function elementSummary(element, handle) {
       width: Math.round(rect.width),
       height: Math.round(rect.height)
     }
-  };
+  });
 }
 
 function collectInteractiveElements() {
@@ -204,6 +213,253 @@ function collectObservedElements() {
   return [...new Set([...collectInteractiveElements(), ...collectVisualElements(), ...collectUploadElements()])].slice(0, 300);
 }
 
+const lastObservationSummaries = new Map();
+const MAX_OBSERVATION_SUMMARIES = 8;
+
+function boundedText(value, maxChars = 80) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxChars);
+}
+
+function elementComparisonKey(summary) {
+  return [
+    summary.tag || '',
+    summary.role || '',
+    summary.id || '',
+    summary.name || '',
+    summary.href || '',
+    summary.productId || '',
+    summary.uploadRole || '',
+    summary.visualRole || '',
+    boundedText(summary.label)
+  ].join('|');
+}
+
+function elementIdentityKey(summary) {
+  return [
+    summary.tag || '',
+    summary.role || '',
+    summary.id || '',
+    summary.name || '',
+    summary.href || '',
+    summary.productId || '',
+    summary.uploadRole || '',
+    summary.visualRole || ''
+  ].join('|');
+}
+
+function observationSummaryForDelta(observation) {
+  return {
+    pageStateId: observation.pageStateId,
+    url: observation.url,
+    origin: observation.origin,
+    elements: (observation.elements || []).map((entry) => ({
+      handle: entry.handle,
+      key: elementComparisonKey(entry),
+      identityKey: elementIdentityKey(entry),
+      tag: entry.tag || null,
+      role: entry.role || null,
+      id: entry.id || null,
+      name: entry.name || null,
+      href: entry.href || null,
+      productId: entry.productId || null,
+      uploadRole: entry.uploadRole || null,
+      visualRole: entry.visualRole || null,
+      label: boundedText(entry.label)
+    }))
+  };
+}
+
+function rememberObservationSummary(summary) {
+  if (!summary || !summary.pageStateId) {
+    return;
+  }
+  if (lastObservationSummaries.has(summary.pageStateId)) {
+    lastObservationSummaries.delete(summary.pageStateId);
+  }
+  lastObservationSummaries.set(summary.pageStateId, summary);
+  while (lastObservationSummaries.size > MAX_OBSERVATION_SUMMARIES) {
+    const oldest = lastObservationSummaries.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    lastObservationSummaries.delete(oldest.value);
+  }
+}
+
+function compactObservationMetadata(observation) {
+  const {
+    elements,
+    ...metadata
+  } = observation;
+  return metadata;
+}
+
+function handleLimitForDelta(observation) {
+  const value = observation && observation.limits && Number(observation.limits.maxActionableHandles);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 30;
+}
+
+function buildObservationDelta(base, current, maxItems) {
+  const previousByKey = new Map(base.elements.map((entry) => [entry.key, entry]));
+  const currentByKey = new Map(current.elements.map((entry) => [entry.key, entry]));
+  const previousByIdentity = new Map(base.elements.map((entry) => [entry.identityKey, entry]));
+  const currentByIdentity = new Map(current.elements.map((entry) => [entry.identityKey, entry]));
+  const newHandles = [];
+  const removedHandles = [];
+  const changedElements = [];
+
+  for (const entry of current.elements) {
+    if (!previousByKey.has(entry.key)) {
+      newHandles.push(entry.handle);
+    }
+    if (
+      previousByIdentity.has(entry.identityKey) &&
+      previousByIdentity.get(entry.identityKey).key !== entry.key
+    ) {
+      changedElements.push({
+        handle: entry.handle,
+        previousHandle: previousByIdentity.get(entry.identityKey).handle,
+        tag: entry.tag,
+        role: entry.role,
+        id: entry.id,
+        name: entry.name,
+        label: entry.label
+      });
+    }
+  }
+
+  for (const entry of base.elements) {
+    if (!currentByKey.has(entry.key)) {
+      removedHandles.push(entry.handle);
+    }
+  }
+
+  return {
+    unchanged: false,
+    fromPageStateId: base.pageStateId,
+    toPageStateId: current.pageStateId,
+    newHandles: newHandles.slice(0, maxItems),
+    removedHandles: removedHandles.slice(0, maxItems),
+    changedElements: changedElements.slice(0, maxItems)
+  };
+}
+
+function observationWithDelta(observation, sincePageStateId) {
+  const currentSummary = observationSummaryForDelta(observation);
+  const base = lastObservationSummaries.get(sincePageStateId);
+  rememberObservationSummary(currentSummary);
+
+  if (!base) {
+    return {
+      ...observation,
+      delta: {
+        invalidated: true,
+        reason: 'BASE_SNAPSHOT_MISSING',
+        fromPageStateId: sincePageStateId,
+        toPageStateId: observation.pageStateId
+      }
+    };
+  }
+
+  if (base.origin !== observation.origin || base.url !== observation.url) {
+    return {
+      ...observation,
+      delta: {
+        invalidated: true,
+        reason: 'NAVIGATION_CHANGED',
+        fromPageStateId: sincePageStateId,
+        toPageStateId: observation.pageStateId
+      }
+    };
+  }
+
+  if (base.pageStateId === observation.pageStateId) {
+    return {
+      ...compactObservationMetadata(observation),
+      delta: {
+        unchanged: true,
+        fromPageStateId: sincePageStateId,
+        toPageStateId: observation.pageStateId,
+        newHandles: [],
+        removedHandles: [],
+        changedElements: []
+      }
+    };
+  }
+
+  return {
+    ...observation,
+    delta: buildObservationDelta(base, currentSummary, handleLimitForDelta(observation))
+  };
+}
+
+function observationModeOptions(options = {}) {
+  const mode = ['tiny', 'medium', 'full'].includes(options.mode) ? options.mode : 'tiny';
+  const defaults = {
+    tiny: {
+      maxActionableHandles: 30,
+      summaryMaxChars: 500
+    },
+    medium: {
+      maxActionableHandles: 80,
+      summaryMaxChars: 1200
+    },
+    full: {
+      maxActionableHandles: 300,
+      summaryMaxChars: 2000
+    }
+  };
+  const selected = defaults[mode];
+  const requestedHandles = Number(options.maxActionableHandles);
+  const requestedSummaryMaxChars = Number(options.summaryMaxChars);
+  return {
+    mode,
+    maxActionableHandles: Number.isFinite(requestedHandles) && requestedHandles >= 1
+      ? Math.floor(requestedHandles)
+      : selected.maxActionableHandles,
+    summaryMaxChars: Number.isFinite(requestedSummaryMaxChars) && requestedSummaryMaxChars >= 1
+      ? Math.floor(requestedSummaryMaxChars)
+      : selected.summaryMaxChars,
+    defaultMaxActionableHandles: selected.maxActionableHandles,
+    defaultSummaryMaxChars: selected.summaryMaxChars,
+    maxAvailableActionableHandles: 300
+  };
+}
+
+function collectLandmarks() {
+  return [...document.querySelectorAll([
+    'main',
+    'nav',
+    'header',
+    'footer',
+    'aside',
+    '[role="main"]',
+    '[role="navigation"]',
+    '[role="banner"]',
+    '[role="contentinfo"]',
+    '[role="complementary"]'
+  ].join(','))].filter(isVisible).slice(0, 20).map((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      tag: element.tagName.toLowerCase(),
+      role: element.getAttribute('role') || null,
+      id: element.id || null,
+      label: String(
+        element.getAttribute('aria-label') ||
+        element.getAttribute('title') ||
+        element.innerText ||
+        ''
+      ).replace(/\s+/g, ' ').trim().slice(0, 120),
+      bbox: {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height)
+      }
+    };
+  });
+}
+
 function collectSensitiveFields() {
   return [...document.querySelectorAll('input[type="password"], [autocomplete="one-time-code"], [data-sensitive-page="true"], [data-visual-policy="block"], [data-analysis-policy="block"]')]
     .filter(isVisible)
@@ -225,8 +481,10 @@ function hasExplicitVisualPolicyBlock() {
   ));
 }
 
-function collectObservation() {
-  const candidates = collectObservedElements();
+function collectObservation(options = {}) {
+  const limits = observationModeOptions(options);
+  const allCandidates = collectObservedElements();
+  const candidates = allCandidates.slice(0, limits.maxActionableHandles);
   const described = globalThis.CodexPageHandles.describeElements(candidates, {
     location,
     document,
@@ -239,12 +497,13 @@ function collectObservation() {
   const sensitiveVisualContent = sensitiveFields.length > 0;
   const explicitVisualPolicyBlock = hasExplicitVisualPolicyBlock();
 
-  return {
+  const observation = {
     url: location.href,
     origin: location.origin,
     title: document.title,
     pageStateId: described.pageStateId,
-    visibleTextSummary: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 2000),
+    visibleTextSummary: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, limits.summaryMaxChars),
+    landmarks: collectLandmarks(),
     detectedGates,
     sensitiveVisualContent,
     visualPolicy: {
@@ -265,8 +524,24 @@ function collectObservation() {
       scrollX: window.scrollX,
       scrollY: window.scrollY,
       devicePixelRatio: window.devicePixelRatio
+    },
+    observationMode: limits.mode,
+    limits: {
+      maxActionableHandles: limits.maxActionableHandles,
+      summaryMaxChars: limits.summaryMaxChars,
+      defaultMaxActionableHandles: limits.defaultMaxActionableHandles,
+      defaultSummaryMaxChars: limits.defaultSummaryMaxChars,
+      availableActionableHandles: allCandidates.length,
+      maxAvailableActionableHandles: limits.maxAvailableActionableHandles
     }
   };
+
+  if (typeof options.sincePageStateId === 'string' && options.sincePageStateId) {
+    return observationWithDelta(observation, options.sincePageStateId);
+  }
+
+  rememberObservationSummary(observationSummaryForDelta(observation));
+  return observation;
 }
 
 let lastReadableElements = [];
@@ -384,6 +659,24 @@ function readPage(message = {}) {
   return response;
 }
 
+function extractIntent(message = {}) {
+  if (!globalThis.CodexIntentExtractors || typeof globalThis.CodexIntentExtractors.extractIntent !== 'function') {
+    return {
+      intent: message.intent,
+      status: 'unsupported-intent',
+      supportedIntents: []
+    };
+  }
+  return globalThis.CodexIntentExtractors.extractIntent({
+    document,
+    window,
+    location
+  }, {
+    intent: message.intent,
+    maxCandidates: message.maxCandidates
+  });
+}
+
 function resolveHandle(handle) {
   const remembered = resolveLastReadableHandle(handle);
   if (remembered && remembered.ok) {
@@ -392,6 +685,37 @@ function resolveHandle(handle) {
 
   const candidates = collectObservedElements();
   return resolveVersionedHandleFromElements(handle, candidates);
+}
+
+function withPostActionSnapshot(response, message = {}) {
+  if (!response || response.ok !== true || message.postActionSnapshot !== 'delta') {
+    return response;
+  }
+  try {
+    return {
+      ...response,
+      result: {
+        ...(response.result || {}),
+        postActionSnapshot: collectObservation({
+          mode: message.mode || 'tiny',
+          maxActionableHandles: message.maxActionableHandles,
+          summaryMaxChars: message.summaryMaxChars,
+          sincePageStateId: message.sincePageStateId
+        })
+      }
+    };
+  } catch (error) {
+    return {
+      ...response,
+      result: {
+        ...(response.result || {}),
+        postActionSnapshotError: {
+          code: 'POST_ACTION_SNAPSHOT_FAILED',
+          message: error.message || String(error)
+        }
+      }
+    };
+  }
 }
 
 async function runAction(message) {
@@ -407,7 +731,10 @@ async function runAction(message) {
 
   if (message.action === 'scroll' && !message.handle) {
     window.scrollBy(message.deltaX || 0, message.deltaY || 0);
-    return { ok: true, result: { action: 'scrolled', scrollX: window.scrollX, scrollY: window.scrollY } };
+    return withPostActionSnapshot({
+      ok: true,
+      result: { action: 'scrolled', scrollX: window.scrollX, scrollY: window.scrollY }
+    }, message);
   }
 
   const resolved = resolveHandle(message.handle);
@@ -428,7 +755,7 @@ async function runAction(message) {
       return { ok: false, error: risk };
     }
     element.click();
-    return { ok: true, result: { action: 'clicked' } };
+    return withPostActionSnapshot({ ok: true, result: { action: 'clicked' } }, message);
   }
 
   if (message.action === 'fill' || message.action === 'type') {
@@ -436,7 +763,10 @@ async function runAction(message) {
     element.value = message.text || message.value || '';
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
-    return { ok: true, result: { action: message.action === 'type' ? 'typed' : 'filled' } };
+    return withPostActionSnapshot({
+      ok: true,
+      result: { action: message.action === 'type' ? 'typed' : 'filled' }
+    }, message);
   }
 
   if (message.action === 'clear') {
@@ -444,30 +774,36 @@ async function runAction(message) {
     element.value = '';
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
-    return { ok: true, result: { action: 'cleared' } };
+    return withPostActionSnapshot({ ok: true, result: { action: 'cleared' } }, message);
   }
 
   if (message.action === 'focus') {
     element.focus();
-    return { ok: true, result: { action: 'focused' } };
+    return withPostActionSnapshot({ ok: true, result: { action: 'focused' } }, message);
   }
 
   if (message.action === 'select') {
     element.value = message.value || '';
     element.dispatchEvent(new Event('change', { bubbles: true }));
-    return { ok: true, result: { action: 'selected' } };
+    return withPostActionSnapshot({ ok: true, result: { action: 'selected' } }, message);
   }
 
   if (message.action === 'check') {
     element.checked = message.checked !== false;
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
-    return { ok: true, result: { action: 'checked', checked: element.checked } };
+    return withPostActionSnapshot({
+      ok: true,
+      result: { action: 'checked', checked: element.checked }
+    }, message);
   }
 
   if (message.action === 'scroll') {
     window.scrollBy(message.deltaX || 0, message.deltaY || 0);
-    return { ok: true, result: { action: 'scrolled', scrollX: window.scrollX, scrollY: window.scrollY } };
+    return withPostActionSnapshot({
+      ok: true,
+      result: { action: 'scrolled', scrollX: window.scrollX, scrollY: window.scrollY }
+    }, message);
   }
 
   if (message.action === 'pressKey') {
@@ -475,7 +811,10 @@ async function runAction(message) {
     const event = new KeyboardEvent('keydown', { key: message.key || 'Enter', bubbles: true });
     element.dispatchEvent(event);
     element.dispatchEvent(new KeyboardEvent('keyup', { key: event.key, bubbles: true }));
-    return { ok: true, result: { action: 'key-pressed', key: event.key } };
+    return withPostActionSnapshot({
+      ok: true,
+      result: { action: 'key-pressed', key: event.key }
+    }, message);
   }
 
   return { ok: false, error: { code: 'UNKNOWN_ACTION' } };
@@ -542,7 +881,7 @@ async function runBatchAction(action) {
       ok: true,
       result: {
         action: 'observe',
-        ...collectObservation()
+        ...collectObservation(action)
       }
     };
   }
@@ -661,13 +1000,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message && message.type === 'content.extract') {
+      sendResponse(extractIntent(message));
+      return;
+    }
+
     if (message && message.type === 'content.batch') {
       sendResponse(await runBatch(message));
       return;
     }
 
     if (message && message.type === 'content.observe') {
-      sendResponse(collectObservation());
+      sendResponse(collectObservation(message));
       return;
     }
 

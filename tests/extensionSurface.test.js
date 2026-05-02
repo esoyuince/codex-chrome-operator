@@ -67,15 +67,23 @@ test('extension no longer ships popup, host-permission request, or profile bindi
   }
 });
 
-test('side panel keeps blocked-site settings and avoids permission or profile-binding copy', () => {
+test('side panel exposes action permissions, purchase approval, and blocked-site settings', () => {
   const html = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.html'), 'utf8');
   const js = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.js'), 'utf8');
 
   assert.match(html, /Blocked sites/);
+  assert.match(html, /Action permissions/);
+  assert.match(html, /Place order \/ purchase/);
+  assert.match(html, /pending-approvals/);
   assert.match(js, /operator\.blockedOriginsStatus/);
-  assert.doesNotMatch(`${html}\n${js}`, /host permission/i);
+  assert.match(js, /operator\.daemonStatus/);
+  assert.match(js, /operator\.approvals\.approve/);
+  assert.match(js, /operator\.approvals\.reject/);
+  assert.match(js, /operator\.approvals\.run/);
+  assert.doesNotMatch(`${html}\n${js}`, /critical-permissions-toggle/);
+  assert.doesNotMatch(`${html}\n${js}`, /criticalPermissionsEnabled/);
+  assert.doesNotMatch(`${html}\n${js}`, /CRITICAL_APPROVAL_KINDS/);
   assert.doesNotMatch(`${html}\n${js}`, /permissionRequest/i);
-  assert.doesNotMatch(`${html}\n${js}`, /profile binding/i);
   assert.doesNotMatch(`${html}\n${js}`, /profileBinding/i);
 });
 
@@ -106,12 +114,17 @@ test('extension ships offscreen warm-session heartbeat and active-tab warmup wir
   assert.match(background, /operator\.offscreenHeartbeat/);
 });
 
-test('background injects compact page reader before the content script', () => {
+test('background injects compact page reader and intent extractors before the content script', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 
   assert.match(background, /pageReader\.js/);
+  assert.match(background, /intentExtractors\.js/);
   assert.ok(
     background.indexOf("'pageReader.js'") < background.indexOf("'contentScript.js'"),
     'pageReader.js should load before contentScript.js'
+  );
+  assert.ok(
+    background.indexOf("'intentExtractors.js'") < background.indexOf("'contentScript.js'"),
+    'intentExtractors.js should load before contentScript.js'
   );
 });

@@ -10,6 +10,7 @@ const WARM_SESSION_ALARM = 'operator.warmSession';
 const WARM_SESSION_PERIOD_MINUTES = 0.5;
 const WARM_SESSION_MIN_INTERVAL_MS = 1500;
 const WARM_SESSION_READ_MAX_CHARS = 6000;
+const NATIVE_RPC_TIMEOUT_MS = 10000;
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 const FATAL_NATIVE_ERROR_CODES = new Set([
   'EXTENSION_ID_MISMATCH',
@@ -34,6 +35,7 @@ let connectionState = 'DISCONNECTED';
 let suppressNextNativeReconnect = false;
 let warmSessionInFlight = false;
 let lastWarmSessionAt = 0;
+const pendingNativeRpcs = new Map();
 
 function requestId(prefix = 'ext') {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -52,7 +54,7 @@ async function buildHello() {
     protocolVersion: '1.0',
     extensionId: chrome.runtime.id,
     extensionVersion: chrome.runtime.getManifest().version,
-    bridgeVersion: '0.2.6',
+    bridgeVersion: '0.2.8',
     sessionBootstrapId: requestId('boot'),
     ...getProfileBinding(),
     capabilities: [
@@ -82,6 +84,52 @@ function postNativeRpc(method, params = {}) {
     method,
     params
   });
+}
+
+function requestNativeRpc(method, params = {}, { timeoutMs = NATIVE_RPC_TIMEOUT_MS } = {}) {
+  if (!nativePort) {
+    throw new Error('Native bridge is not connected.');
+  }
+  const id = requestId('rpc');
+  const request = { id, method, params };
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      pendingNativeRpcs.delete(id);
+      resolve({
+        id,
+        ok: false,
+        error: {
+          code: 'NATIVE_RPC_TIMEOUT',
+          message: `Native RPC timed out: ${method}`
+        }
+      });
+    }, timeoutMs);
+    pendingNativeRpcs.set(id, { resolve, timeout });
+    nativePort.postMessage(request);
+  });
+}
+
+function settlePendingNativeRpcs(error) {
+  for (const [id, pending] of pendingNativeRpcs.entries()) {
+    clearTimeout(pending.timeout);
+    pending.resolve({
+      id,
+      ok: false,
+      error
+    });
+  }
+  pendingNativeRpcs.clear();
+}
+
+function resolvePendingNativeRpc(message) {
+  if (!message || !message.id || !pendingNativeRpcs.has(message.id)) {
+    return false;
+  }
+  const pending = pendingNativeRpcs.get(message.id);
+  pendingNativeRpcs.delete(message.id);
+  clearTimeout(pending.timeout);
+  pending.resolve(message);
+  return true;
 }
 
 function postNativeRpcNoThrow(method, params = {}) {
@@ -263,6 +311,7 @@ async function closeNativeAfterFatalResponse(message) {
     lastNativeError,
     lastNativeResponse: message
   });
+  settlePendingNativeRpcs(error);
   if (nativePort) {
     const port = nativePort;
     nativePort = null;
@@ -321,6 +370,10 @@ async function connectNative({ refreshHello = false, retryOnFailure = false } = 
       });
       connectionState = 'DISCONNECTED';
       nativePort = null;
+      settlePendingNativeRpcs({
+        code: 'EXTENSION_DISCONNECTED',
+        message: lastNativeError || 'Native port disconnected.'
+      });
       chrome.storage.local.set({ connectionState, lastNativeError });
       if (shouldReconnect) {
         scheduleNativeReconnect().catch((error) => {
@@ -342,6 +395,10 @@ async function connectNative({ refreshHello = false, retryOnFailure = false } = 
     lastNativeError = error.message;
     connectionState = 'ERROR';
     nativePort = null;
+    settlePendingNativeRpcs({
+      code: 'NATIVE_BRIDGE_FAILED',
+      message: error.message
+    });
     await chrome.storage.local.set({ connectionState, lastNativeError });
     if (retryOnFailure) {
       await scheduleNativeReconnect();
@@ -352,6 +409,11 @@ async function connectNative({ refreshHello = false, retryOnFailure = false } = 
 async function handleNativeMessage(message) {
   if (isFatalNativeResponse(message)) {
     await closeNativeAfterFatalResponse(message);
+    return;
+  }
+
+  if (resolvePendingNativeRpc(message)) {
+    await chrome.storage.local.set({ lastNativeResponse: message });
     return;
   }
 
@@ -458,7 +520,7 @@ async function syncPermissionsAfterChange() {
 async function ensureContentScript(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ['actionPolicy.js', 'gateDetector.js', 'pageHandles.js', 'pageWait.js', 'fileUpload.js', 'cartWorkflow.js', 'pageReader.js', 'contentScript.js']
+    files: ['actionPolicy.js', 'gateDetector.js', 'pageHandles.js', 'pageWait.js', 'fileUpload.js', 'cartWorkflow.js', 'pageReader.js', 'intentExtractors.js', 'contentScript.js']
   });
 }
 
@@ -546,6 +608,46 @@ function batchResultByAction(response, actionName) {
     entry.result.action === actionName
   ));
   return item ? item.result : null;
+}
+
+function observeOptions(params = {}) {
+  return {
+    ...(params.mode === undefined ? {} : { mode: params.mode }),
+    ...(params.maxActionableHandles === undefined ? {} : { maxActionableHandles: params.maxActionableHandles }),
+    ...(params.summaryMaxChars === undefined ? {} : { summaryMaxChars: params.summaryMaxChars }),
+    ...(params.sincePageStateId === undefined ? {} : { sincePageStateId: params.sincePageStateId })
+  };
+}
+
+async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
+  if (!actionResponse || actionResponse.ok !== true || params.postActionSnapshot !== 'delta') {
+    return actionResponse;
+  }
+  try {
+    const snapshot = await chrome.tabs.sendMessage(tabId, {
+      type: 'content.observe',
+      mode: params.mode || 'tiny',
+      ...observeOptions(params)
+    });
+    return {
+      ...actionResponse,
+      result: {
+        ...(actionResponse.result || {}),
+        postActionSnapshot: snapshot
+      }
+    };
+  } catch (error) {
+    return {
+      ...actionResponse,
+      result: {
+        ...(actionResponse.result || {}),
+        postActionSnapshotError: {
+          code: 'POST_ACTION_SNAPSHOT_FAILED',
+          message: error.message || String(error)
+        }
+      }
+    };
+  }
 }
 
 async function postWarmSessionFailure(tab, reason, error) {
@@ -743,7 +845,10 @@ async function handleOperatorCommand(command) {
     }
 
     if (command.method === 'page.observe') {
-      const observation = await chrome.tabs.sendMessage(ready.tab.id, { type: 'content.observe' });
+      const observation = await chrome.tabs.sendMessage(ready.tab.id, {
+        type: 'content.observe',
+        ...observeOptions(params)
+      });
       return { ok: true, result: observation };
     }
 
@@ -757,6 +862,15 @@ async function handleOperatorCommand(command) {
       });
     }
 
+    if (command.method === 'page.extract') {
+      const extraction = await chrome.tabs.sendMessage(ready.tab.id, {
+        type: 'content.extract',
+        intent: params.intent,
+        maxCandidates: params.maxCandidates
+      });
+      return { ok: true, result: extraction };
+    }
+
     if (command.method === 'page.batch') {
       return chrome.tabs.sendMessage(ready.tab.id, {
         type: 'content.batch',
@@ -767,7 +881,11 @@ async function handleOperatorCommand(command) {
     }
 
     if (command.method === 'page.visualObserve') {
-      const observation = await chrome.tabs.sendMessage(ready.tab.id, { type: 'content.observe' });
+      const observation = await chrome.tabs.sendMessage(ready.tab.id, {
+        type: 'content.observe',
+        mode: params.mode || 'medium',
+        ...observeOptions(params)
+      });
       const policyError = visualPolicyErrorForObservation(observation);
       if (policyError) {
         return { ok: false, error: policyError };
@@ -849,7 +967,7 @@ async function handleOperatorCommand(command) {
       return preflight;
     }
 
-    return runDebuggerAction({
+    const actionResponse = await runDebuggerAction({
       chromeApi: chrome,
       tab: ready.tab,
       action,
@@ -864,6 +982,7 @@ async function handleOperatorCommand(command) {
         key: params.key
       }
     });
+    return attachPostActionSnapshot(ready.tab.id, actionResponse, params);
   } catch (error) {
     return {
       ok: false,
@@ -929,6 +1048,49 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         lastNativeError,
         activeTab: await activeTabInfo()
       });
+      return;
+    }
+
+    if (message && message.type === 'operator.daemonStatus') {
+      await connectNative();
+      sendResponse(await requestNativeRpc('operator.status'));
+      return;
+    }
+
+    if (message && message.type === 'operator.approvals.list') {
+      await connectNative();
+      sendResponse(await requestNativeRpc('operator.approvals.list', {
+        ...(message.status ? { status: message.status } : {})
+      }));
+      return;
+    }
+
+    if (message && message.type === 'operator.approvals.approve') {
+      await connectNative();
+      sendResponse(await requestNativeRpc('operator.approvals.approve', {
+        approvalId: message.approvalId,
+        userDecision: 'approve',
+        source: 'sidepanel'
+      }));
+      return;
+    }
+
+    if (message && message.type === 'operator.approvals.reject') {
+      await connectNative();
+      sendResponse(await requestNativeRpc('operator.approvals.reject', {
+        approvalId: message.approvalId,
+        userDecision: 'reject',
+        source: 'sidepanel'
+      }));
+      return;
+    }
+
+    if (message && message.type === 'operator.approvals.run') {
+      await connectNative();
+      sendResponse(await requestNativeRpc('operator.approvals.run', {
+        approvalId: message.approvalId,
+        source: 'sidepanel'
+      }));
       return;
     }
 

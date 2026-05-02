@@ -1,8 +1,8 @@
 {
   "adapterProtocolVersion": "1.0",
   "toolSchemaVersion": "2026-05-01.m1",
-  "toolDefinitionsHash": "1bf61d08145ad19a6f93310ff39aec2977bb4ab6d85072faee273bae32579b64",
-  "toolCount": 28,
+  "toolDefinitionsHash": "f814387945dd383946586877f0c08b6fded343d3a889d39349130e071567857c",
+  "toolCount": 29,
   "toolNames": [
     "codex_chrome_status",
     "codex_chrome_prepare_origin",
@@ -12,6 +12,7 @@
     "codex_chrome_open_observe",
     "codex_chrome_observe",
     "codex_chrome_read_page",
+    "codex_chrome_extract",
     "codex_chrome_batch",
     "codex_chrome_visual_observe",
     "codex_chrome_visual_analyze",
@@ -39,7 +40,15 @@
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
-        "properties": {},
+        "properties": {
+          "detail": {
+            "type": "string",
+            "enum": [
+              "compact",
+              "full"
+            ]
+          }
+        },
         "required": []
       },
       "outputContract": {
@@ -148,6 +157,25 @@
           "pollIntervalMs": {
             "type": "number",
             "minimum": 1
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
+          },
+          "sincePageStateId": {
+            "type": "string"
           }
         },
         "required": [
@@ -166,6 +194,25 @@
         "additionalProperties": false,
         "properties": {
           "origin": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
+          },
+          "sincePageStateId": {
             "type": "string"
           }
         },
@@ -204,6 +251,33 @@
         },
         "required": [
           "origin"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_extract",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "intent": {
+            "type": "string"
+          },
+          "maxCandidates": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "origin",
+          "intent"
         ]
       },
       "outputContract": {
@@ -275,6 +349,31 @@
                 },
                 "refId": {
                   "type": "string"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "tiny",
+                    "medium",
+                    "full"
+                  ]
+                },
+                "maxActionableHandles": {
+                  "type": "number",
+                  "minimum": 1
+                },
+                "summaryMaxChars": {
+                  "type": "number",
+                  "minimum": 1
+                },
+                "sincePageStateId": {
+                  "type": "string"
+                },
+                "postActionSnapshot": {
+                  "type": "string",
+                  "enum": [
+                    "delta"
+                  ]
                 }
               },
               "required": [
@@ -303,6 +402,32 @@
         "additionalProperties": false,
         "properties": {
           "origin": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "maxBytes": {
+            "type": "number",
+            "minimum": 1
+          },
+          "reason": {
             "type": "string"
           }
         },
@@ -458,6 +583,31 @@
           },
           "text": {
             "type": "string"
+          },
+          "postActionSnapshot": {
+            "type": "string",
+            "enum": [
+              "delta"
+            ]
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
           }
         },
         "required": [
@@ -485,6 +635,31 @@
           },
           "text": {
             "type": "string"
+          },
+          "postActionSnapshot": {
+            "type": "string",
+            "enum": [
+              "delta"
+            ]
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
           }
         },
         "required": [
@@ -509,6 +684,31 @@
           },
           "handle": {
             "type": "string"
+          },
+          "postActionSnapshot": {
+            "type": "string",
+            "enum": [
+              "delta"
+            ]
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
           }
         },
         "required": [
@@ -532,6 +732,31 @@
           },
           "handle": {
             "type": "string"
+          },
+          "postActionSnapshot": {
+            "type": "string",
+            "enum": [
+              "delta"
+            ]
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
           }
         },
         "required": [
@@ -558,6 +783,31 @@
           },
           "value": {
             "type": "string"
+          },
+          "postActionSnapshot": {
+            "type": "string",
+            "enum": [
+              "delta"
+            ]
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
           }
         },
         "required": [
@@ -585,6 +835,31 @@
           },
           "checked": {
             "type": "boolean"
+          },
+          "postActionSnapshot": {
+            "type": "string",
+            "enum": [
+              "delta"
+            ]
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
           }
         },
         "required": [
@@ -615,6 +890,31 @@
           },
           "deltaY": {
             "type": "number"
+          },
+          "postActionSnapshot": {
+            "type": "string",
+            "enum": [
+              "delta"
+            ]
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
           }
         },
         "required": [
@@ -643,6 +943,31 @@
           },
           "key": {
             "type": "string"
+          },
+          "postActionSnapshot": {
+            "type": "string",
+            "enum": [
+              "delta"
+            ]
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
           }
         },
         "required": [
@@ -667,6 +992,31 @@
           },
           "handle": {
             "type": "string"
+          },
+          "postActionSnapshot": {
+            "type": "string",
+            "enum": [
+              "delta"
+            ]
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
           }
         },
         "required": [

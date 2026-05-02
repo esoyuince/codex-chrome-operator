@@ -46,11 +46,16 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   });
 
   const openObserve = response.result.tools.find((tool) => tool.name === 'codex_chrome_open_observe');
+  const status = response.result.tools.find((tool) => tool.name === 'codex_chrome_status');
   const visualAnalyze = response.result.tools.find((tool) => tool.name === 'codex_chrome_visual_analyze');
   const uploadFile = response.result.tools.find((tool) => tool.name === 'codex_chrome_upload_file');
   const cartPrepare = response.result.tools.find((tool) => tool.name === 'codex_chrome_cart_prepare');
   const profileDoctor = response.result.tools.find((tool) => tool.name === 'codex_chrome_profile_doctor');
   const profileOnboard = response.result.tools.find((tool) => tool.name === 'codex_chrome_profile_onboard');
+  assert.ok(status);
+  assert.equal(status.inputSchema.additionalProperties, false);
+  assert.deepEqual(status.inputSchema.required, []);
+  assert.deepEqual(status.inputSchema.properties.detail.enum, ['compact', 'full']);
   assert.ok(openObserve);
   assert.equal(openObserve.inputSchema.additionalProperties, false);
   assert.deepEqual(openObserve.inputSchema.required, ['url']);
@@ -210,6 +215,48 @@ test('MCP handler calls adapter tools and returns JSON content without raw visua
   assert.equal(payload.result.screenshot.dataUrl, undefined);
   assert.equal(response.result.adapterSession.callCount, 1);
   assert.equal(response.result.adapterSession.lastToolName, 'codex_chrome_visual_observe');
+});
+
+test('MCP handler preserves adapter telemetry in structured and text output', async () => {
+  const handleMessage = createMcpMessageHandler({
+    adapter: {
+      async executeTool(request) {
+        return {
+          ok: true,
+          toolName: request.toolName,
+          protocolVersion: '1.0',
+          untrusted: true,
+          result: {
+            connectionState: 'EXTENSION_CONNECTED',
+            pendingApprovalCount: 0
+          },
+          telemetry: {
+            resultChars: 68,
+            responseChars: 220,
+            approxResultTokens: 17,
+            approxResponseTokens: 55,
+            budgetName: 'codex_chrome_status.compact'
+          }
+        };
+      }
+    }
+  });
+
+  const response = await handleMessage({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_status',
+      arguments: {}
+    }
+  });
+
+  assert.equal(response.result.isError, false);
+  assert.equal(response.result.structuredContent.telemetry.budgetName, 'codex_chrome_status.compact');
+  const payload = JSON.parse(response.result.content[0].text);
+  assert.equal(payload.telemetry.resultChars, 68);
+  assert.equal(payload.telemetry.approxResponseTokens, 55);
 });
 
 test('MCP handler exposes explicit task-level session state', async () => {

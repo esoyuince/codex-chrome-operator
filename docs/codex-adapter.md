@@ -74,7 +74,7 @@ When the daemon created an approval request, the hint includes the `approvalId`,
 - `approval-reject <approvalId>`
 - `approval-run <approvalId>`
 
-The adapter currently exposes 28 strict tools:
+The adapter currently exposes 29 strict tools:
 
 - `codex_chrome_status`
 - `codex_chrome_prepare_origin`
@@ -84,6 +84,7 @@ The adapter currently exposes 28 strict tools:
 - `codex_chrome_open_observe`
 - `codex_chrome_observe`
 - `codex_chrome_read_page`
+- `codex_chrome_extract`
 - `codex_chrome_batch`
 - `codex_chrome_visual_observe`
 - `codex_chrome_visual_analyze`
@@ -123,6 +124,17 @@ accessibility-like page text with page-state handles and a caller-controlled
 `maxChars` budget. It is the fast text-first read path for pages where a full DOM
 observation or screenshot is unnecessary.
 
+`codex_chrome_observe` supports `mode: "tiny" | "medium" | "full"`, bounded
+handle and summary limits, and `sincePageStateId` for delta snapshots. Tiny is
+the default agent discipline; full observation remains available when explicitly
+requested.
+
+`codex_chrome_extract` routes to `page.extract` for intent-scoped structured
+data without generic DOM dumps. The first implemented intent is
+`shopping.productCandidates`, which returns bounded product candidates with
+name, price, volume, gender hint, href, add-to-cart handle, confidence, and short
+evidence.
+
 `codex_chrome_batch` routes to `page.batch` and queues a guarded sequence as one
 extension command. The daemon validates each child action, enforces bounded
 full-auto policy per child action kind, and caps the batch length. Batches may
@@ -150,7 +162,10 @@ emergency stop. Host permission hints describe reload/reinstall recovery because
 the packaged extension uses broad required host access.
 
 Visual tools return screenshot artifact references, metadata, or structured
-analysis. `codex_chrome_visual_analyze` routes to `page.visualAnalyze` with a
+analysis. `codex_chrome_visual_observe` stays explicit and accepts optional
+observe scope, `maxBytes`, and `reason` inputs so callers can avoid screenshots
+unless DOM confidence is low or visual proof is required.
+`codex_chrome_visual_analyze` routes to `page.visualAnalyze` with a
 required `origin` plus optional `provider`, `maxBytes`, and `allowSensitive`
 arguments; the adapter normalizes URL-like origin inputs to an origin before the
 daemon call. Raw screenshot bytes and `dataUrl` fields are redacted before the

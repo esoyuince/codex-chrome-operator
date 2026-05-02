@@ -11,6 +11,41 @@ const READ_PAGE_PROPERTIES = {
   refId: { type: 'string' }
 };
 
+const OBSERVE_OPTION_PROPERTIES = {
+  mode: {
+    type: 'string',
+    enum: ['tiny', 'medium', 'full']
+  },
+  maxActionableHandles: { type: 'number', minimum: 1 },
+  summaryMaxChars: { type: 'number', minimum: 1 },
+  sincePageStateId: { type: 'string' }
+};
+
+const BATCH_OBSERVE_OPTION_PROPERTIES = {
+  mode: OBSERVE_OPTION_PROPERTIES.mode,
+  maxActionableHandles: OBSERVE_OPTION_PROPERTIES.maxActionableHandles,
+  summaryMaxChars: OBSERVE_OPTION_PROPERTIES.summaryMaxChars,
+  sincePageStateId: OBSERVE_OPTION_PROPERTIES.sincePageStateId
+};
+
+const POST_ACTION_SNAPSHOT_PROPERTIES = {
+  postActionSnapshot: {
+    type: 'string',
+    enum: ['delta']
+  },
+  sincePageStateId: { type: 'string' },
+  mode: OBSERVE_OPTION_PROPERTIES.mode,
+  maxActionableHandles: OBSERVE_OPTION_PROPERTIES.maxActionableHandles,
+  summaryMaxChars: OBSERVE_OPTION_PROPERTIES.summaryMaxChars
+};
+
+const VISUAL_OBSERVE_PROPERTIES = {
+  origin: { type: 'string' },
+  ...OBSERVE_OPTION_PROPERTIES,
+  maxBytes: { type: 'number', minimum: 1 },
+  reason: { type: 'string' }
+};
+
 const BATCH_ACTION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -29,7 +64,9 @@ const BATCH_ACTION_SCHEMA = {
     filter: { type: 'string' },
     depth: { type: 'number', minimum: 0 },
     maxChars: { type: 'number', minimum: 1 },
-    refId: { type: 'string' }
+    refId: { type: 'string' },
+    ...BATCH_OBSERVE_OPTION_PROPERTIES,
+    postActionSnapshot: POST_ACTION_SNAPSHOT_PROPERTIES.postActionSnapshot
   },
   required: ['action']
 };
@@ -41,7 +78,12 @@ const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: {},
+      properties: {
+        detail: {
+          type: 'string',
+          enum: ['compact', 'full']
+        }
+      },
       required: []
     },
     outputContract: {
@@ -126,7 +168,8 @@ const TOOL_DEFINITIONS = [
       properties: {
         url: { type: 'string', format: 'uri' },
         timeoutMs: { type: 'number', minimum: 0 },
-        pollIntervalMs: { type: 'number', minimum: 1 }
+        pollIntervalMs: { type: 'number', minimum: 1 },
+        ...OBSERVE_OPTION_PROPERTIES
       },
       required: ['url']
     },
@@ -142,7 +185,8 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        origin: { type: 'string' }
+        origin: { type: 'string' },
+        ...OBSERVE_OPTION_PROPERTIES
       },
       required: ['origin']
     },
@@ -159,6 +203,24 @@ const TOOL_DEFINITIONS = [
       additionalProperties: false,
       properties: READ_PAGE_PROPERTIES,
       required: ['origin']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_extract',
+    description: 'Return an intent-scoped extraction for an approved active tab without generic DOM or page-content dumps.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        intent: { type: 'string' },
+        maxCandidates: { type: 'number', minimum: 1 }
+      },
+      required: ['origin', 'intent']
     },
     outputContract: {
       untrusted: true,
@@ -189,13 +251,11 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'codex_chrome_visual_observe',
-    description: 'Return a visual observation with screenshot artifact references, not raw image bytes.',
+    description: 'Return a visual observation with screenshot artifact references, not raw image bytes. Use only when DOM confidence is low or visual verification is needed.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: {
-        origin: { type: 'string' }
-      },
+      properties: VISUAL_OBSERVE_PROPERTIES,
       required: ['origin']
     },
     outputContract: {
@@ -293,7 +353,8 @@ const TOOL_DEFINITIONS = [
       properties: {
         origin: { type: 'string' },
         handle: { type: 'string' },
-        text: { type: 'string' }
+        text: { type: 'string' },
+        ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
       required: ['origin', 'handle', 'text']
     },
@@ -311,7 +372,8 @@ const TOOL_DEFINITIONS = [
       properties: {
         origin: { type: 'string' },
         handle: { type: 'string' },
-        text: { type: 'string' }
+        text: { type: 'string' },
+        ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
       required: ['origin', 'handle', 'text']
     },
@@ -328,7 +390,8 @@ const TOOL_DEFINITIONS = [
       additionalProperties: false,
       properties: {
         origin: { type: 'string' },
-        handle: { type: 'string' }
+        handle: { type: 'string' },
+        ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
       required: ['origin', 'handle']
     },
@@ -345,7 +408,8 @@ const TOOL_DEFINITIONS = [
       additionalProperties: false,
       properties: {
         origin: { type: 'string' },
-        handle: { type: 'string' }
+        handle: { type: 'string' },
+        ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
       required: ['origin', 'handle']
     },
@@ -363,7 +427,8 @@ const TOOL_DEFINITIONS = [
       properties: {
         origin: { type: 'string' },
         handle: { type: 'string' },
-        value: { type: 'string' }
+        value: { type: 'string' },
+        ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
       required: ['origin', 'handle', 'value']
     },
@@ -381,7 +446,8 @@ const TOOL_DEFINITIONS = [
       properties: {
         origin: { type: 'string' },
         handle: { type: 'string' },
-        checked: { type: 'boolean' }
+        checked: { type: 'boolean' },
+        ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
       required: ['origin', 'handle', 'checked']
     },
@@ -400,7 +466,8 @@ const TOOL_DEFINITIONS = [
         origin: { type: 'string' },
         handle: { type: 'string' },
         deltaX: { type: 'number' },
-        deltaY: { type: 'number' }
+        deltaY: { type: 'number' },
+        ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
       required: ['origin', 'handle', 'deltaX', 'deltaY']
     },
@@ -418,7 +485,8 @@ const TOOL_DEFINITIONS = [
       properties: {
         origin: { type: 'string' },
         handle: { type: 'string' },
-        key: { type: 'string' }
+        key: { type: 'string' },
+        ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
       required: ['origin', 'handle', 'key']
     },
@@ -435,7 +503,8 @@ const TOOL_DEFINITIONS = [
       additionalProperties: false,
       properties: {
         origin: { type: 'string' },
-        handle: { type: 'string' }
+        handle: { type: 'string' },
+        ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
       required: ['origin', 'handle']
     },
