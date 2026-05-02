@@ -49,6 +49,10 @@ function formatTabTitle(tab) {
   return tab.title || tab.url || 'Untitled tab';
 }
 
+function isConnectedState(connectionState) {
+  return connectionState === 'CONNECTED' || connectionState === 'EXTENSION_CONNECTED';
+}
+
 async function readStorage() {
   try {
     return await chrome.storage.local.get([
@@ -149,7 +153,7 @@ function chooseNextStep({
   if (nativeError || connectionState === 'ERROR') {
     return 'Native bridge error detected. Reinstall or restart the native host, then use Connect.';
   }
-  if (connectionState !== 'CONNECTED') {
+  if (!isConnectedState(connectionState)) {
     return 'Native bridge is disconnected. Start the daemon or native host, then use Connect.';
   }
   if (statusError) {
@@ -175,7 +179,7 @@ function setBadge(connectionState, blockedStatus, nativeError) {
     els.badge.textContent = 'Needs repair';
     return;
   }
-  if (connectionState === 'CONNECTED' && !blockedStatus.blocked) {
+  if (isConnectedState(connectionState) && !blockedStatus.blocked) {
     els.badge.classList.add('badge-ok');
     els.badge.textContent = 'Ready';
     return;
@@ -190,7 +194,7 @@ function setMiniBadge(element, state, text) {
 }
 
 function renderPermissions({ connectionState, tab, blockedStatus }) {
-  const ready = connectionState === 'CONNECTED' && tab && tab.origin && !blockedStatus.blocked;
+  const ready = isConnectedState(connectionState) && tab && tab.origin && !blockedStatus.blocked;
   setMiniBadge(els.permissionSafe, ready ? 'ok' : 'warn', ready ? 'Ready' : 'Blocked');
   setMiniBadge(els.permissionAction, ready ? 'warn' : 'disabled', ready ? 'Guarded' : 'Unavailable');
   setMiniBadge(els.permissionCritical, 'danger', 'One-time');

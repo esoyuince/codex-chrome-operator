@@ -398,8 +398,8 @@ class SessionManager {
     this.config = {
       expectedExtensionId: config.expectedExtensionId || 'development-extension-id',
       expectedProtocolVersion: config.expectedProtocolVersion || '1.0',
-      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.8',
-      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.8',
+      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.9',
+      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.9',
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       visualAnalyzerRegistry: config.visualAnalyzerRegistry || createVisualAnalyzerRegistry(),
@@ -1120,6 +1120,43 @@ class SessionManager {
     return filter === 'interactive' || filter === 'controls';
   }
 
+  observeCacheMatches(params = {}, observation = {}) {
+    if (params.sincePageStateId) {
+      return false;
+    }
+
+    const requestedMode = typeof params.mode === 'string' && params.mode
+      ? params.mode
+      : 'tiny';
+    const cachedMode = typeof observation.observationMode === 'string' && observation.observationMode
+      ? observation.observationMode
+      : 'tiny';
+    if (requestedMode !== cachedMode) {
+      return false;
+    }
+
+    const limits = observation.limits && typeof observation.limits === 'object'
+      ? observation.limits
+      : {};
+    const requestedHandles = Number(params.maxActionableHandles);
+    if (
+      params.maxActionableHandles !== undefined &&
+      (!Number.isFinite(requestedHandles) || Math.floor(requestedHandles) !== limits.maxActionableHandles)
+    ) {
+      return false;
+    }
+
+    const requestedSummaryChars = Number(params.summaryMaxChars);
+    if (
+      params.summaryMaxChars !== undefined &&
+      (!Number.isFinite(requestedSummaryChars) || Math.floor(requestedSummaryChars) !== limits.summaryMaxChars)
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
   warmCacheHit(method, params = {}, origin) {
     const status = this.warmSessionStatus();
     const cache = this.warmSessionCache;
@@ -1131,7 +1168,7 @@ class SessionManager {
       return null;
     }
 
-    if (method === 'page.observe' && cache.observation) {
+    if (method === 'page.observe' && cache.observation && this.observeCacheMatches(params, cache.observation)) {
       return {
         ok: true,
         result: {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Chrome Operator Performance"
+  short_description: "Optimize and live-test Codex Chrome Operator work."
+  default_prompt: "Use this skill to diagnose, optimize, and validate Codex Chrome Operator browser automation with real-profile smoke tests."

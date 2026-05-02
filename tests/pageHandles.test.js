@@ -23,6 +23,9 @@ function element(attrs = {}) {
     tagName: attrs.tagName || 'INPUT',
     id: attrs.id || '',
     disabled: Boolean(attrs.disabled),
+    getBoundingClientRect() {
+      return attrs.rect || { x: 0, y: 0, width: 0, height: 0 };
+    },
     getAttribute(name) {
       return attrs[name] || null;
     }
@@ -96,6 +99,72 @@ test('resolveVersionedHandle rejects stale recovery when the target is ambiguous
 
   assert.equal(resolved.ok, false);
   assert.equal(resolved.error.reason, 'RECOVERY_NOT_UNIQUE');
+});
+
+test('resolveVersionedHandle uses stable layout to recover repeated action buttons', () => {
+  const context = env('https://example.com/thread');
+  const targetReply = element({
+    tagName: 'BUTTON',
+    role: 'button',
+    'aria-label': '25 Replies. Reply',
+    rect: { x: 471, y: 2063, width: 42, height: 20 }
+  });
+  const described = describeElements([targetReply], context);
+
+  const resolved = resolveVersionedHandle({
+    handle: described.items[0].handle,
+    elements: [
+      element({
+        tagName: 'BUTTON',
+        role: 'button',
+        'aria-label': '25 Replies. Reply',
+        rect: { x: 471, y: 244, width: 46, height: 47 }
+      }),
+      element({
+        tagName: 'BUTTON',
+        role: 'button',
+        'aria-label': '25 Replies. Reply',
+        rect: { x: 471, y: 2063, width: 42, height: 20 }
+      })
+    ],
+    context
+  });
+
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.index, 1);
+  assert.equal(resolved.recovered, true);
+});
+
+test('resolveVersionedHandle falls back to previous index when repeated controls remain aligned', () => {
+  const context = env('https://example.com/thread');
+  const buttons = Array.from({ length: 4 }, () => element({
+    tagName: 'BUTTON',
+    role: 'button',
+    'data-testid': 'reply'
+  }));
+  const described = describeElements(buttons, context);
+
+  const resolved = resolveVersionedHandle({
+    handle: described.items[2].handle,
+    elements: [
+      ...Array.from({ length: 4 }, () => element({
+        tagName: 'BUTTON',
+        role: 'button',
+        'data-testid': 'reply'
+      })),
+      element({
+      tagName: 'BUTTON',
+      role: 'button',
+      'data-testid': 'like'
+      })
+    ],
+    context
+  });
+
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.index, 2);
+  assert.equal(resolved.recovered, true);
+  assert.equal(resolved.recovery.strategy, 'stable-index');
 });
 
 test('page handle descriptors survive content script reinjection in the same page world', () => {

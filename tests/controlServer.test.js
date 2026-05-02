@@ -50,8 +50,8 @@ function verifiedHello(capabilities = ['observe.v1', 'visualObserve.v1']) {
     type: 'HELLO',
     protocolVersion: '1.0',
     extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    extensionVersion: '0.2.8',
-    bridgeVersion: '0.2.8',
+    extensionVersion: '0.2.9',
+    bridgeVersion: '0.2.9',
     sessionBootstrapId: `boot_${Date.now()}`,
     profileBindingState: 'bound',
     profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -391,6 +391,74 @@ test('extension active-tab warmup caches observe and compact read results withou
     assert.equal(status.body.result.warmSession.source, 'content.batch');
     assert.equal(status.body.result.warmSession.hasObservation, true);
     assert.equal(status.body.result.warmSession.hasReadPage, true);
+  });
+});
+
+test('warm session observe cache is bypassed for explicit non-matching compact options', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+    await postJson(baseUrl, 'extension.activeTabWarmup', {
+      activeTab: {
+        id: 7,
+        windowId: 2,
+        url: 'https://example.com/catalog',
+        title: 'Warm Catalog',
+        status: 'complete'
+      },
+      warmup: {
+        ok: true,
+        source: 'content.batch',
+        observation: {
+          origin: 'https://example.com',
+          url: 'https://example.com/catalog',
+          title: 'Warm Catalog',
+          observationMode: 'tiny',
+          pageStateId: 'warm_tiny',
+          visibleTextSummary: 'cached tiny',
+          elements: [{ handle: 'el_warm_0', tag: 'a', label: 'Cached' }],
+          limits: {
+            maxActionableHandles: 30,
+            summaryMaxChars: 500
+          }
+        }
+      }
+    });
+
+    const observePromise = postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com',
+      mode: 'full',
+      sincePageStateId: 'previous_state'
+    });
+    const command = await postJson(baseUrl, 'bridge.poll');
+
+    assert.equal(command.body.ok, true);
+    assert.equal(command.body.result.command.method, 'page.observe');
+    assert.deepEqual(command.body.result.command.params, {
+      origin: 'https://example.com',
+      mode: 'full',
+      sincePageStateId: 'previous_state'
+    });
+
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: command.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          origin: 'https://example.com',
+          url: 'https://example.com/catalog',
+          title: 'Fresh Full Catalog',
+          observationMode: 'full',
+          pageStateId: 'fresh_full',
+          elements: []
+        }
+      }
+    });
+    const observed = await observePromise;
+
+    assert.equal(observed.body.ok, true);
+    assert.equal(observed.body.result.title, 'Fresh Full Catalog');
+    assert.equal(observed.body.result.observationMode, 'full');
+    assert.equal(Object.hasOwn(observed.body.result, 'warmCache'), false);
   });
 });
 
@@ -811,8 +879,8 @@ test('extension.hello connects without requiring profile binding', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -839,8 +907,8 @@ test('extension.hello accepts unbound legacy state and unlocks guarded page work
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_setup',
         profileBindingState: 'missing',
         profileBindingSource: 'chrome.storage.local',
@@ -880,7 +948,7 @@ test('extension.hello rejects daemon extension bridge version mismatch', async (
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
         extensionVersion: '0.3.0',
-        bridgeVersion: '0.2.8',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -896,10 +964,10 @@ test('extension.hello rejects daemon extension bridge version mismatch', async (
     const status = await postJson(baseUrl, 'operator.status');
     assert.equal(status.body.result.connectionState, 'DAEMON_RUNNING_EXTENSION_DISCONNECTED');
     assert.equal(status.body.result.version.protocolVersion, '1.0');
-    assert.equal(status.body.result.version.extensionVersion, '0.2.8');
-    assert.equal(status.body.result.version.bridgeVersion, '0.2.8');
+    assert.equal(status.body.result.version.extensionVersion, '0.2.9');
+    assert.equal(status.body.result.version.bridgeVersion, '0.2.9');
     assert.equal(status.body.result.version.lastMismatch.code, ERROR_CODES.EXTENSION_VERSION_MISMATCH);
-    assert.equal(status.body.result.version.lastMismatch.expectedExtensionVersion, '0.2.8');
+    assert.equal(status.body.result.version.lastMismatch.expectedExtensionVersion, '0.2.9');
     assert.equal(status.body.result.version.lastMismatch.actualExtensionVersion, '0.3.0');
   });
 });
@@ -911,8 +979,8 @@ test('page.observe queues once profile and domain are ready without per-site hos
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1108,8 +1176,8 @@ test('page.visualObserve queues once profile and domain are ready without per-si
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1155,8 +1223,8 @@ test('page.observe queues extension command and resolves from bridge delivery', 
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1371,8 +1439,8 @@ test('page.visualObserve queues extension command and resolves from bridge deliv
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1534,8 +1602,8 @@ test('operator.screenshots.cleanup removes stored visual artifacts', async () =>
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2030,8 +2098,8 @@ test('operator.emergencyStop cancels pending page actions and blocks new ones un
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2110,8 +2178,8 @@ test('extension disconnect cancels pending commands and reconnect requires a fre
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2169,8 +2237,8 @@ test('extension disconnect cancels pending commands and reconnect requires a fre
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_def',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2192,8 +2260,8 @@ test('successful page command clears stale lastError', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2253,8 +2321,8 @@ test('local high-risk click can be approved and replayed once', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2330,8 +2398,8 @@ test('gate handoff errors pause actions without creating approval requests', asy
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2386,8 +2454,8 @@ test('real-origin high-risk approval replay is blocked in M1', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.8',
-        bridgeVersion: '0.2.8',
+        extensionVersion: '0.2.9',
+        bridgeVersion: '0.2.9',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',

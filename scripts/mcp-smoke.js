@@ -6,7 +6,7 @@ const path = require('node:path');
 const ROOT = path.resolve(__dirname, '..');
 const DEFAULT_MCP_PROTOCOL_VERSION = '2025-06-18';
 const SMOKE_CLIENT_NAME = 'codex-chrome-operator-mcp-smoke';
-const SMOKE_CLIENT_VERSION = '0.2.8';
+const SMOKE_CLIENT_VERSION = '0.2.9';
 const REQUIRED_MCP_SMOKE_TOOLS = [
   'codex_chrome_status',
   'codex_chrome_prepare_origin',

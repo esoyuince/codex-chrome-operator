@@ -8,6 +8,63 @@
     return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxChars);
   }
 
+  function elementText(element, maxChars = 240) {
+    if (!element) {
+      return '';
+    }
+    const ownText = cleanText(element.innerText || element.textContent || '', maxChars);
+    if (ownText) {
+      return ownText;
+    }
+    const childText = [...(element.children || [])]
+      .map((child) => elementText(child, maxChars))
+      .filter(Boolean)
+      .join(' ');
+    return cleanText(childText, maxChars);
+  }
+
+  function queryAll(root, selector) {
+    if (!root || typeof root.querySelectorAll !== 'function') {
+      return [];
+    }
+    try {
+      return [...root.querySelectorAll(selector)];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function queryFirst(root, selector) {
+    if (!root || typeof root.querySelector !== 'function') {
+      return null;
+    }
+    try {
+      return root.querySelector(selector);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function findFirstDescendant(root, selectors) {
+    for (const selector of selectors) {
+      const match = queryFirst(root, selector);
+      if (match) {
+        return match;
+      }
+    }
+    return null;
+  }
+
+  function attributeText(element, names) {
+    for (const name of names) {
+      const value = element && element.getAttribute ? cleanText(element.getAttribute(name)) : '';
+      if (value) {
+        return value;
+      }
+    }
+    return '';
+  }
+
   function numberFromAttribute(element, name) {
     const raw = element.getAttribute(name);
     if (raw === null || raw === undefined || raw === '') {
@@ -15,6 +72,53 @@
     }
     const value = Number(String(raw).replace(',', '.'));
     return Number.isFinite(value) ? value : null;
+  }
+
+  function parseLocalizedNumber(value) {
+    let numeric = String(value || '').replace(/[^\d.,]/g, '');
+    if (!numeric) {
+      return null;
+    }
+
+    const lastComma = numeric.lastIndexOf(',');
+    const lastDot = numeric.lastIndexOf('.');
+    if (lastComma !== -1 && lastDot !== -1) {
+      const decimalSeparator = lastComma > lastDot ? ',' : '.';
+      const thousandsSeparator = decimalSeparator === ',' ? '.' : ',';
+      numeric = numeric
+        .split(thousandsSeparator).join('')
+        .replace(decimalSeparator, '.');
+    } else if (lastComma !== -1) {
+      const decimals = numeric.length - lastComma - 1;
+      numeric = decimals > 0 && decimals <= 2
+        ? numeric.replace(/\./g, '').replace(',', '.')
+        : numeric.replace(/,/g, '');
+    } else if (lastDot !== -1) {
+      const decimals = numeric.length - lastDot - 1;
+      numeric = decimals > 0 && decimals <= 2
+        ? numeric.replace(/,/g, '')
+        : numeric.replace(/\./g, '');
+    }
+
+    const parsed = Number(numeric);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function priceLabelFromText(text) {
+    const value = cleanText(text, 500);
+    const patterns = [
+      /(?:\u20ba|TL|TRY)\s*\d[\d.,\s]*(?:,\d{1,2})?/i,
+      /\d[\d.,\s]*(?:,\d{1,2})?\s*(?:TL|TRY|\u20ba)\b/i,
+      /(?:USD|\$|EUR|\u20ac)\s*\d[\d.,\s]*(?:[.,]\d{1,2})?/i,
+      /\d[\d.,\s]*(?:[.,]\d{1,2})?\s*(?:USD|\$|EUR|\u20ac)\b/i
+    ];
+    for (const pattern of patterns) {
+      const match = value.match(pattern);
+      if (match) {
+        return cleanText(match[0], 80);
+      }
+    }
+    return '';
   }
 
   function maxCandidatesFromOptions(options = {}) {
@@ -62,31 +166,139 @@
   }
 
   function candidateName(card) {
+    const explicitName = attributeText(card, [
+      'data-product-name',
+      'data-name',
+      'aria-label',
+      'title'
+    ]);
+    if (explicitName) {
+      return explicitName;
+    }
+
+    const titleElement = findFirstDescendant(card, [
+      '[data-product-name]',
+      '[data-test-id="product-title"]',
+      '[data-testid="product-title"]',
+      '[data-test-id="product-name"]',
+      '[data-testid="product-name"]',
+      'h2',
+      'h3',
+      'a[href]'
+    ]);
+    const titleText = elementText(titleElement);
+    if (titleText) {
+      return titleText;
+    }
+
     return cleanText(
-      card.getAttribute('data-product-name') ||
-      card.getAttribute('aria-label') ||
-      card.getAttribute('title') ||
-      card.innerText ||
-      card.textContent ||
+      elementText(card) ||
       card.getAttribute('data-product-id') ||
+      card.getAttribute('data-sku') ||
       ''
     );
   }
 
-  function buildPriceLabel(card, price) {
+  function priceDetails(card) {
+    const explicitPrice = numberFromAttribute(card, 'data-price');
     const rawLabel = cleanText(card.getAttribute('data-price-label'), 80);
     if (rawLabel) {
-      return rawLabel;
+      return {
+        price: explicitPrice !== null ? explicitPrice : parseLocalizedNumber(rawLabel),
+        priceLabel: rawLabel
+      };
     }
     const rawPrice = card.getAttribute('data-price');
     const currency = cleanText(card.getAttribute('data-currency'), 12);
     if (currency && rawPrice) {
-      return `${currency} ${rawPrice}`;
+      return {
+        price: explicitPrice,
+        priceLabel: `${currency} ${rawPrice}`
+      };
     }
     if (rawPrice) {
-      return rawPrice;
+      return {
+        price: explicitPrice,
+        priceLabel: rawPrice
+      };
     }
-    return price === null ? null : String(price);
+
+    const priceElement = findFirstDescendant(card, [
+      '[data-test-id="price-current"]',
+      '[data-testid="price-current"]',
+      '[data-price]',
+      '[itemprop="price"]',
+      '.price'
+    ]);
+    const priceLabel = priceLabelFromText(elementText(priceElement) || elementText(card));
+    return {
+      price: parseLocalizedNumber(priceLabel),
+      priceLabel: priceLabel || null
+    };
+  }
+
+  function productSignal(element) {
+    const values = [
+      element.getAttribute('data-visual-card'),
+      element.getAttribute('data-product-id'),
+      element.getAttribute('data-sku'),
+      element.getAttribute('data-test-id'),
+      element.getAttribute('data-testid'),
+      element.getAttribute('itemtype'),
+      element.getAttribute('class'),
+      element.getAttribute('id')
+    ].filter(Boolean).join(' ').toLowerCase();
+    return /\b(product|sku|item|urun)\b/.test(values) || values.includes('schema.org/product');
+  }
+
+  function findAddButton(card) {
+    const explicit = findFirstDescendant(card, [
+      '[data-cart-action="add"]',
+      '[data-test-id="add-to-cart"]',
+      '[data-testid="add-to-cart"]'
+    ]);
+    if (explicit) {
+      return explicit;
+    }
+    const button = findFirstDescendant(card, ['button', '[role="button"]']);
+    const text = elementText(button, 80).toLowerCase();
+    return /\b(add|cart|basket|sepet|sepete)\b/.test(text) ? button : null;
+  }
+
+  function collectProductCards(context) {
+    const explicitCards = queryAll(context.document, '[data-visual-card="product"]');
+    const genericCards = queryAll(context.document, [
+      '[data-product-id]',
+      '[data-sku]',
+      '[data-test-id="product-card"]',
+      '[data-testid="product-card"]',
+      '[itemtype*="Product"]',
+      'article',
+      'li'
+    ].join(','));
+
+    const seen = new Set();
+    return [...explicitCards, ...genericCards].filter((card) => {
+      if (!card || seen.has(card)) {
+        return false;
+      }
+      seen.add(card);
+
+      if (card.getAttribute('data-visual-card') === 'product') {
+        return true;
+      }
+
+      const name = candidateName(card);
+      const price = priceDetails(card);
+      const score = [
+        productSignal(card),
+        Boolean(name),
+        Boolean(price.priceLabel),
+        Boolean(findHref(card)),
+        Boolean(findAddButton(card))
+      ].filter(Boolean).length;
+      return score >= 3 && Boolean(name) && Boolean(price.priceLabel);
+    });
   }
 
   function describeHandles(elements, context) {
@@ -98,11 +310,9 @@
 
   function extractShoppingProductCandidates(context, options = {}) {
     const maxCandidates = maxCandidatesFromOptions(options);
-    const cards = [...context.document.querySelectorAll('[data-visual-card="product"]')];
+    const cards = collectProductCards(context);
     const limitedCards = cards.slice(0, maxCandidates);
-    const addButtons = limitedCards.map((card) => (
-      card.querySelector ? card.querySelector('[data-cart-action="add"]') : null
-    ));
+    const addButtons = limitedCards.map((card) => findAddButton(card));
     const describedCards = describeHandles(limitedCards, context);
     const describedAdds = describeHandles(addButtons.filter(Boolean), context);
     const addHandleByElement = new Map();
@@ -115,24 +325,26 @@
 
     const productCandidates = limitedCards.map((card) => {
       const text = candidateName(card);
-      const price = numberFromAttribute(card, 'data-price');
-      const addButton = card.querySelector ? card.querySelector('[data-cart-action="add"]') : null;
+      const price = priceDetails(card);
+      const addButton = findAddButton(card);
+      const explicitFixtureCard = card.getAttribute('data-visual-card') === 'product';
       const evidenceBits = [
         card.getAttribute('data-product-id') ? `product-id:${card.getAttribute('data-product-id')}` : null,
-        price !== null ? 'fixture-price' : null,
+        explicitFixtureCard ? 'fixture-product-card' : 'generic-product-card',
+        price.priceLabel ? 'price' : null,
         addButton ? 'add-action' : null,
         text ? cleanText(text, 80) : null
       ].filter(Boolean);
 
       return {
         name: text || null,
-        price,
-        priceLabel: buildPriceLabel(card, price),
+        price: price.price,
+        priceLabel: price.priceLabel,
         volumeMl: parseVolumeMl(text),
         genderHint: inferGenderHint(text),
         href: findHref(card),
         addToCartHandle: addButton ? addHandleByElement.get(addButton) || null : null,
-        confidence: card.getAttribute('data-product-id') ? 0.9 : 0.7,
+        confidence: card.getAttribute('data-product-id') || explicitFixtureCard ? 0.9 : 0.72,
         evidence: evidenceBits.join(' | ').slice(0, 180)
       };
     });

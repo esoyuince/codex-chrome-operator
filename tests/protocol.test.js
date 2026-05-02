@@ -13,8 +13,8 @@ function boundHello(overrides = {}) {
     type: 'HELLO',
     protocolVersion: '1.0',
     extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    extensionVersion: '0.2.8',
-    bridgeVersion: '0.2.8',
+    extensionVersion: '0.2.9',
+    bridgeVersion: '0.2.9',
     sessionBootstrapId: 'boot_abc',
     profileBindingState: 'bound',
     profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -88,8 +88,8 @@ test('validateHello rejects protocol extension and bridge version mismatch', () 
   const commonOptions = {
     expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
     expectedProtocolVersion: '1.0',
-    expectedExtensionVersion: '0.2.8',
-    expectedBridgeVersion: '0.2.8',
+    expectedExtensionVersion: '0.2.9',
+    expectedBridgeVersion: '0.2.9',
     expectedProfileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
     expectedProfileBindingVersion: 3,
     allowUnboundSetup: false,
@@ -103,12 +103,12 @@ test('validateHello rejects protocol extension and bridge version mismatch', () 
 
   const extensionMismatch = validateHello(boundHello({ extensionVersion: '0.3.0' }), commonOptions);
   assert.equal(extensionMismatch.error.code, ERROR_CODES.EXTENSION_VERSION_MISMATCH);
-  assert.equal(extensionMismatch.error.expectedExtensionVersion, '0.2.8');
+  assert.equal(extensionMismatch.error.expectedExtensionVersion, '0.2.9');
   assert.equal(extensionMismatch.error.actualExtensionVersion, '0.3.0');
 
   const bridgeMismatch = validateHello(boundHello({ bridgeVersion: '0.3.0' }), commonOptions);
   assert.equal(bridgeMismatch.error.code, ERROR_CODES.BRIDGE_VERSION_MISMATCH);
-  assert.equal(bridgeMismatch.error.expectedBridgeVersion, '0.2.8');
+  assert.equal(bridgeMismatch.error.expectedBridgeVersion, '0.2.9');
   assert.equal(bridgeMismatch.error.actualBridgeVersion, '0.3.0');
 });
 

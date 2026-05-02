@@ -213,6 +213,7 @@
         ['href', normalizedHref(element)],
         ['placeholder', attr(element, 'placeholder')],
         ['title', attr(element, 'title')],
+        ['testid', attr(element, 'data-testid')],
         ['productId', attr(element, 'data-product-id')],
         ['dataRisk', attr(element, 'data-risk')]
       ].filter(([key]) => target[key]);
@@ -225,7 +226,9 @@
 
       const hasStableKey = exactChecks.some(([key]) => key !== 'tag');
       if (hasStableKey) {
-        return true;
+        return target.label
+          ? String(target.label) === elementLabel(element)
+          : true;
       }
 
       return Boolean(target.label) && String(target.label) === elementLabel(element);

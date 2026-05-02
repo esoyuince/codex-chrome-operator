@@ -87,6 +87,116 @@ test('side panel exposes action permissions, purchase approval, and blocked-site
   assert.doesNotMatch(`${html}\n${js}`, /profileBinding/i);
 });
 
+test('side panel treats daemon EXTENSION_CONNECTED status as connected', async () => {
+  const vm = require('node:vm');
+  const js = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.js'), 'utf8');
+  const elements = new Map();
+
+  function makeElement(id) {
+    return {
+      id,
+      children: [],
+      className: '',
+      dataset: {},
+      disabled: false,
+      innerHTML: '',
+      textContent: '',
+      value: '',
+      append(...children) {
+        this.children.push(...children);
+      },
+      addEventListener() {},
+      closest() {
+        return null;
+      },
+      classList: {
+        add: (...classes) => {
+          const current = new Set(String(elements.get(id).className || '').split(/\s+/).filter(Boolean));
+          for (const className of classes) {
+            current.add(className);
+          }
+          elements.get(id).className = Array.from(current).join(' ');
+        }
+      }
+    };
+  }
+
+  const document = {
+    getElementById(id) {
+      if (!elements.has(id)) {
+        elements.set(id, makeElement(id));
+      }
+      return elements.get(id);
+    },
+    createElement(tagName) {
+      return makeElement(tagName);
+    }
+  };
+
+  const activeTab = {
+    id: 1,
+    title: 'Example Domain',
+    url: 'https://example.com/',
+    origin: 'https://example.com',
+    loadingState: 'complete'
+  };
+  const chrome = {
+    runtime: {
+      async sendMessage(message) {
+        if (message.type === 'operator.status') {
+          return { ok: true, activeTab, connectionState: 'CONNECTED' };
+        }
+        if (message.type === 'operator.daemonStatus') {
+          return {
+            ok: true,
+            result: {
+              activeTab,
+              connectionState: 'EXTENSION_CONNECTED',
+              lastError: null,
+              pendingApprovals: []
+            }
+          };
+        }
+        if (message.type === 'operator.approvals.list') {
+          return { ok: true, result: { approvals: [] } };
+        }
+        if (message.type === 'operator.blockedOriginsStatus') {
+          return { blockedOrigins: [], blocked: false, blockedPattern: null };
+        }
+        return { ok: true };
+      }
+    },
+    storage: {
+      local: {
+        async get() {
+          return {};
+        }
+      }
+    },
+    tabs: {
+      async query() {
+        return [];
+      }
+    }
+  };
+
+  vm.runInNewContext(js, {
+    chrome,
+    document,
+    URL,
+    setTimeout,
+    clearTimeout
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(elements.get('status-badge').textContent, 'Ready');
+  assert.equal(elements.get('permission-safe').textContent, 'Ready');
+  assert.equal(
+    elements.get('next-step').textContent,
+    'Ready for Codex operator commands on this active origin.'
+  );
+});
+
 test('background reconnects native bridge after Chrome startup without popup interaction', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 

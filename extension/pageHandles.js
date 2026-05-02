@@ -34,6 +34,22 @@
     return (hash >>> 0).toString(36);
   }
 
+  function layoutFingerprint(element) {
+    if (!element || typeof element.getBoundingClientRect !== 'function') {
+      return '';
+    }
+    const rect = element.getBoundingClientRect();
+    if (!rect || (!rect.width && !rect.height)) {
+      return '';
+    }
+    return [
+      Math.round(rect.x || 0),
+      Math.round(rect.y || 0),
+      Math.round(rect.width || 0),
+      Math.round(rect.height || 0)
+    ].join(',');
+  }
+
   function elementFingerprint(element) {
     return [
       element.tagName || '',
@@ -46,7 +62,8 @@
       attr(element, 'placeholder'),
       attr(element, 'title'),
       normalizedHref(element),
-      attr(element, 'data-product-id')
+      attr(element, 'data-product-id'),
+      layoutFingerprint(element)
     ].join('|');
   }
 
@@ -76,18 +93,30 @@
     }
   }
 
+  function fingerprintCounts(elements) {
+    const counts = new Map();
+    for (const element of elements) {
+      const fingerprint = elementFingerprint(element);
+      counts.set(fingerprint, (counts.get(fingerprint) || 0) + 1);
+    }
+    return counts;
+  }
+
   function describeElements(elements, context) {
     const pageStateId = buildPageStateId(elements, context);
+    const counts = fingerprintCounts(elements);
     return {
       pageStateId,
       items: elements.map((element, index) => {
         const handle = `el_${pageStateId}_${index}`;
+        const fingerprint = elementFingerprint(element);
         rememberDescriptor({
           handle,
           index,
           pageStateId,
           url: contextUrl(context),
-          fingerprint: elementFingerprint(element)
+          fingerprint,
+          originalMatchCount: counts.get(fingerprint) || 1
         });
         return {
           element,
@@ -139,6 +168,28 @@
         recovery: {
           strategy: 'stable-fingerprint',
           reason: 'PAGE_STATE_CHANGED'
+        }
+      };
+    }
+
+    if (
+      matches.length > 1 &&
+      descriptor.originalMatchCount > 1 &&
+      elements[descriptor.index] &&
+      elementFingerprint(elements[descriptor.index]) === descriptor.fingerprint
+    ) {
+      return {
+        ok: true,
+        element: elements[descriptor.index],
+        pageStateId: currentPageStateId,
+        previousPageStateId: handlePageStateId,
+        index: descriptor.index,
+        previousIndex: descriptor.index,
+        recovered: true,
+        recovery: {
+          strategy: 'stable-index',
+          reason: 'PAGE_STATE_CHANGED',
+          matchCount: matches.length
         }
       };
     }

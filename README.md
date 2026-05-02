@@ -12,7 +12,7 @@ small set of strict tools for Codex.
 
 ## Current Status
 
-- Package version: `0.2.8`
+- Package version: `0.2.9`
 - Platform target: Windows Chrome
 - Runtime: Node.js `>=24`
 - Extension model: Manifest V3, side panel, native messaging, broad required

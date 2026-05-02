@@ -107,11 +107,29 @@ function selectorMatchesElement(selector, node) {
   if (selector === '[data-visual-card="product"]') {
     return node.getAttribute('data-visual-card') === 'product';
   }
+  if (selector === '[data-test-id="product-card"]') {
+    return node.getAttribute('data-test-id') === 'product-card';
+  }
+  if (selector === '[data-test-id="product-title"]') {
+    return node.getAttribute('data-test-id') === 'product-title';
+  }
+  if (selector === '[data-test-id="price-current"]') {
+    return node.getAttribute('data-test-id') === 'price-current';
+  }
+  if (selector === '[data-test-id="add-to-cart"]') {
+    return node.getAttribute('data-test-id') === 'add-to-cart';
+  }
+  if (selector === 'a[href]') {
+    return node.tagName === 'A' && Boolean(node.getAttribute('href'));
+  }
   if (selector === '[data-cart-action="add"]') {
     return node.getAttribute('data-cart-action') === 'add';
   }
   if (selector === '[data-product-id]') {
     return Boolean(node.getAttribute('data-product-id'));
+  }
+  if (selector === 'article' || selector === 'li' || selector === 'h2' || selector === 'h3' || selector === 'span') {
+    return node.tagName.toLowerCase() === selector;
   }
   if (selector === 'main' || selector === 'nav' || selector === 'header' || selector === 'footer' || selector === 'aside') {
     return node.tagName.toLowerCase() === selector;
@@ -499,6 +517,49 @@ test('content extract returns bounded shopping product candidates without generi
   assert.equal(Object.hasOwn(extracted, 'elements'), false);
   assert.equal(Object.hasOwn(extracted, 'pageContent'), false);
   assert.ok(JSON.stringify(extracted).length < 2500, 'intent extractor should stay smaller than a generic page snapshot');
+});
+
+test('content extract finds generic product cards with localized prices', async () => {
+  const add = element('button', {
+    'data-test-id': 'add-to-cart',
+    text: 'Sepete ekle'
+  });
+  const title = element('h3', {
+    'data-test-id': 'product-title',
+    text: 'Lenovo IdeaPad Gaming 3 Oyuncu Laptop'
+  });
+  const link = element('a', {
+    href: 'https://example.com/lenovo-ideapad-gaming-3',
+    text: 'Lenovo IdeaPad Gaming 3 Oyuncu Laptop'
+  }, [title]);
+  const price = element('span', {
+    'data-test-id': 'price-current',
+    text: '24.999,00 TL'
+  });
+  const card = element('li', {
+    'data-test-id': 'product-card'
+  }, [link, price, add]);
+  const root = element('main', { text: 'Laptop catalog' }, [card]);
+  const content = loadContentScript(root);
+
+  const extracted = await content.send({
+    type: 'content.extract',
+    intent: 'shopping.productCandidates',
+    maxCandidates: 5
+  });
+
+  assert.equal(extracted.status, 'ok');
+  assert.equal(extracted.limits.availableCandidates, 1);
+  assert.equal(extracted.productCandidates.length, 1);
+  assert.equal(extracted.productCandidates[0].name, 'Lenovo IdeaPad Gaming 3 Oyuncu Laptop');
+  assert.equal(extracted.productCandidates[0].price, 24999);
+  assert.equal(extracted.productCandidates[0].priceLabel, '24.999,00 TL');
+  assert.equal(extracted.productCandidates[0].href, 'https://example.com/lenovo-ideapad-gaming-3');
+  assert.match(extracted.productCandidates[0].addToCartHandle, /^el_/);
+  assert.match(extracted.productCandidates[0].evidence, /generic-product-card/);
+  assert.equal(Object.hasOwn(extracted, 'elements'), false);
+  assert.equal(Object.hasOwn(extracted, 'pageContent'), false);
+  assert.ok(JSON.stringify(extracted).length < 2500, 'generic extraction should stay bounded');
 });
 
 test('content extract rejects unsupported intents without dumping DOM', async () => {

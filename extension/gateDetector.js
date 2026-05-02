@@ -101,6 +101,13 @@
     ].map(normalize).filter(Boolean).join(' ');
   }
 
+  function hasAuthField(fields) {
+    return fields.some((field) => (
+      /\b(email|username|login|signin|sign-in|password)\b/i.test(fieldText(field)) ||
+      field.type === 'password'
+    ));
+  }
+
   function buildGate(definition, evidence, visibleTextSummary) {
     return {
       type: definition.type,
@@ -123,11 +130,16 @@
     const frames = Array.isArray(snapshot.frames) ? snapshot.frames : [];
     const detected = [];
     const seen = new Set();
+    const authFieldPresent = hasAuthField(fields);
 
     for (const definition of GATE_DEFINITIONS) {
       let evidence = null;
 
-      if (definition.textPattern && definition.textPattern.test(visibleText)) {
+      if (
+        definition.textPattern &&
+        definition.textPattern.test(visibleText) &&
+        (definition.type !== 'AUTH_REQUIRED' || authFieldPresent)
+      ) {
         evidence = { source: 'visibleText' };
       }
 

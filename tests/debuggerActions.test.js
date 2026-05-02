@@ -115,6 +115,7 @@ test('runDebuggerAction clicks with Chrome input pointer events', async () => {
       handle: 'el_state_2',
       target: {
         tag: 'a',
+        testid: 'product-link',
         href: 'https://example.com/products/keyboard',
         label: 'Keyboard'
       }
@@ -136,6 +137,7 @@ test('runDebuggerAction clicks with Chrome input pointer events', async () => {
   ]);
   const evaluate = calls.find((call) => call.method === 'Runtime.evaluate');
   assert.match(evaluate.params.expression, /"action":"resolvePointerTarget"/);
+  assert.match(evaluate.params.expression, /"testid":"product-link"/);
   assert.match(evaluate.params.expression, /"href":"https:\/\/example.com\/products\/keyboard"/);
   const pointerCalls = calls.filter((call) => call.method === 'Input.dispatchMouseEvent');
   assert.deepEqual(pointerCalls.map((call) => call.params.type), ['mouseMoved', 'mousePressed', 'mouseReleased']);
@@ -166,4 +168,54 @@ test('runtime scroll action scrolls the page even when a handle is present', () 
   assert.equal(result.ok, true);
   assert.equal(result.result.action, 'scrolled');
   assert.equal(result.result.scrollY, 240);
+});
+
+test('runtime target recovery narrows repeated test ids with label text', () => {
+  function button(label, left) {
+    return {
+      tagName: 'BUTTON',
+      id: '',
+      innerText: label,
+      disabled: false,
+      scrollIntoView() {},
+      getAttribute(name) {
+        if (name === 'data-testid') return 'reply';
+        if (name === 'type') return 'button';
+        return '';
+      },
+      getBoundingClientRect() {
+        return { left, top: 100, right: left + 40, bottom: 140, width: 40, height: 40 };
+      }
+    };
+  }
+
+  const buttons = [button('12 Yanıt. Yanıt', 10), button('32 Yanıt. Yanıt', 80)];
+  const expression = buildRuntimeActionExpression({
+    action: 'resolvePointerTarget',
+    handle: 'el_oldstate_0',
+    target: { tag: 'button', testid: 'reply', label: '32 Yanıt. Yanıt' }
+  });
+  const context = {
+    URL,
+    location: { href: 'https://x.com/status/1' },
+    document: {
+      title: 'X',
+      querySelectorAll() {
+        return buttons;
+      }
+    },
+    window: {
+      innerWidth: 400,
+      innerHeight: 300,
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.recovered, true);
+  assert.equal(result.result.x, 100);
 });

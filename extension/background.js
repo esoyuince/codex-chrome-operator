@@ -54,7 +54,7 @@ async function buildHello() {
     protocolVersion: '1.0',
     extensionId: chrome.runtime.id,
     extensionVersion: chrome.runtime.getManifest().version,
-    bridgeVersion: '0.2.8',
+  bridgeVersion: '0.2.9',
     sessionBootstrapId: requestId('boot'),
     ...getProfileBinding(),
     capabilities: [
@@ -782,6 +782,14 @@ async function preflightDebuggerAction(ready, action, params) {
     handle: params.handle
   });
   if (!preflight || !preflight.ok) {
+    if (
+      params.target &&
+      preflight &&
+      preflight.error &&
+      preflight.error.code === 'STALE_HANDLE'
+    ) {
+      return { ok: true, result: { target: params.target, risk: null } };
+    }
     return preflight || {
       ok: false,
       error: {
@@ -973,7 +981,7 @@ async function handleOperatorCommand(command) {
       action,
       params: {
         handle: params.handle,
-        target: preflight.result && preflight.result.target,
+        target: params.target || (preflight.result && preflight.result.target),
         text: params.text,
         value: params.value,
         checked: params.checked,

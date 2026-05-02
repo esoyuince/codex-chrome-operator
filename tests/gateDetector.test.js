@@ -55,6 +55,14 @@ test('detectGatesFromSnapshot classifies captcha and WebAuthn gates', () => {
   ]);
 });
 
+test('detectGatesFromSnapshot ignores auth phrases in normal feed content', () => {
+  const gates = detectGatesFromSnapshot({
+    visibleText: 'Sam Altman: you can sign in to openclaw with your chatgpt account now and use your subscription there!'
+  });
+
+  assert.deepEqual(gates.map((gate) => gate.type), []);
+});
+
 test('firstGateError returns wait-and-reobserve handoff details', () => {
   const [gate] = detectGatesFromSnapshot({
     visibleText: 'Suspicious activity detected. Verify you are human to continue.'
