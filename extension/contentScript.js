@@ -329,6 +329,26 @@ function sameOriginFrameDocument(element) {
   }
 }
 
+function frameAccessState(element) {
+  if (!element || element.tagName !== 'IFRAME') {
+    return { accessible: false, document: null };
+  }
+  try {
+    const frameDocument = element.contentDocument || (element.contentWindow && element.contentWindow.document) || null;
+    return {
+      accessible: Boolean(frameDocument),
+      document: frameDocument
+    };
+  } catch (error) {
+    return {
+      accessible: false,
+      document: null,
+      errorCode: 'CROSS_ORIGIN_FRAME_INACCESSIBLE',
+      errorMessage: error && error.message ? error.message : String(error)
+    };
+  }
+}
+
 function querySelectorAllDeep(selector, root = document, seen = new Set()) {
   if (!root || seen.has(root)) {
     return [];
@@ -339,12 +359,32 @@ function querySelectorAllDeep(selector, root = document, seen = new Set()) {
     if (element.shadowRoot) {
       results.push(...querySelectorAllDeep(selector, element.shadowRoot, seen));
     }
-    const frameDocument = sameOriginFrameDocument(element);
-    if (frameDocument) {
-      results.push(...querySelectorAllDeep(selector, frameDocument, seen));
+    const frameAccess = frameAccessState(element);
+    if (frameAccess.document) {
+      results.push(...querySelectorAllDeep(selector, frameAccess.document, seen));
     }
   }
   return [...new Set(results)];
+}
+
+function collectFrameSummaries() {
+  return querySelectorAllSafe(document, 'iframe').map((frame) => {
+    const rect = frame.getBoundingClientRect();
+    const access = frameAccessState(frame);
+    return {
+      kind: 'iframe',
+      src: frame.getAttribute('src') || frame.src || null,
+      title: frame.getAttribute('title') || frame.getAttribute('aria-label') || null,
+      accessible: access.accessible,
+      ...(access.accessible ? {} : { errorCode: access.errorCode || 'FRAME_DOCUMENT_UNAVAILABLE' }),
+      bbox: {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height)
+      }
+    };
+  });
 }
 
 function collectObservedElements() {
@@ -354,6 +394,38 @@ function collectObservedElements() {
 var lastObservationSummaries = globalThis.__codexLastObservationSummaries || new Map();
 globalThis.__codexLastObservationSummaries = lastObservationSummaries;
 var MAX_OBSERVATION_SUMMARIES = 8;
+var mutationCounter = Number(globalThis.__codexMutationCounter || 0);
+globalThis.__codexMutationCounter = mutationCounter;
+
+if (!globalThis.__codexMutationObserverInstalled && typeof MutationObserver !== 'undefined') {
+  try {
+    const observer = new MutationObserver((mutations) => {
+      globalThis.__codexMutationCounter = Number(globalThis.__codexMutationCounter || 0) + mutations.length;
+    });
+    observer.observe(document.documentElement || document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true
+    });
+    globalThis.__codexMutationObserverInstalled = true;
+  } catch {
+    globalThis.__codexMutationObserverInstalled = false;
+  }
+}
+
+function pageVolatility(pageStateId) {
+  const viewport = `${window.innerWidth || 0}x${window.innerHeight || 0}`;
+  return {
+    mutationCounter: Number(globalThis.__codexMutationCounter || 0),
+    scrollX: window.scrollX || 0,
+    scrollY: window.scrollY || 0,
+    viewport,
+    visibilityState: document.visibilityState || null,
+    documentId: pageStateId ? `doc_${pageStateId}` : null,
+    confidence: 0.88
+  };
+}
 
 function boundedText(value, maxChars = 80) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxChars);
@@ -644,6 +716,7 @@ function collectObservation(options = {}) {
     pageStateId: described.pageStateId,
     visibleTextSummary: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, limits.summaryMaxChars),
     landmarks: collectLandmarks(),
+    frames: collectFrameSummaries(),
     detectedGates,
     sensitiveVisualContent,
     visualPolicy: {
@@ -665,6 +738,7 @@ function collectObservation(options = {}) {
       scrollY: window.scrollY,
       devicePixelRatio: window.devicePixelRatio
     },
+    volatility: pageVolatility(described.pageStateId),
     observationMode: limits.mode,
     limits: {
       maxActionableHandles: limits.maxActionableHandles,
@@ -907,6 +981,211 @@ function mediaInspect(message = {}) {
   };
 }
 
+function formLabelForControl(element) {
+  const explicit = element.getAttribute('aria-label') || element.getAttribute('title');
+  if (explicit) {
+    return String(explicit).replace(/\s+/g, ' ').trim().slice(0, 160);
+  }
+  if (element.labels && element.labels.length) {
+    return [...element.labels].map((label) => label.innerText || label.textContent || '').join(' ')
+      .replace(/\s+/g, ' ').trim().slice(0, 160);
+  }
+  const labelledBy = element.getAttribute('aria-labelledby');
+  if (labelledBy) {
+    return labelledBy.split(/\s+/)
+      .map((id) => document.getElementById(id))
+      .filter(Boolean)
+      .map((label) => label.innerText || label.textContent || '')
+      .join(' ')
+      .replace(/\s+/g, ' ').trim().slice(0, 160);
+  }
+  const placeholder = element.getAttribute('placeholder');
+  if (placeholder) {
+    return String(placeholder).replace(/\s+/g, ' ').trim().slice(0, 160);
+  }
+  return String(element.getAttribute('name') || element.id || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+}
+
+function fieldValidationState(element) {
+  const validity = element.validity || {};
+  const valid = typeof element.checkValidity === 'function'
+    ? Boolean(element.checkValidity())
+    : (validity.valid === undefined ? null : Boolean(validity.valid));
+  return {
+    valid,
+    message: element.validationMessage || null,
+    pattern: element.getAttribute('pattern') || null,
+    min: element.getAttribute('min') || null,
+    max: element.getAttribute('max') || null,
+    maxLength: Number.isFinite(Number(element.getAttribute('maxlength')))
+      ? Number(element.getAttribute('maxlength'))
+      : null
+  };
+}
+
+function formFieldSummary(element, handle, options = {}) {
+  const tag = element.tagName.toLowerCase();
+  const type = (element.getAttribute('type') || tag).toLowerCase();
+  const sensitive = isSensitiveFormValueElement(element);
+  const rawValue = tag === 'select'
+    ? (element.value || element.getAttribute('value') || '')
+    : (element.value || '');
+  const includeValues = options.includeValues === true;
+  return compactElementSummary({
+    fieldId: element.id || element.getAttribute('name') || handle,
+    handle,
+    tag,
+    type,
+    name: element.getAttribute('name') || null,
+    label: formLabelForControl(element),
+    autocomplete: element.getAttribute('autocomplete') || null,
+    placeholder: element.getAttribute('placeholder') || null,
+    required: Boolean(element.required || element.getAttribute('required') !== null),
+    disabled: Boolean(element.disabled),
+    sensitive,
+    value: includeValues
+      ? (sensitive && rawValue ? '[REDACTED]' : String(rawValue).slice(0, 4000))
+      : null,
+    validation: fieldValidationState(element)
+  });
+}
+
+function collectFormFields() {
+  return querySelectorAllDeep('input,textarea,select')
+    .filter((element) => {
+      const tag = element.tagName.toLowerCase();
+      const type = (element.getAttribute('type') || '').toLowerCase();
+      return tag !== 'input' || !['button', 'submit', 'reset', 'file', 'image', 'hidden'].includes(type);
+    })
+    .filter(isVisible)
+    .slice(0, 200);
+}
+
+function resolveFormFieldHandle(handle) {
+  return resolveVersionedHandleFromElements(handle, collectFormFields());
+}
+
+function formExtract(message = {}) {
+  const fields = collectFormFields();
+  const submitTargets = querySelectorAllDeep('button,input[type="submit"],[role="button"]')
+    .filter(isVisible)
+    .slice(0, 50);
+  const describedFields = globalThis.CodexPageHandles.describeElements(fields, { location, document, window });
+  const describedSubmits = globalThis.CodexPageHandles.describeElements(submitTargets, { location, document, window });
+  const fieldsByForm = new Map();
+  fields.forEach((field, index) => {
+    const form = typeof field.closest === 'function' ? field.closest('form') : null;
+    const formId = form && (form.id || form.getAttribute('name')) ? (form.id || form.getAttribute('name')) : 'form_default';
+    if (!fieldsByForm.has(formId)) {
+      fieldsByForm.set(formId, { form, fields: [] });
+    }
+    fieldsByForm.get(formId).fields.push(formFieldSummary(field, describedFields.items[index].handle, {
+      includeValues: message.includeValues === true
+    }));
+  });
+
+  const forms = [...fieldsByForm.entries()].map(([formId, entry]) => {
+    const relatedSubmits = submitTargets
+      .map((target, index) => ({ target, item: describedSubmits.items[index] }))
+      .filter(({ target }) => {
+        const targetForm = typeof target.closest === 'function' ? target.closest('form') : null;
+        return (targetForm && entry.form && targetForm === entry.form) || (!entry.form && !targetForm);
+      })
+      .map(({ target, item }) => elementSummary(target, item.handle));
+    const highRisk = relatedSubmits.some((target) => {
+      const risk = globalThis.CodexActionPolicy.classifyActionRisk({ action: 'click', target });
+      return Boolean(risk);
+    });
+    return {
+      formId,
+      fields: entry.fields,
+      submitTargets: relatedSubmits,
+      risk: {
+        level: highRisk ? 'high' : 'low',
+        reasons: highRisk ? ['high-risk-submit-target'] : []
+      }
+    };
+  });
+
+  return {
+    ok: true,
+    result: {
+      url: location.href,
+      origin: location.origin,
+      forms,
+      limits: {
+        availableFields: fields.length,
+        availableSubmitTargets: submitTargets.length
+      }
+    }
+  };
+}
+
+function formFillPlan(message = {}) {
+  const fields = Array.isArray(message.fields) ? message.fields : [];
+  const steps = [];
+  for (const field of fields) {
+    const resolved = resolveFormFieldHandle(field.handle);
+    if (!resolved.ok) {
+      return { ok: false, error: resolved.error };
+    }
+    const summary = formFieldSummary(resolved.element, field.handle, { includeValues: false });
+    steps.push({
+      action: 'fill',
+      handle: field.handle,
+      text: String(field.text || field.value || ''),
+      fieldId: summary.fieldId,
+      label: summary.label,
+      sensitive: summary.sensitive,
+      risk: summary.sensitive ? 'sensitive' : 'low'
+    });
+  }
+  return {
+    ok: true,
+    result: {
+      steps,
+      submit: null,
+      requiresUserApproval: false
+    }
+  };
+}
+
+async function formFillExecute(message = {}) {
+  const steps = Array.isArray(message.steps) ? message.steps : [];
+  const executed = [];
+  for (const step of steps) {
+    if (!step || step.action !== 'fill') {
+      return {
+        ok: false,
+        error: {
+          code: 'UNSUPPORTED_FORM_STEP',
+          message: 'Only fill steps are supported by formFillExecute v1.'
+        }
+      };
+    }
+    const resolved = resolveFormFieldHandle(step.handle);
+    if (!resolved.ok) {
+      return { ok: false, error: resolved.error };
+    }
+    const element = resolved.element;
+    element.focus();
+    element.value = step.text || step.value || '';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    executed.push({ handle: step.handle, action: 'fill' });
+  }
+  const invalidFields = collectFormFields()
+    .map((field) => formFieldSummary(field, null, { includeValues: false }))
+    .filter((field) => field.validation && field.validation.valid === false);
+  return {
+    ok: true,
+    result: {
+      executed,
+      invalidFields
+    }
+  };
+}
+
 function resolveHandle(handle) {
   const remembered = resolveLastReadableHandle(handle);
   if (remembered && remembered.ok) {
@@ -961,7 +1240,102 @@ function snapshotHasObservableChange(snapshot) {
   return false;
 }
 
+function pageTextNow() {
+  const pieces = [];
+  const seen = new Set();
+  function visit(node) {
+    if (!node || seen.has(node)) {
+      return;
+    }
+    seen.add(node);
+    const ownText = node.innerText || node.textContent || '';
+    if (ownText) {
+      pieces.push(ownText);
+    }
+    for (const child of node.children || []) {
+      visit(child);
+    }
+  }
+  visit(document.body);
+  return pieces.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function elementEnabledByHandle(handle) {
+  const resolved = handle ? resolveHandle(handle) : null;
+  if (!resolved || !resolved.ok) {
+    return false;
+  }
+  return !resolved.element.disabled;
+}
+
+function verifyExplicitConditions(message = {}, snapshot, context = {}) {
+  const conditions = message.verify && Array.isArray(message.verify.oneOf)
+    ? message.verify.oneOf
+    : [];
+  if (conditions.length === 0) {
+    return null;
+  }
+
+  const evidence = [];
+  const observed = [];
+  for (const condition of conditions) {
+    if (!condition || typeof condition.type !== 'string') {
+      continue;
+    }
+    if (condition.type === 'textAppears') {
+      const text = String(condition.text || '').trim();
+      if (text && pageTextNow().includes(text)) {
+        evidence.push(`text appeared: ${text}`);
+        observed.push(`text appeared: ${text}`);
+      }
+    } else if (condition.type === 'elementGone') {
+      const handle = condition.handle || (context.targetHandle || message.handle);
+      const present = (snapshot && Array.isArray(snapshot.elements) ? snapshot.elements : [])
+        .some((element) => element.handle === handle);
+      if (handle && !present) {
+        evidence.push(`element gone: ${handle}`);
+        observed.push(`element gone: ${handle}`);
+      }
+    } else if (condition.type === 'elementEnabled') {
+      const handle = condition.handle || (context.targetHandle || message.handle);
+      if (handle && elementEnabledByHandle(handle)) {
+        evidence.push(`element enabled: ${handle}`);
+        observed.push(`element enabled: ${handle}`);
+      }
+    } else if (condition.type === 'valueEquals') {
+      const handle = condition.handle || (context.targetHandle || message.handle);
+      const resolved = handle ? resolveHandle(handle) : null;
+      const value = resolved && resolved.ok ? currentActionValue(resolved.element, { action: 'fill' }) : undefined;
+      if (String(value) === String(condition.value || '')) {
+        evidence.push(`value matched: ${handle}`);
+        observed.push(`value matched: ${handle}`);
+      }
+    }
+  }
+
+  if (evidence.length > 0) {
+    return {
+      status: 'succeeded',
+      expected: conditions.map((condition) => condition.type),
+      observed,
+      evidence
+    };
+  }
+
+  return {
+    status: 'failed',
+    expected: conditions.map((condition) => condition.type),
+    observed: ['no explicit post-condition matched'],
+    evidence: ['explicit post-condition did not match']
+  };
+}
+
 function verifyActionResult(message = {}, snapshot, context = {}) {
+  const explicit = verifyExplicitConditions(message, snapshot, context);
+  if (explicit) {
+    return explicit;
+  }
+
   const action = message.action;
   const expectedValue = expectedActionValue(message);
   const currentValue = currentActionValue(context.targetElement, message);
@@ -1015,7 +1389,10 @@ function withPostActionSnapshot(response, message = {}, context = {}) {
       result: {
         ...(response.result || {}),
         dispatch: actionDispatchForMessage(message),
-        verification: verifyActionResult(message, postActionSnapshot, context),
+        verification: verifyActionResult(message, postActionSnapshot, {
+          ...context,
+          targetHandle: message.handle
+        }),
         postActionSnapshot
       }
     };
@@ -1334,6 +1711,21 @@ function handleContentMessage(message, sender, sendResponse) {
 
     if (message && message.type === 'content.mediaInspect') {
       sendResponse(mediaInspect(message));
+      return;
+    }
+
+    if (message && message.type === 'content.formExtract') {
+      sendResponse(formExtract(message));
+      return;
+    }
+
+    if (message && message.type === 'content.formFillPlan') {
+      sendResponse(formFillPlan(message));
+      return;
+    }
+
+    if (message && message.type === 'content.formFillExecute') {
+      sendResponse(await formFillExecute(message));
       return;
     }
 

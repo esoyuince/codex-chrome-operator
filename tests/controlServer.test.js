@@ -334,6 +334,16 @@ test('extension active-tab warmup caches observe and compact read results withou
           origin: 'https://example.com',
           url: 'https://example.com/form',
           title: 'Warm Form',
+          pageStateId: 'warm_state',
+          volatility: {
+            documentId: 'doc_warm_state',
+            mutationCounter: 2,
+            scrollX: 0,
+            scrollY: 12,
+            viewport: '1280x720',
+            visibilityState: 'visible',
+            confidence: 0.88
+          },
           elements: [{ handle: 'el_warm_0', tag: 'input', label: 'Email' }]
         },
         readPage: {
@@ -369,6 +379,16 @@ test('extension active-tab warmup caches observe and compact read results withou
     assert.equal(read.body.ok, true);
     assert.equal(read.body.result.pageContent, 'textbox "Email" [el_warm_0]');
     assert.equal(read.body.result.warmCache.hit, true);
+    assert.deepEqual(read.body.result.warmCache.metadata, {
+      pageStateId: 'warm_state',
+      documentId: 'doc_warm_state',
+      mutationCounter: 2,
+      scrollX: 0,
+      scrollY: 12,
+      viewport: '1280x720',
+      visibilityState: 'visible',
+      confidence: 0.88
+    });
 
     const observePromise = postJson(baseUrl, 'page.observe', {
       origin: 'https://example.com'
@@ -394,6 +414,7 @@ test('extension active-tab warmup caches observe and compact read results withou
     assert.equal(status.body.result.warmSession.active, true);
     assert.equal(status.body.result.warmSession.origin, 'https://example.com');
     assert.equal(status.body.result.warmSession.source, 'content.batch');
+    assert.equal(status.body.result.warmSession.metadata.documentId, 'doc_warm_state');
     assert.equal(status.body.result.warmSession.hasObservation, true);
     assert.equal(status.body.result.warmSession.hasReadPage, true);
   });
@@ -1116,6 +1137,95 @@ test('page.mediaInspect queues bounded media inspection for approved origins', a
     const result = await mediaPromise;
     assert.equal(result.body.ok, true);
     assert.equal(result.body.result.media[0].kind, 'video');
+  });
+});
+
+test('page.visualInspectTarget stores screenshot and returns target region artifact reference', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const inspectPromise = postJson(baseUrl, 'page.visualInspectTarget', {
+      origin: 'https://example.com',
+      handle: 'el_state_0',
+      maxBytes: 200000,
+      reason: 'inspect target'
+    });
+
+    const command = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: {
+        origin: 'https://example.com',
+        url: 'https://example.com/form',
+        title: 'Target',
+        elements: [{
+          handle: 'el_state_0',
+          tag: 'button',
+          label: 'Save',
+          bbox: { x: 10, y: 20, width: 80, height: 32 }
+        }],
+        visualTarget: {
+          handle: 'el_state_0',
+          bbox: { x: 10, y: 20, width: 80, height: 32 },
+          label: 'Save'
+        },
+        screenshot: {
+          mimeType: 'image/png',
+          dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+          bytesApprox: 8
+        }
+      }
+    });
+    assert.equal(command.method, 'page.visualInspectTarget');
+    assert.equal(command.params.handle, 'el_state_0');
+
+    const result = await inspectPromise;
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.screenshot.dataUrl, undefined);
+    assert.match(result.body.result.screenshot.artifactId, /^shot_/);
+    assert.equal(result.body.result.visualTarget.sourceArtifactId, result.body.result.screenshot.artifactId);
+    assert.match(result.body.result.visualTarget.regionArtifactId, /^region_/);
+  });
+});
+
+test('page form extract plan and execute queue guarded form commands', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const extractPromise = postJson(baseUrl, 'page.formExtract', {
+      origin: 'https://example.com',
+      includeValues: true
+    });
+    const extractCommand = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: { forms: [{ formId: 'login', fields: [] }] }
+    });
+    assert.equal(extractCommand.method, 'page.formExtract');
+    assert.equal(extractCommand.params.includeValues, true);
+    assert.equal((await extractPromise).body.ok, true);
+
+    const planPromise = postJson(baseUrl, 'page.formFillPlan', {
+      origin: 'https://example.com',
+      fields: [{ handle: 'el_state_0', text: 'captain@example.com' }]
+    });
+    const planCommand = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: { steps: [{ action: 'fill', handle: 'el_state_0', text: 'captain@example.com' }] }
+    });
+    assert.equal(planCommand.method, 'page.formFillPlan');
+    assert.equal(planCommand.params.fields[0].handle, 'el_state_0');
+    assert.equal((await planPromise).body.ok, true);
+
+    const executePromise = postJson(baseUrl, 'page.formFillExecute', {
+      origin: 'https://example.com',
+      steps: [{ action: 'fill', handle: 'el_state_0', text: 'captain@example.com' }]
+    });
+    const executeCommand = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: { invalidFields: [] }
+    });
+    assert.equal(executeCommand.method, 'page.formFillExecute');
+    assert.equal(executeCommand.params.steps[0].text, 'captain@example.com');
+    assert.equal((await executePromise).body.result.invalidFields.length, 0);
   });
 });
 

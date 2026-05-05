@@ -666,7 +666,72 @@ function snapshotHasObservableChange(snapshot) {
   return Boolean(snapshot && snapshot.delta && snapshot.delta.unchanged === false);
 }
 
-function verifyBackgroundAction(actionResponse, snapshot) {
+function verifyBackgroundExplicitConditions(params = {}, snapshot) {
+  const conditions = params.verify && Array.isArray(params.verify.oneOf)
+    ? params.verify.oneOf
+    : [];
+  if (conditions.length === 0) {
+    return null;
+  }
+  const evidence = [];
+  const observed = [];
+  for (const condition of conditions) {
+    if (!condition || typeof condition.type !== 'string') {
+      continue;
+    }
+    if (condition.type === 'textAppears') {
+      const text = String(condition.text || '').trim();
+      if (text && String(snapshot && snapshot.visibleTextSummary || '').includes(text)) {
+        evidence.push(`text appeared: ${text}`);
+        observed.push(`text appeared: ${text}`);
+      }
+    } else if (condition.type === 'elementGone') {
+      const handle = condition.handle || params.handle;
+      const present = (snapshot && Array.isArray(snapshot.elements) ? snapshot.elements : [])
+        .some((element) => element.handle === handle);
+      if (handle && !present) {
+        evidence.push(`element gone: ${handle}`);
+        observed.push(`element gone: ${handle}`);
+      }
+    } else if (condition.type === 'elementEnabled') {
+      const handle = condition.handle || params.handle;
+      const element = (snapshot && Array.isArray(snapshot.elements) ? snapshot.elements : [])
+        .find((entry) => entry.handle === handle);
+      if (element && element.disabled === false) {
+        evidence.push(`element enabled: ${handle}`);
+        observed.push(`element enabled: ${handle}`);
+      }
+    } else if (condition.type === 'valueEquals') {
+      const handle = condition.handle || params.handle;
+      const element = (snapshot && Array.isArray(snapshot.elements) ? snapshot.elements : [])
+        .find((entry) => entry.handle === handle);
+      if (element && String(element.value || '') === String(condition.value || '')) {
+        evidence.push(`value matched: ${handle}`);
+        observed.push(`value matched: ${handle}`);
+      }
+    }
+  }
+  if (evidence.length > 0) {
+    return {
+      status: 'succeeded',
+      expected: conditions.map((condition) => condition.type),
+      observed,
+      evidence
+    };
+  }
+  return {
+    status: 'failed',
+    expected: conditions.map((condition) => condition.type),
+    observed: ['no explicit post-condition matched'],
+    evidence: ['explicit post-condition did not match']
+  };
+}
+
+function verifyBackgroundAction(actionResponse, snapshot, params = {}) {
+  const explicit = verifyBackgroundExplicitConditions(params, snapshot);
+  if (explicit) {
+    return explicit;
+  }
   if (snapshotHasObservableChange(snapshot)) {
     return {
       status: 'succeeded',
@@ -702,7 +767,7 @@ async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
           method: dispatchMethodForActionResult(actionResponse.result || {}),
           provider: actionResponse.result && actionResponse.result.provider ? actionResponse.result.provider : null
         },
-        verification: verifyBackgroundAction(actionResponse, snapshot),
+        verification: verifyBackgroundAction(actionResponse, snapshot, params),
         postActionSnapshot: snapshot
       }
     };
@@ -953,6 +1018,79 @@ async function handleOperatorCommand(command) {
         type: 'content.mediaInspect',
         maxItems: params.maxItems
       });
+    }
+
+    if (command.method === 'page.formExtract') {
+      return chrome.tabs.sendMessage(ready.tab.id, {
+        type: 'content.formExtract',
+        includeValues: params.includeValues
+      });
+    }
+
+    if (command.method === 'page.formFillPlan') {
+      return chrome.tabs.sendMessage(ready.tab.id, {
+        type: 'content.formFillPlan',
+        fields: params.fields
+      });
+    }
+
+    if (command.method === 'page.formFillExecute') {
+      return chrome.tabs.sendMessage(ready.tab.id, {
+        type: 'content.formFillExecute',
+        steps: params.steps
+      });
+    }
+
+    if (command.method === 'page.visualInspectTarget') {
+      const observation = await observePage(ready.tab.id, {
+        ...params,
+        mode: params.mode || 'medium'
+      });
+      const policyError = visualPolicyErrorForObservation(observation);
+      if (policyError) {
+        return { ok: false, error: policyError };
+      }
+      const target = (observation.elements || []).find((element) => element.handle === params.handle);
+      if (!target) {
+        return {
+          ok: false,
+          error: {
+            code: 'TARGET_NOT_FOUND',
+            message: 'Target handle was not found in the current visual observation.',
+            handle: params.handle
+          }
+        };
+      }
+      const dataUrl = await captureVisibleTabWithBudget({
+        captureVisibleTab: (windowId, options) => chrome.tabs.captureVisibleTab(windowId, options),
+        windowId: ready.tab.windowId,
+        format: params.format,
+        quality: params.quality,
+        maxBytes: params.maxBytes
+      });
+      const mimeType = dataUrl.startsWith('data:image/jpeg;') ? 'image/jpeg' : 'image/png';
+      return {
+        ok: true,
+        result: {
+          ...observation,
+          visual: {
+            provider: 'chrome.tabs.captureVisibleTab',
+            screenshotBacked: true,
+            targetRegionBacked: true
+          },
+          visualTarget: {
+            handle: params.handle,
+            label: target.label || null,
+            tag: target.tag || null,
+            bbox: target.bbox || null
+          },
+          screenshot: {
+            mimeType,
+            dataUrl,
+            bytesApprox: estimateDataUrlBytes(dataUrl)
+          }
+        }
+      };
     }
 
     if (command.method === 'page.batch') {

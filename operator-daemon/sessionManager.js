@@ -120,8 +120,12 @@ const PAGE_ACTION_KINDS = Object.freeze({
   'page.readPage': 'observe',
   'page.extract': 'observe',
   'page.mediaInspect': 'observe',
+  'page.formExtract': 'observe',
+  'page.formFillPlan': 'observe',
+  'page.formFillExecute': 'fill',
   'page.visualObserve': 'screenshot',
   'page.visualAnalyze': 'screenshot',
+  'page.visualInspectTarget': 'screenshot',
   'page.uploadFile': 'upload',
   'page.prepareCart': 'cart-preparation',
   'page.batch': 'batch',
@@ -173,7 +177,8 @@ const BATCH_ACTION_FIELDS = new Set([
   'maxActionableHandles',
   'summaryMaxChars',
   'sincePageStateId',
-  'postActionSnapshot'
+  'postActionSnapshot',
+  'verify'
 ]);
 
 const BATCH_ACTION_FIELD_TYPES = Object.freeze({
@@ -196,7 +201,8 @@ const BATCH_ACTION_FIELD_TYPES = Object.freeze({
   maxActionableHandles: 'number',
   summaryMaxChars: 'number',
   sincePageStateId: 'string',
-  postActionSnapshot: 'string'
+  postActionSnapshot: 'string',
+  verify: 'object'
 });
 
 const BATCH_ACTION_REQUIRED_FIELDS = Object.freeze({
@@ -641,9 +647,13 @@ class SessionManager {
       case 'page.readPage':
       case 'page.extract':
       case 'page.mediaInspect':
+      case 'page.formExtract':
+      case 'page.formFillPlan':
+      case 'page.formFillExecute':
       case 'page.batch':
       case 'page.visualObserve':
       case 'page.visualAnalyze':
+      case 'page.visualInspectTarget':
       case 'page.uploadFile':
       case 'page.prepareCart':
         response = await this.routePageCommand(id, request.method, params);
@@ -1005,7 +1015,8 @@ class SessionManager {
       expiresAt: new Date(updatedAtMs + WARM_SESSION_CACHE_TTL_MS).toISOString(),
       observation: observation ? cloneJson(observation) : null,
       readPage: readPage ? cloneJson(readPage) : null,
-      readPageFilter: typeof warmup.readPageFilter === 'string' ? warmup.readPageFilter : 'interactive'
+      readPageFilter: typeof warmup.readPageFilter === 'string' ? warmup.readPageFilter : 'interactive',
+      metadata: this.warmResultMetadata(observation, readPage)
     };
 
     return rpcOk(id, {
@@ -1056,6 +1067,25 @@ class SessionManager {
     return value;
   }
 
+  warmResultMetadata(observation, readPage) {
+    const source = observation || readPage || {};
+    const volatility = source.volatility && typeof source.volatility === 'object'
+      ? source.volatility
+      : {};
+    return {
+      pageStateId: source.pageStateId || null,
+      documentId: volatility.documentId || null,
+      mutationCounter: Number.isFinite(Number(volatility.mutationCounter))
+        ? Number(volatility.mutationCounter)
+        : null,
+      scrollX: Number.isFinite(Number(volatility.scrollX)) ? Number(volatility.scrollX) : null,
+      scrollY: Number.isFinite(Number(volatility.scrollY)) ? Number(volatility.scrollY) : null,
+      viewport: volatility.viewport || null,
+      visibilityState: volatility.visibilityState || null,
+      confidence: Number.isFinite(Number(volatility.confidence)) ? Number(volatility.confidence) : 0.5
+    };
+  }
+
   clearWarmSessionCache(reason = 'cleared') {
     const previous = this.warmSessionCache;
     this.warmSessionCache = previous
@@ -1067,6 +1097,7 @@ class SessionManager {
         source: previous.source,
         updatedAt: previous.updatedAt,
         expiresAt: previous.expiresAt,
+        metadata: previous.metadata || null,
         inactiveAt: new Date().toISOString(),
         inactiveReason: reason,
         observation: null,
@@ -1102,6 +1133,7 @@ class SessionManager {
         source: cache.source || null,
         updatedAt: cache.updatedAt || null,
         expiresAt: cache.expiresAt || null,
+        metadata: cache.metadata || null,
         hasObservation: false,
         hasReadPage: false
       };
@@ -1118,6 +1150,7 @@ class SessionManager {
       source: cache.source || null,
       updatedAt: cache.updatedAt || null,
       expiresAt: cache.expiresAt || null,
+      metadata: cache.metadata || null,
       hasObservation: Boolean(cache.observation),
       hasReadPage: Boolean(cache.readPage)
     };
@@ -1129,7 +1162,8 @@ class SessionManager {
       hit: true,
       source: status.source,
       updatedAt: status.updatedAt,
-      expiresAt: status.expiresAt
+      expiresAt: status.expiresAt,
+      metadata: status.metadata || null
     };
   }
 
@@ -2197,7 +2231,7 @@ class SessionManager {
     if (shouldInvalidateWarmSession(method)) {
       this.clearWarmSessionCache(method);
     }
-    if (method === 'page.visualObserve' || method === 'page.visualAnalyze') {
+    if (method === 'page.visualObserve' || method === 'page.visualAnalyze' || method === 'page.visualInspectTarget') {
       const materialized = this.materializeVisualObservation(extensionResponse.result, origin, {
         policy: {
           ...(params.policy || {}),
@@ -2208,6 +2242,9 @@ class SessionManager {
       });
       if (!materialized.ok) {
         return rpcError(id, materialized.error);
+      }
+      if (method === 'page.visualInspectTarget') {
+        return rpcOk(id, this.materializeVisualTargetRegion(materialized.result));
       }
       if (method === 'page.visualAnalyze') {
         const analysis = analyzeVisualObservation({
@@ -2302,6 +2339,30 @@ class SessionManager {
         message: error.message
       });
     }
+  }
+
+  materializeVisualTargetRegion(result) {
+    const screenshot = result && result.screenshot;
+    const target = result && result.visualTarget;
+    if (!screenshot || !screenshot.artifactId || !target || !target.bbox) {
+      return result;
+    }
+    const regionSeed = [
+      screenshot.artifactId,
+      target.handle || '',
+      target.bbox.x,
+      target.bbox.y,
+      target.bbox.width,
+      target.bbox.height
+    ].join('_').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 96);
+    return {
+      ...result,
+      visualTarget: {
+        ...target,
+        sourceArtifactId: screenshot.artifactId,
+        regionArtifactId: `region_${regionSeed}`
+      }
+    };
   }
 
   cleanupScreenshots(id, params = {}) {

@@ -21,7 +21,11 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   const readPage = tools.find((tool) => tool.name === 'codex_chrome_read_page');
   const batch = tools.find((tool) => tool.name === 'codex_chrome_batch');
   const visualObserve = tools.find((tool) => tool.name === 'codex_chrome_visual_observe');
+  const visualInspectTarget = tools.find((tool) => tool.name === 'codex_chrome_visual_inspect_target');
   const mediaInspect = tools.find((tool) => tool.name === 'codex_chrome_media_inspect');
+  const formExtract = tools.find((tool) => tool.name === 'codex_chrome_form_extract');
+  const formFillPlan = tools.find((tool) => tool.name === 'codex_chrome_form_fill_plan');
+  const formFillExecute = tools.find((tool) => tool.name === 'codex_chrome_form_fill_execute');
 
   assert.equal(ADAPTER_PROTOCOL_VERSION, '1.0');
   assert.ok(status);
@@ -94,6 +98,19 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.deepEqual(mediaInspect.inputSchema.required, ['origin']);
   assert.equal(mediaInspect.inputSchema.properties.maxItems.minimum, 1);
   assert.match(mediaInspect.description, /media/i);
+  assert.ok(visualInspectTarget);
+  assert.deepEqual(visualInspectTarget.inputSchema.required, ['origin', 'handle']);
+  assert.equal(visualInspectTarget.inputSchema.properties.maxBytes.minimum, 1);
+  assert.match(visualInspectTarget.description, /target/i);
+  assert.ok(formExtract);
+  assert.deepEqual(formExtract.inputSchema.required, ['origin']);
+  assert.equal(formExtract.inputSchema.properties.includeValues.type, 'boolean');
+  assert.ok(formFillPlan);
+  assert.deepEqual(formFillPlan.inputSchema.required, ['origin', 'fields']);
+  assert.equal(formFillPlan.inputSchema.properties.fields.type, 'array');
+  assert.ok(formFillExecute);
+  assert.deepEqual(formFillExecute.inputSchema.required, ['origin', 'steps']);
+  assert.equal(formFillExecute.inputSchema.properties.steps.type, 'array');
   assert.match(toolDefinitionsHash(), /^[a-f0-9]{64}$/);
   assert.equal(toolDefinitionsHash(), toolDefinitionsHash());
 });
@@ -805,6 +822,71 @@ test('CodexChromeToolAdapter routes media inspect with normalized origin', async
     origin: 'https://example.com',
     maxItems: 3
   });
+});
+
+test('CodexChromeToolAdapter routes target visual inspect and form tools', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return { ok: true, result: { method: request.method, params: request.params } };
+    }
+  });
+
+  await adapter.executeTool({
+    toolName: 'codex_chrome_visual_inspect_target',
+    input: {
+      origin: 'https://example.com/form?x=1',
+      handle: 'el_state_0',
+      maxBytes: 100000,
+      reason: 'target verification'
+    }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_form_extract',
+    input: {
+      origin: 'https://example.com/form?x=1',
+      includeValues: true
+    }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_form_fill_plan',
+    input: {
+      origin: 'https://example.com/form?x=1',
+      fields: [{ handle: 'el_state_0', text: 'draft' }]
+    }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_form_fill_execute',
+    input: {
+      origin: 'https://example.com/form?x=1',
+      steps: [{ action: 'fill', handle: 'el_state_0', text: 'draft' }]
+    }
+  });
+
+  assert.deepEqual(calls.map((call) => call.method), [
+    'page.visualInspectTarget',
+    'page.formExtract',
+    'page.formFillPlan',
+    'page.formFillExecute'
+  ]);
+  assert.deepEqual(calls[0].params, {
+    origin: 'https://example.com',
+    handle: 'el_state_0',
+    maxBytes: 100000,
+    reason: 'target verification'
+  });
+  assert.deepEqual(calls[1].params, {
+    origin: 'https://example.com',
+    includeValues: true
+  });
+  assert.equal(calls[2].params.fields[0].text, 'draft');
+  assert.equal(calls[3].params.steps[0].handle, 'el_state_0');
 });
 
 test('CodexChromeToolAdapter routes visual observe with normalized origin and screenshot budget options', async () => {

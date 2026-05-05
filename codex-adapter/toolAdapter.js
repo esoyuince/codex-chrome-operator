@@ -336,7 +336,8 @@ function postActionSnapshotOptions(input) {
     'sincePageStateId',
     'mode',
     'maxActionableHandles',
-    'summaryMaxChars'
+    'summaryMaxChars',
+    'verify'
   ]);
 }
 
@@ -450,6 +451,32 @@ class CodexChromeToolAdapter {
         response = await this.sendRpc('page.mediaInspect', {
           origin: normalizeOrigin(input.origin),
           ...(input.maxItems === undefined ? {} : { maxItems: input.maxItems })
+        });
+        break;
+      case 'codex_chrome_visual_inspect_target':
+        response = await this.sendRpc('page.visualInspectTarget', {
+          origin: normalizeOrigin(input.origin),
+          handle: input.handle,
+          ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }),
+          ...(input.reason === undefined ? {} : { reason: input.reason })
+        });
+        break;
+      case 'codex_chrome_form_extract':
+        response = await this.sendRpc('page.formExtract', {
+          origin: normalizeOrigin(input.origin),
+          ...(input.includeValues === undefined ? {} : { includeValues: input.includeValues })
+        });
+        break;
+      case 'codex_chrome_form_fill_plan':
+        response = await this.sendRpc('page.formFillPlan', {
+          origin: normalizeOrigin(input.origin),
+          fields: input.fields.map((field) => ({ ...field }))
+        });
+        break;
+      case 'codex_chrome_form_fill_execute':
+        response = await this.sendRpc('page.formFillExecute', {
+          origin: normalizeOrigin(input.origin),
+          steps: input.steps.map((step) => ({ ...step }))
         });
         break;
       case 'codex_chrome_upload_file':

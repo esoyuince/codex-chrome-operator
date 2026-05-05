@@ -74,7 +74,7 @@ When the daemon created an approval request, the hint includes the `approvalId`,
 - `approval-reject <approvalId>`
 - `approval-run <approvalId>`
 
-The adapter currently exposes 30 strict tools:
+The adapter currently exposes 34 strict tools:
 
 - `codex_chrome_status`
 - `codex_chrome_prepare_origin`
@@ -89,6 +89,10 @@ The adapter currently exposes 30 strict tools:
 - `codex_chrome_visual_observe`
 - `codex_chrome_visual_analyze`
 - `codex_chrome_media_inspect`
+- `codex_chrome_visual_inspect_target`
+- `codex_chrome_form_extract`
+- `codex_chrome_form_fill_plan`
+- `codex_chrome_form_fill_execute`
 - `codex_chrome_upload_file`
 - `codex_chrome_cart_prepare`
 - `codex_chrome_fill`
@@ -177,6 +181,19 @@ handoff.
 untrusted state for visible video/audio elements such as `paused`,
 `currentTime`, `duration`, dimensions, and safe source metadata. It never returns
 raw media bytes.
+
+`codex_chrome_visual_inspect_target` routes to `page.visualInspectTarget` and
+captures screenshot-backed evidence for one observed handle. The daemon stores
+the screenshot as an artifact and returns a target region reference with
+`sourceArtifactId`, `regionArtifactId`, and bbox metadata instead of raw image
+bytes or local file paths.
+
+`codex_chrome_form_extract`, `codex_chrome_form_fill_plan`, and
+`codex_chrome_form_fill_execute` provide the first guarded form workflow:
+extract labels/handles/validation state, build explicit non-submit fill steps,
+then execute those fill steps and return invalid fields. Sensitive field values
+are redacted, and submit/payment/publish actions remain outside this form-fill
+surface.
 
 `codex_chrome_upload_file` routes to `page.uploadFile` with `origin`, target
 `handle`, optional `ruleset`, optional `verifyPreview`, and a `files` array. The

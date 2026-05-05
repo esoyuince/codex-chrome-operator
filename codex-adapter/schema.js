@@ -44,7 +44,55 @@ const POST_ACTION_SNAPSHOT_PROPERTIES = {
   sincePageStateId: { type: 'string' },
   mode: OBSERVE_OPTION_PROPERTIES.mode,
   maxActionableHandles: OBSERVE_OPTION_PROPERTIES.maxActionableHandles,
-  summaryMaxChars: OBSERVE_OPTION_PROPERTIES.summaryMaxChars
+  summaryMaxChars: OBSERVE_OPTION_PROPERTIES.summaryMaxChars,
+  verify: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      oneOf: {
+        type: 'array',
+        minItems: 1,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            type: {
+              type: 'string',
+              enum: ['textAppears', 'elementGone', 'elementEnabled', 'valueEquals']
+            },
+            text: { type: 'string' },
+            handle: { type: 'string' },
+            value: { type: 'string' }
+          },
+          required: ['type']
+        }
+      }
+    },
+    required: ['oneOf']
+  }
+};
+
+const FORM_FIELD_INPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    handle: { type: 'string' },
+    text: { type: 'string' },
+    value: { type: 'string' }
+  },
+  required: ['handle']
+};
+
+const FORM_STEP_INPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    action: { type: 'string', enum: ['fill'] },
+    handle: { type: 'string' },
+    text: { type: 'string' },
+    value: { type: 'string' }
+  },
+  required: ['action', 'handle']
 };
 
 const VISUAL_OBSERVE_PROPERTIES = {
@@ -74,7 +122,8 @@ const BATCH_ACTION_SCHEMA = {
     maxChars: { type: 'number', minimum: 1 },
     refId: { type: 'string' },
     ...BATCH_OBSERVE_OPTION_PROPERTIES,
-    postActionSnapshot: POST_ACTION_SNAPSHOT_PROPERTIES.postActionSnapshot
+    postActionSnapshot: POST_ACTION_SNAPSHOT_PROPERTIES.postActionSnapshot,
+    verify: POST_ACTION_SNAPSHOT_PROPERTIES.verify
   },
   required: ['action']
 };
@@ -301,6 +350,84 @@ const TOOL_DEFINITIONS = [
         maxItems: { type: 'number', minimum: 1 }
       },
       required: ['origin']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_visual_inspect_target',
+    description: 'Capture visual evidence for a specific observed target handle and return screenshot-backed region artifact references.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        handle: { type: 'string' },
+        maxBytes: { type: 'number', minimum: 1 },
+        reason: { type: 'string' }
+      },
+      required: ['origin', 'handle']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_form_extract',
+    description: 'Extract form fields, labels, validation state, and submit targets without leaking sensitive values.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        includeValues: { type: 'boolean' }
+      },
+      required: ['origin']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_form_fill_plan',
+    description: 'Create a bounded form fill plan for explicit field handles; submit actions remain out of scope.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        fields: {
+          type: 'array',
+          minItems: 1,
+          items: FORM_FIELD_INPUT_SCHEMA
+        }
+      },
+      required: ['origin', 'fields']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_form_fill_execute',
+    description: 'Execute a bounded non-submit form fill plan and return validation state.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        steps: {
+          type: 'array',
+          minItems: 1,
+          items: FORM_STEP_INPUT_SCHEMA
+        }
+      },
+      required: ['origin', 'steps']
     },
     outputContract: {
       untrusted: true,

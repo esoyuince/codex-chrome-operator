@@ -23,7 +23,12 @@ function element(tagName, attrs = {}, children = []) {
     },
     children,
     shadowRoot: attrs.shadowRoot || null,
-    contentDocument: attrs.contentDocument || null,
+    get contentDocument() {
+      if (attrs.contentDocumentThrows) {
+        throw new Error('Blocked cross-origin frame');
+      }
+      return attrs.contentDocument || null;
+    },
     childNodes: attrs.text ? [{ nodeType: 3, textContent: attrs.text }] : [],
     innerText: attrs.text || '',
     textContent: attrs.text || '',
@@ -50,6 +55,10 @@ function element(tagName, attrs = {}, children = []) {
     querySelector(selector) {
       return flattenElements(this).find((node) => node !== this && selectorMatchesElement(selector, node)) || null;
     },
+    querySelectorAll(selector) {
+      const selectors = selector.split(',').map((item) => item.trim());
+      return flattenElements(this).filter((node) => node !== this && selectors.some((part) => selectorMatchesElement(part, node)));
+    },
     getBoundingClientRect() {
       return { x: 10, y: 20, width: 160, height: 32 };
     },
@@ -67,6 +76,16 @@ function element(tagName, attrs = {}, children = []) {
     },
     contains(target) {
       return flattenElements(this).includes(target);
+    },
+    closest(selector) {
+      let current = this.parentElement || null;
+      while (current) {
+        if (selectorMatchesElement(selector, current)) {
+          return current;
+        }
+        current = current.parentElement || null;
+      }
+      return null;
     }
   };
   for (const child of children) {
@@ -85,8 +104,12 @@ function flattenElements(rootElement) {
     if (node.shadowRoot) {
       visit(node.shadowRoot);
     }
-    if (node.contentDocument && node.contentDocument.body) {
-      visit(node.contentDocument.body);
+    try {
+      if (node.contentDocument && node.contentDocument.body) {
+        visit(node.contentDocument.body);
+      }
+    } catch {
+      // Cross-origin iframe fixture.
     }
     for (const child of node.children || []) {
       visit(child);
@@ -117,6 +140,15 @@ function selectorMatchesElement(selector, node) {
   }
   if (selector === 'textarea') {
     return node.tagName === 'TEXTAREA';
+  }
+  if (selector === 'form') {
+    return node.tagName === 'FORM';
+  }
+  if (selector === 'label') {
+    return node.tagName === 'LABEL';
+  }
+  if (selector === 'iframe') {
+    return node.tagName === 'IFRAME';
   }
   if (selector === 'select') {
     return node.tagName === 'SELECT';
@@ -230,8 +262,8 @@ function loadContentScript(rootElement) {
         const selectors = selector.split(',').map((item) => item.trim());
         return allElements.find((node) => selectors.some((part) => selectorMatchesElement(part, node))) || null;
       },
-      getElementById() {
-        return null;
+      getElementById(id) {
+        return allElements.find((node) => node.id === id) || null;
       }
     },
     chrome: {
@@ -558,6 +590,27 @@ test('content observe marks UI graph nodes occluded when hit testing finds an ov
   assert.ok(node.evidence.includes('hit-test-occluded'));
 });
 
+test('content observe reports inaccessible cross-origin iframe boundaries', async () => {
+  const root = element('main', {}, [
+    element('iframe', {
+      src: 'https://video.example/embed/1',
+      title: 'Hosted video',
+      contentDocumentThrows: true
+    })
+  ]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({ type: 'content.observe', mode: 'medium' });
+
+  assert.equal(observed.frames.length, 1);
+  assert.equal(observed.frames[0].kind, 'iframe');
+  assert.equal(observed.frames[0].src, 'https://video.example/embed/1');
+  assert.equal(observed.frames[0].title, 'Hosted video');
+  assert.equal(observed.frames[0].accessible, false);
+  assert.equal(observed.frames[0].errorCode, 'CROSS_ORIGIN_FRAME_INACCESSIBLE');
+  assert.equal(observed.frames[0].bbox.width, 160);
+});
+
 test('content observe returns compact unchanged delta without element dump', async () => {
   const root = element('main', { text: 'Stable page' }, [
     element('button', {
@@ -705,6 +758,35 @@ test('content click reports inconclusive when post-action snapshot is unchanged'
   assert.equal(clicked.result.dispatch.method, 'dom');
   assert.equal(clicked.result.verification.status, 'inconclusive');
   assert.ok(clicked.result.verification.evidence.includes('action dispatched but no observable post-condition changed'));
+});
+
+test('content action verifies explicit textAppears post-condition', async () => {
+  const status = element('div', { text: '' });
+  const button = element('button', {
+    text: 'Save',
+    onClick() {
+      status.innerText = 'Saved';
+      status.textContent = 'Saved';
+    }
+  });
+  const root = element('main', { text: 'Draft form' }, [button, status]);
+  const content = loadContentScript(root);
+  const observed = await content.send({ type: 'content.observe' });
+  const handle = observed.elements[0].handle;
+
+  const clicked = await content.send({
+    type: 'content.action',
+    action: 'click',
+    handle,
+    postActionSnapshot: 'delta',
+    verify: {
+      oneOf: [{ type: 'textAppears', text: 'Saved' }]
+    }
+  });
+
+  assert.equal(clicked.ok, true);
+  assert.equal(clicked.result.verification.status, 'succeeded');
+  assert.ok(clicked.result.verification.evidence.includes('text appeared: Saved'));
 });
 
 test('content batch observe and actions carry delta snapshot options', async () => {
@@ -885,4 +967,58 @@ test('content mediaInspect returns bounded media element state', async () => {
   assert.equal(inspected.result.media[0].currentTime, 12.5);
   assert.equal(inspected.result.media[0].videoWidth, 1280);
   assert.equal(inspected.result.media[0].videoHeight, 720);
+});
+
+test('content form extract plan and execute returns validation state without leaking sensitive values', async () => {
+  const email = element('input', {
+    id: 'email',
+    name: 'email',
+    type: 'email',
+    'aria-label': 'Email address',
+    required: 'required',
+    value: ''
+  });
+  const password = element('input', {
+    id: 'password',
+    name: 'password',
+    type: 'password',
+    'aria-label': 'Password',
+    value: 'secret-value'
+  });
+  const form = element('form', { id: 'login' }, [
+    email,
+    password,
+    element('button', { type: 'submit', text: 'Sign in' })
+  ]);
+  const root = element('main', {}, [form]);
+  const content = loadContentScript(root);
+
+  const extracted = await content.send({
+    type: 'content.formExtract',
+    includeValues: true
+  });
+  assert.equal(extracted.ok, true);
+  assert.equal(extracted.result.forms[0].formId, 'login');
+  assert.equal(extracted.result.forms[0].fields.length, 2);
+  assert.equal(extracted.result.forms[0].fields[0].label, 'Email address');
+  assert.equal(extracted.result.forms[0].fields[0].required, true);
+  assert.equal(extracted.result.forms[0].fields[1].sensitive, true);
+  assert.equal(extracted.result.forms[0].fields[1].value, '[REDACTED]');
+
+  const plan = await content.send({
+    type: 'content.formFillPlan',
+    fields: [{ handle: extracted.result.forms[0].fields[0].handle, text: 'captain@example.com' }]
+  });
+  assert.equal(plan.ok, true);
+  assert.equal(plan.result.steps.length, 1);
+  assert.equal(plan.result.steps[0].action, 'fill');
+  assert.equal(plan.result.steps[0].label, 'Email address');
+
+  const executed = await content.send({
+    type: 'content.formFillExecute',
+    steps: plan.result.steps
+  });
+  assert.equal(executed.ok, true);
+  assert.equal(email.value, 'captain@example.com');
+  assert.equal(executed.result.invalidFields.length, 0);
 });
