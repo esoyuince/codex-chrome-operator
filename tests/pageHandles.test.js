@@ -212,7 +212,7 @@ test('resolveVersionedHandle narrows repeated identity controls by previous layo
   assert.equal(resolved.recovery.strategy, 'stable-identity-layout');
 });
 
-test('resolveVersionedHandle falls back to previous index when repeated controls remain aligned', () => {
+test('resolveVersionedHandle rejects stable index recovery without strong context evidence', () => {
   const context = env('https://example.com/thread');
   const buttons = Array.from({ length: 4 }, () => element({
     tagName: 'BUTTON',
@@ -230,9 +230,45 @@ test('resolveVersionedHandle falls back to previous index when repeated controls
         'data-testid': 'reply'
       })),
       element({
-      tagName: 'BUTTON',
-      role: 'button',
-      'data-testid': 'like'
+        tagName: 'BUTTON',
+        role: 'button',
+        'data-testid': 'like'
+      })
+    ],
+    context
+  });
+
+  assert.equal(resolved.ok, false);
+  assert.equal(resolved.error.reason, 'RECOVERY_NOT_UNIQUE');
+});
+
+test('resolveVersionedHandle uses stable index only with semantic neighbor and layout evidence', () => {
+  const context = env('https://example.com/thread');
+  const buttons = Array.from({ length: 4 }, (_, index) => element({
+    tagName: 'BUTTON',
+    role: 'button',
+    'data-testid': 'reply',
+    'aria-label': 'Reply',
+    rect: { x: 24, y: 100 + (index * 48), width: 80, height: 32 }
+  }));
+  const described = describeElements(buttons, context);
+
+  const resolved = resolveVersionedHandle({
+    handle: described.items[2].handle,
+    elements: [
+      ...Array.from({ length: 4 }, (_, index) => element({
+        tagName: 'BUTTON',
+        role: 'button',
+        'data-testid': 'reply',
+        'aria-label': 'Reply',
+        rect: { x: 28, y: 104 + (index * 48), width: 80, height: 32 }
+      })),
+      element({
+        tagName: 'BUTTON',
+        role: 'button',
+        'data-testid': 'like',
+        'aria-label': 'Like',
+        rect: { x: 28, y: 300, width: 80, height: 32 }
       })
     ],
     context

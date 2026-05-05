@@ -108,6 +108,26 @@
       Math.abs(currentCenter.y - previousCenter.y) <= yTolerance;
   }
 
+  function stableEvidenceConfidence(element) {
+    let score = 0.35;
+    if (attr(element, 'role') || tagName(element) === 'button' || tagName(element) === 'a') {
+      score += 0.12;
+    }
+    if (attr(element, 'aria-label') || attr(element, 'title') || elementLabel(element)) {
+      score += 0.14;
+    }
+    if (attr(element, 'data-testid') || attr(element, 'data-test-id') || attr(element, 'id')) {
+      score += 0.22;
+    }
+    if (normalizedHref(element) || attr(element, 'name') || attr(element, 'type')) {
+      score += 0.08;
+    }
+    if (layoutBox(element)) {
+      score += 0.12;
+    }
+    return Math.min(1, score);
+  }
+
   function elementFingerprint(element) {
     return [
       element.tagName || '',
@@ -144,6 +164,13 @@
       attr(element, 'data-product-id'),
       elementLabel(element)
     ].join('|');
+  }
+
+  function neighborHash(elements, index) {
+    const previous = index > 0 ? elementIdentityFingerprint(elements[index - 1]) : 'START';
+    const current = elements[index] ? elementIdentityFingerprint(elements[index]) : '';
+    const next = index < elements.length - 1 ? elementIdentityFingerprint(elements[index + 1]) : 'END';
+    return hashText([previous, current, next].join('\n'));
   }
 
   function buildPageStateId(elements, context) {
@@ -199,7 +226,9 @@
           url: contextUrl(context),
           fingerprint,
           identityFingerprint,
+          neighborHash: neighborHash(elements, index),
           previousLayout,
+          confidence: stableEvidenceConfidence(element),
           originalMatchCount: counts.get(fingerprint) || 1,
           originalIdentityMatchCount: identityCounts.get(identityFingerprint) || 1
         });
@@ -223,6 +252,39 @@
         ...extra
       }
     };
+  }
+
+  function canUseStableIndexRecovery({
+    descriptor,
+    elements,
+    matches,
+    expectedMatchCount,
+    requireElementFingerprint = true
+  }) {
+    if (!descriptor || !Array.isArray(elements) || !Array.isArray(matches)) {
+      return false;
+    }
+    const requiredMatchCount = expectedMatchCount || descriptor.originalMatchCount;
+    if (requiredMatchCount !== matches.length) {
+      return false;
+    }
+    const candidate = elements[descriptor.index];
+    if (!candidate) {
+      return false;
+    }
+    if (requireElementFingerprint && elementFingerprint(candidate) !== descriptor.fingerprint) {
+      return false;
+    }
+    if (elementIdentityFingerprint(candidate) !== descriptor.identityFingerprint) {
+      return false;
+    }
+    if (neighborHash(elements, descriptor.index) !== descriptor.neighborHash) {
+      return false;
+    }
+    if (!elementNearLayout(candidate, descriptor.previousLayout)) {
+      return false;
+    }
+    return Number(descriptor.confidence) >= 0.8;
   }
 
   function recoverStaleHandle({ handle, elements, context, handlePageStateId, currentPageStateId }) {
@@ -260,8 +322,7 @@
     if (
       matches.length > 1 &&
       descriptor.originalMatchCount > 1 &&
-      elements[descriptor.index] &&
-      elementFingerprint(elements[descriptor.index]) === descriptor.fingerprint
+      canUseStableIndexRecovery({ descriptor, elements, matches })
     ) {
       return {
         ok: true,
@@ -285,6 +346,49 @@
         currentPageStateId,
         matchCount: matches.length
       });
+    }
+
+    if (descriptor.identityFingerprint && descriptor.originalIdentityMatchCount > 1) {
+      const identityMatches = [];
+      for (let index = 0; index < elements.length; index += 1) {
+        if (elementIdentityFingerprint(elements[index]) === descriptor.identityFingerprint) {
+          identityMatches.push({ element: elements[index], index });
+        }
+      }
+
+      if (
+        identityMatches.length > 1 &&
+        canUseStableIndexRecovery({
+          descriptor,
+          elements,
+          matches: identityMatches,
+          expectedMatchCount: descriptor.originalIdentityMatchCount,
+          requireElementFingerprint: false
+        })
+      ) {
+        return {
+          ok: true,
+          element: elements[descriptor.index],
+          pageStateId: currentPageStateId,
+          previousPageStateId: handlePageStateId,
+          index: descriptor.index,
+          previousIndex: descriptor.index,
+          recovered: true,
+          recovery: {
+            strategy: 'stable-index',
+            reason: 'PAGE_STATE_CHANGED',
+            matchCount: identityMatches.length
+          }
+        };
+      }
+
+      if (identityMatches.length > 1) {
+        return staleHandle('RECOVERY_NOT_UNIQUE', {
+          handlePageStateId,
+          currentPageStateId,
+          matchCount: identityMatches.length
+        });
+      }
     }
 
     if (descriptor.identityFingerprint && descriptor.originalIdentityMatchCount === 1) {

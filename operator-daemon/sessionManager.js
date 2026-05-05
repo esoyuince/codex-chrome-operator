@@ -214,6 +214,22 @@ const BATCH_ACTION_REQUIRED_FIELDS = Object.freeze({
   waitFor: ['condition']
 });
 
+const MIN_PROFILE_CONFIDENCE_FOR_SITE_RISK_ACTION = 0.85;
+const PROFILE_CONFIDENCE_REQUIRED_APPROVAL_KINDS = new Set([
+  'publish',
+  'send-for-review',
+  'release',
+  'rollout',
+  'checkout',
+  'payment',
+  'order-placement',
+  'subscription-start',
+  'delete',
+  'account-security',
+  'permission-grant',
+  'legal-tax-identity'
+]);
+
 const MAX_BATCH_ACTIONS = 20;
 const WARM_SESSION_CACHE_TTL_MS = 10000;
 const RECENT_ACTION_LOG_LIMIT = 25;
@@ -2372,6 +2388,24 @@ class SessionManager {
       return error;
     }
 
+    const approvalKind = error.approvalKind || 'high-risk-action';
+    const profileConfidence = this.profileConfidence();
+    if (
+      !isLocalMockOrigin(params.origin) &&
+      PROFILE_CONFIDENCE_REQUIRED_APPROVAL_KINDS.has(approvalKind) &&
+      Number(profileConfidence.score) < MIN_PROFILE_CONFIDENCE_FOR_SITE_RISK_ACTION
+    ) {
+      return {
+        ...error,
+        code: ERROR_CODES.PROFILE_LOGIN_STATE_UNVERIFIED,
+        message: 'Profile confidence is too low for this site-risk action.',
+        approvalKind,
+        approvalStatus: 'blocked',
+        requiredProfileConfidence: MIN_PROFILE_CONFIDENCE_FOR_SITE_RISK_ACTION,
+        profileConfidence
+      };
+    }
+
     const approvalId = `approval_${this.nextApprovalId++}`;
     const record = {
       approvalId,
@@ -2379,7 +2413,7 @@ class SessionManager {
       method,
       origin: params.origin,
       params,
-      approvalKind: error.approvalKind || 'high-risk-action',
+      approvalKind,
       targetSummary: error.targetSummary || null,
       createdAt: new Date().toISOString()
     };

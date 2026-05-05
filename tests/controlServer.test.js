@@ -2430,6 +2430,61 @@ test('local high-risk click can be approved and replayed once', async () => {
   });
 });
 
+test('real-origin high-risk approval is blocked when profile confidence is low', async () => {
+  await withServer(makeSession(), async (baseUrl, session) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: {
+        type: 'HELLO',
+        protocolVersion: '1.0',
+        extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+        extensionVersion: '0.2.10',
+        bridgeVersion: '0.2.10',
+        sessionBootstrapId: 'boot_abc',
+        profileBindingState: 'bound',
+        profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
+        profileBindingVersion: 3,
+        profileBindingSource: 'chrome.storage.local',
+        capabilities: ['observe.v1']
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://example.com'
+    });
+    session.profileVerified = false;
+
+    const clickPromise = postJson(baseUrl, 'page.click', {
+      origin: 'https://example.com',
+      handle: 'publish_button'
+    });
+    const blockedCommand = await postJson(baseUrl, 'bridge.poll');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: blockedCommand.body.result.command.commandId,
+      response: {
+        ok: false,
+        error: {
+          code: ERROR_CODES.HIGH_RISK_BLOCKED,
+          approvalKind: 'publish',
+          targetSummary: 'button: Publish'
+        }
+      }
+    });
+
+    const blocked = await clickPromise;
+    assert.equal(blocked.body.ok, false);
+    assert.equal(blocked.body.error.code, ERROR_CODES.PROFILE_LOGIN_STATE_UNVERIFIED);
+    assert.equal(blocked.body.error.approvalStatus, 'blocked');
+    assert.equal(blocked.body.error.requiredProfileConfidence, 0.85);
+    assert.equal(blocked.body.error.profileConfidence.score < 0.85, true);
+    assert.equal(blocked.body.error.approvalId, undefined);
+
+    const approvals = await postJson(baseUrl, 'operator.approvals.list');
+    assert.deepEqual(approvals.body.result.approvals, []);
+  });
+});
+
 test('gate handoff errors pause actions without creating approval requests', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await postJson(baseUrl, 'extension.hello', {
