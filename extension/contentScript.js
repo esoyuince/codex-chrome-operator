@@ -578,7 +578,7 @@ function collectObservation(options = {}) {
   const sensitiveVisualContent = sensitiveFields.length > 0;
   const explicitVisualPolicyBlock = hasExplicitVisualPolicyBlock();
 
-  const observation = {
+  let observation = {
     url: location.href,
     origin: location.origin,
     contentScriptVersion: CODEX_CONTENT_SCRIPT_VERSION,
@@ -617,6 +617,18 @@ function collectObservation(options = {}) {
       maxAvailableActionableHandles: limits.maxAvailableActionableHandles
     }
   };
+
+  if (options.includeAx === true && globalThis.CodexUiGraph) {
+    observation = globalThis.CodexUiGraph.attachUiGraph(observation, {
+      axSnapshot: {
+        ok: false,
+        error: {
+          code: 'AX_TREE_UNAVAILABLE_IN_CONTENT',
+          message: 'Accessibility tree capture is only available from the extension background.'
+        }
+      }
+    });
+  }
 
   if (typeof options.sincePageStateId === 'string' && options.sincePageStateId) {
     return observationWithDelta(observation, options.sincePageStateId);
@@ -779,21 +791,106 @@ function resolveHandle(handle) {
   return resolveVersionedHandleFromElements(handle, candidates);
 }
 
-function withPostActionSnapshot(response, message = {}) {
+function actionDispatchForMessage(message = {}) {
+  return {
+    ok: true,
+    method: 'dom',
+    action: message.action || null
+  };
+}
+
+function expectedActionValue(message = {}) {
+  if (message.action === 'clear') {
+    return '';
+  }
+  if (message.action === 'check') {
+    return message.checked !== false;
+  }
+  return message.text !== undefined ? message.text : message.value;
+}
+
+function currentActionValue(element, message = {}) {
+  if (!element) {
+    return undefined;
+  }
+  if (message.action === 'check') {
+    return Boolean(element.checked);
+  }
+  if ('value' in element) {
+    return element.value;
+  }
+  if (element.isContentEditable || element.getAttribute('contenteditable') === 'true') {
+    return element.textContent || '';
+  }
+  return undefined;
+}
+
+function snapshotHasObservableChange(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') {
+    return false;
+  }
+  if (snapshot.delta && typeof snapshot.delta === 'object') {
+    return snapshot.delta.unchanged === false;
+  }
+  return false;
+}
+
+function verifyActionResult(message = {}, snapshot, context = {}) {
+  const action = message.action;
+  const expectedValue = expectedActionValue(message);
+  const currentValue = currentActionValue(context.targetElement, message);
+  if (['fill', 'type', 'clear', 'select', 'check'].includes(action) && expectedValue !== undefined) {
+    if (String(currentValue) === String(expectedValue)) {
+      return {
+        status: 'succeeded',
+        expected: ['target value matches requested input'],
+        observed: ['target value matched'],
+        evidence: ['target value matched requested text']
+      };
+    }
+    return {
+      status: 'failed',
+      expected: ['target value matches requested input'],
+      observed: ['target value did not match'],
+      evidence: ['target value did not match requested text']
+    };
+  }
+
+  if (snapshotHasObservableChange(snapshot)) {
+    return {
+      status: 'succeeded',
+      expected: ['observable page state change'],
+      observed: ['post-action snapshot changed'],
+      evidence: ['post-action snapshot changed']
+    };
+  }
+
+  return {
+    status: 'inconclusive',
+    expected: ['observable page state change'],
+    observed: ['post-action snapshot unchanged'],
+    evidence: ['action dispatched but no observable post-condition changed']
+  };
+}
+
+function withPostActionSnapshot(response, message = {}, context = {}) {
   if (!response || response.ok !== true || message.postActionSnapshot !== 'delta') {
     return response;
   }
   try {
+    const postActionSnapshot = collectObservation({
+      mode: message.mode || 'tiny',
+      maxActionableHandles: message.maxActionableHandles,
+      summaryMaxChars: message.summaryMaxChars,
+      sincePageStateId: message.sincePageStateId
+    });
     return {
       ...response,
       result: {
         ...(response.result || {}),
-        postActionSnapshot: collectObservation({
-          mode: message.mode || 'tiny',
-          maxActionableHandles: message.maxActionableHandles,
-          summaryMaxChars: message.summaryMaxChars,
-          sincePageStateId: message.sincePageStateId
-        })
+        dispatch: actionDispatchForMessage(message),
+        verification: verifyActionResult(message, postActionSnapshot, context),
+        postActionSnapshot
       }
     };
   } catch (error) {
@@ -847,7 +944,9 @@ async function runAction(message) {
       return { ok: false, error: risk };
     }
     element.click();
-    return withPostActionSnapshot({ ok: true, result: { action: 'clicked' } }, message);
+    return withPostActionSnapshot({ ok: true, result: { action: 'clicked' } }, message, {
+      targetElement: element
+    });
   }
 
   if (message.action === 'fill' || message.action === 'type') {
@@ -858,7 +957,9 @@ async function runAction(message) {
     return withPostActionSnapshot({
       ok: true,
       result: { action: message.action === 'type' ? 'typed' : 'filled' }
-    }, message);
+    }, message, {
+      targetElement: element
+    });
   }
 
   if (message.action === 'clear') {
@@ -866,18 +967,24 @@ async function runAction(message) {
     element.value = '';
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
-    return withPostActionSnapshot({ ok: true, result: { action: 'cleared' } }, message);
+    return withPostActionSnapshot({ ok: true, result: { action: 'cleared' } }, message, {
+      targetElement: element
+    });
   }
 
   if (message.action === 'focus') {
     element.focus();
-    return withPostActionSnapshot({ ok: true, result: { action: 'focused' } }, message);
+    return withPostActionSnapshot({ ok: true, result: { action: 'focused' } }, message, {
+      targetElement: element
+    });
   }
 
   if (message.action === 'select') {
     element.value = message.value || '';
     element.dispatchEvent(new Event('change', { bubbles: true }));
-    return withPostActionSnapshot({ ok: true, result: { action: 'selected' } }, message);
+    return withPostActionSnapshot({ ok: true, result: { action: 'selected' } }, message, {
+      targetElement: element
+    });
   }
 
   if (message.action === 'check') {
@@ -887,7 +994,9 @@ async function runAction(message) {
     return withPostActionSnapshot({
       ok: true,
       result: { action: 'checked', checked: element.checked }
-    }, message);
+    }, message, {
+      targetElement: element
+    });
   }
 
   if (message.action === 'scroll') {

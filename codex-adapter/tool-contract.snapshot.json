@@ -1,7 +1,7 @@
 {
   "adapterProtocolVersion": "1.0",
   "toolSchemaVersion": "2026-05-01.m1",
-  "toolDefinitionsHash": "9820a3bfafbfaa18d21183f44bef56c47a9f2c6836ff3d3d815e8177e9d620b7",
+  "toolDefinitionsHash": "293ad8c0296bab39efc8f594ed07e91afaa717d3e7e5e1ed784ddd23d71e9aea",
   "toolCount": 29,
   "toolNames": [
     "codex_chrome_status",
@@ -177,6 +177,9 @@
           "sincePageStateId": {
             "type": "string"
           },
+          "includeAx": {
+            "type": "boolean"
+          },
           "includeFormValues": {
             "type": "boolean"
           },
@@ -221,6 +224,9 @@
           },
           "sincePageStateId": {
             "type": "string"
+          },
+          "includeAx": {
+            "type": "boolean"
           },
           "includeFormValues": {
             "type": "boolean"
@@ -390,6 +396,9 @@
                 "sincePageStateId": {
                   "type": "string"
                 },
+                "includeAx": {
+                  "type": "boolean"
+                },
                 "includeFormValues": {
                   "type": "boolean"
                 },
@@ -450,6 +459,9 @@
           },
           "sincePageStateId": {
             "type": "string"
+          },
+          "includeAx": {
+            "type": "boolean"
           },
           "includeFormValues": {
             "type": "boolean"

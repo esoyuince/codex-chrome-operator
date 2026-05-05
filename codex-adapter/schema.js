@@ -21,6 +21,7 @@ const OBSERVE_OPTION_PROPERTIES = {
   maxActionableHandles: { type: 'number', minimum: 1 },
   summaryMaxChars: { type: 'number', minimum: 1 },
   sincePageStateId: { type: 'string' },
+  includeAx: { type: 'boolean' },
   includeFormValues: { type: 'boolean' },
   maxFieldValueChars: { type: 'number', minimum: 0 }
 };
@@ -30,6 +31,7 @@ const BATCH_OBSERVE_OPTION_PROPERTIES = {
   maxActionableHandles: OBSERVE_OPTION_PROPERTIES.maxActionableHandles,
   summaryMaxChars: OBSERVE_OPTION_PROPERTIES.summaryMaxChars,
   sincePageStateId: OBSERVE_OPTION_PROPERTIES.sincePageStateId,
+  includeAx: OBSERVE_OPTION_PROPERTIES.includeAx,
   includeFormValues: OBSERVE_OPTION_PROPERTIES.includeFormValues,
   maxFieldValueChars: OBSERVE_OPTION_PROPERTIES.maxFieldValueChars
 };

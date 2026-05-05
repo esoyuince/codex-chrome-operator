@@ -4,6 +4,7 @@
   const DEBUGGER_PROTOCOL_VERSION = '1.3';
   const DEBUGGER_ACTION_PROVIDER = 'chrome.debugger.Runtime.evaluate';
   const DEBUGGER_POINTER_PROVIDER = 'chrome.debugger.Input.dispatchMouseEvent';
+  const DEBUGGER_TEXT_PROVIDER = 'chrome.debugger.Input.insertText';
   const DEBUGGER_TIMEOUT_MS = 5000;
 
   function isDebuggerSupportedUrl(url) {
@@ -834,6 +835,30 @@
             ...value.result,
             action: 'clicked',
             pointer: true
+          }
+        };
+      }
+      if (action === 'type') {
+        const response = await sendCommand(chromeApi, target, 'Runtime.evaluate', {
+          expression: buildRuntimeActionExpression({ action: 'focus', ...params }),
+          awaitPromise: true,
+          returnByValue: true
+        }, timeoutMs);
+        const value = normalizeRuntimeActionValue(response && response.result && response.result.value);
+        if (!value.ok) {
+          return value;
+        }
+        await sendCommand(chromeApi, target, 'Input.insertText', {
+          text: String(params.text ?? params.value ?? '')
+        }, timeoutMs);
+        return {
+          ok: true,
+          result: {
+            provider: DEBUGGER_TEXT_PROVIDER,
+            action: 'typed',
+            handle: params.handle,
+            input: true,
+            focus: value.result || null
           }
         };
       }

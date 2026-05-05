@@ -94,6 +94,37 @@ test('runDebuggerAction executes DOM actions through the Chrome debugger runtime
   assert.match(evaluate.params.expression, /"text":"hello"/);
 });
 
+test('runDebuggerAction types text through CDP insertText after focusing the target', async () => {
+  const { chromeApi, calls } = makeChrome({
+    evaluateValue: {
+      ok: true,
+      result: { action: 'focused', handle: 'el_state_0' }
+    }
+  });
+
+  const result = await runDebuggerAction({
+    chromeApi,
+    tab: { id: 7, url: 'https://example.com/composer' },
+    action: 'type',
+    params: { handle: 'el_state_0', text: 'hello from cdp' }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.provider, 'chrome.debugger.Input.insertText');
+  assert.equal(result.result.action, 'typed');
+  assert.deepEqual(calls.map((call) => call.method), [
+    'attach',
+    'Runtime.enable',
+    'Runtime.evaluate',
+    'Input.insertText',
+    'detach'
+  ]);
+  const evaluate = calls.find((call) => call.method === 'Runtime.evaluate');
+  assert.match(evaluate.params.expression, /"action":"focus"/);
+  const insert = calls.find((call) => call.method === 'Input.insertText');
+  assert.deepEqual(insert.params, { text: 'hello from cdp' });
+});
+
 test('runDebuggerAction clicks with Chrome input pointer events', async () => {
   const { chromeApi, calls } = makeChrome({
     evaluateValue: {

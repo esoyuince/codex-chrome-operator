@@ -324,6 +324,7 @@ function observeOptions(input) {
     'maxActionableHandles',
     'summaryMaxChars',
     'sincePageStateId',
+    'includeAx',
     'includeFormValues',
     'maxFieldValueChars'
   ]);
@@ -345,6 +346,7 @@ function visualObserveOptions(input) {
     'maxActionableHandles',
     'summaryMaxChars',
     'sincePageStateId',
+    'includeAx',
     'maxBytes',
     'reason'
   ]);

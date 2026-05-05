@@ -1023,7 +1023,8 @@ test('page.observe forwards compact observation options to the extension command
       mode: 'medium',
       maxActionableHandles: 18,
       summaryMaxChars: 500,
-      sincePageStateId: 'state_previous'
+      sincePageStateId: 'state_previous',
+      includeAx: true
     });
 
     const command = await deliverNextCommand(baseUrl, {
@@ -1039,7 +1040,8 @@ test('page.observe forwards compact observation options to the extension command
       mode: 'medium',
       maxActionableHandles: 18,
       summaryMaxChars: 500,
-      sincePageStateId: 'state_previous'
+      sincePageStateId: 'state_previous',
+      includeAx: true
     });
 
     const result = await observePromise;

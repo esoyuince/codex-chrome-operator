@@ -1124,6 +1124,9 @@ class SessionManager {
     if (params.sincePageStateId) {
       return false;
     }
+    if (params.includeAx === true) {
+      return false;
+    }
 
     const requestedMode = typeof params.mode === 'string' && params.mode
       ? params.mode

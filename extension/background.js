@@ -1,6 +1,6 @@
 'use strict';
 
-importScripts('permissionOrigins.js', 'visualCapture.js', 'fileUpload.js', 'cartWorkflow.js', 'debuggerActions.js', 'pageReader.js');
+importScripts('permissionOrigins.js', 'visualCapture.js', 'accessibilitySnapshot.js', 'uiGraph.js', 'fileUpload.js', 'cartWorkflow.js', 'debuggerActions.js', 'pageReader.js');
 
 const NATIVE_HOST = 'com.codex.chrome_operator';
 const BLOCKED_ORIGINS_KEY = 'blockedOrigins';
@@ -25,6 +25,12 @@ const {
 const {
   captureVisibleTabWithBudget
 } = globalThis.CodexVisualCapture;
+const {
+  captureAccessibilityTree
+} = globalThis.CodexAccessibilitySnapshot;
+const {
+  attachUiGraph
+} = globalThis.CodexUiGraph;
 const {
   runDebuggerAction
 } = globalThis.CodexDebuggerActions;
@@ -60,6 +66,8 @@ async function buildHello() {
     capabilities: [
       'observe.v1',
       'readPage.v1',
+      'accessibilitySnapshot.v1',
+      'uiGraph.v1',
       'visualObserve.v1',
       'visualAnalyze.v1',
       'screenshots.v1',
@@ -520,7 +528,7 @@ async function syncPermissionsAfterChange() {
 async function ensureContentScript(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ['actionPolicy.js', 'gateDetector.js', 'pageHandles.js', 'pageWait.js', 'fileUpload.js', 'cartWorkflow.js', 'pageReader.js', 'intentExtractors.js', 'contentScript.js']
+    files: ['actionPolicy.js', 'gateDetector.js', 'pageHandles.js', 'pageWait.js', 'fileUpload.js', 'cartWorkflow.js', 'pageReader.js', 'intentExtractors.js', 'uiGraph.js', 'contentScript.js']
   });
 }
 
@@ -620,9 +628,25 @@ function observeOptions(params = {}) {
     ...(params.maxActionableHandles === undefined ? {} : { maxActionableHandles: params.maxActionableHandles }),
     ...(params.summaryMaxChars === undefined ? {} : { summaryMaxChars: params.summaryMaxChars }),
     ...(params.sincePageStateId === undefined ? {} : { sincePageStateId: params.sincePageStateId }),
+    ...(params.includeAx === undefined ? {} : { includeAx: params.includeAx }),
     ...(params.includeFormValues === undefined ? {} : { includeFormValues: params.includeFormValues }),
     ...(params.maxFieldValueChars === undefined ? {} : { maxFieldValueChars: params.maxFieldValueChars })
   };
+}
+
+async function observePage(tabId, params = {}) {
+  const observation = await chrome.tabs.sendMessage(tabId, {
+    type: 'content.observe',
+    ...observeOptions(params)
+  });
+  if (params.includeAx !== true) {
+    return observation;
+  }
+  const axSnapshot = await captureAccessibilityTree({
+    chromeApi: chrome,
+    tabId
+  });
+  return attachUiGraph(observation, { axSnapshot });
 }
 
 async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
@@ -859,10 +883,7 @@ async function handleOperatorCommand(command) {
     }
 
     if (command.method === 'page.observe') {
-      const observation = await chrome.tabs.sendMessage(ready.tab.id, {
-        type: 'content.observe',
-        ...observeOptions(params)
-      });
+      const observation = await observePage(ready.tab.id, params);
       return { ok: true, result: observation };
     }
 
@@ -897,10 +918,9 @@ async function handleOperatorCommand(command) {
     }
 
     if (command.method === 'page.visualObserve') {
-      const observation = await chrome.tabs.sendMessage(ready.tab.id, {
-        type: 'content.observe',
-        mode: params.mode || 'medium',
-        ...observeOptions(params)
+      const observation = await observePage(ready.tab.id, {
+        ...params,
+        mode: params.mode || 'medium'
       });
       const policyError = visualPolicyErrorForObservation(observation);
       if (policyError) {

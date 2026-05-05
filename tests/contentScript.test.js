@@ -54,6 +54,12 @@ function element(tagName, attrs = {}, children = []) {
     focus() {
       this.focused = true;
     },
+    click() {
+      this.events.push('click');
+      if (typeof attrs.onClick === 'function') {
+        attrs.onClick(this);
+      }
+    },
     dispatchEvent(event) {
       this.events.push(event.type);
     }
@@ -227,9 +233,11 @@ function loadContentScript(rootElement) {
   context.globalThis = context;
   vm.createContext(context);
   for (const relativePath of [
+    'extension/actionPolicy.js',
     'extension/pageHandles.js',
     'extension/pageReader.js',
     'extension/intentExtractors.js',
+    'extension/uiGraph.js',
     'extension/contentScript.js'
   ]) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, relativePath), 'utf8'), context, {
@@ -452,6 +460,32 @@ test('content observe supports medium and explicit full modes', async () => {
   assert.equal(full.visibleTextSummary.length > medium.visibleTextSummary.length, true);
 });
 
+test('content observe can include a fallback uiGraph for icon-only accessible buttons', async () => {
+  const root = element('main', { text: 'Toolbar' }, [
+    element('button', { 'aria-label': 'Search' }),
+    element('button', { 'aria-label': 'Close dialog' })
+  ]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    includeAx: true,
+    mode: 'medium'
+  });
+
+  assert.equal(observed.capabilities.uiGraph, true);
+  assert.equal(observed.capabilities.axAvailable, false);
+  assert.equal(observed.uiGraph.version, 'uiGraph.v1');
+  assert.equal(observed.uiGraph.source, 'dom-fallback');
+  assert.deepEqual([...observed.uiGraph.nodes.map((node) => node.name)], ['Search', 'Close dialog']);
+  assert.deepEqual([...observed.uiGraph.nodes.map((node) => node.role)], ['button', 'button']);
+  assert.match(observed.uiGraph.nodes[0].targetId, /^ui_/);
+  assert.equal(observed.uiGraph.nodes[0].target.confidence, observed.uiGraph.nodes[0].confidence);
+  assert.ok(observed.uiGraph.nodes[0].target.evidence.includes('dom-label'));
+  assert.equal(observed.uiGraph.nodes[0].confidence >= 0.5, true);
+  assert.ok(observed.uiGraph.nodes[0].evidence.includes('dom-label'));
+});
+
 test('content observe returns compact unchanged delta without element dump', async () => {
   const root = element('main', { text: 'Stable page' }, [
     element('button', {
@@ -563,9 +597,42 @@ test('content actions can attach post-action delta snapshots when requested', as
 
   assert.equal(filled.ok, true);
   assert.equal(input.value, 'captain@example.com');
+  assert.equal(filled.result.dispatch.ok, true);
+  assert.equal(filled.result.dispatch.method, 'dom');
+  assert.equal(filled.result.verification.status, 'succeeded');
+  assert.ok(filled.result.verification.evidence.includes('target value matched requested text'));
   assert.equal(filled.result.postActionSnapshot.pageStateId, observed.pageStateId);
   assert.equal(filled.result.postActionSnapshot.delta.unchanged, true);
   assert.equal(Object.hasOwn(filled.result.postActionSnapshot, 'elements'), false);
+});
+
+test('content click reports inconclusive when post-action snapshot is unchanged', async () => {
+  const button = element('button', {
+    text: 'Submit'
+  });
+  const root = element('main', { text: 'Static form' }, [button]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    maxActionableHandles: 5
+  });
+  const buttonHandle = observed.elements.find((entry) => entry.tag === 'button').handle;
+  const clicked = await content.send({
+    type: 'content.action',
+    action: 'click',
+    handle: buttonHandle,
+    postActionSnapshot: 'delta',
+    sincePageStateId: observed.pageStateId,
+    maxActionableHandles: 5
+  });
+
+  assert.equal(clicked.ok, true);
+  assert.equal(clicked.result.action, 'clicked');
+  assert.equal(clicked.result.dispatch.ok, true);
+  assert.equal(clicked.result.dispatch.method, 'dom');
+  assert.equal(clicked.result.verification.status, 'inconclusive');
+  assert.ok(clicked.result.verification.evidence.includes('action dispatched but no observable post-condition changed'));
 });
 
 test('content batch observe and actions carry delta snapshot options', async () => {

@@ -44,6 +44,7 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.equal(observe.inputSchema.properties.sincePageStateId.type, 'string');
   assert.equal(observe.inputSchema.properties.includeFormValues.type, 'boolean');
   assert.equal(observe.inputSchema.properties.maxFieldValueChars.type, 'number');
+  assert.equal(observe.inputSchema.properties.includeAx.type, 'boolean');
   assert.ok(profileOnboard);
   assert.equal(profileOnboard.inputSchema.type, 'object');
   assert.equal(profileOnboard.inputSchema.additionalProperties, false);
@@ -845,7 +846,8 @@ test('CodexChromeToolAdapter forwards observe options with normalized origins', 
       mode: 'medium',
       maxActionableHandles: 15,
       summaryMaxChars: 600,
-      sincePageStateId: 'state_previous'
+      sincePageStateId: 'state_previous',
+      includeAx: true
     }
   });
 
@@ -855,7 +857,8 @@ test('CodexChromeToolAdapter forwards observe options with normalized origins', 
     mode: 'medium',
     maxActionableHandles: 15,
     summaryMaxChars: 600,
-    sincePageStateId: 'state_previous'
+    sincePageStateId: 'state_previous',
+    includeAx: true
   });
   assert.equal(calls[0].method, 'page.observe');
 });

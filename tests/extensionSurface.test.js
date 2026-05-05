@@ -240,8 +240,14 @@ test('background reads the real user-focused active tab before currentWindow fal
 test('background injects compact page reader and intent extractors before the content script', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 
+  assert.match(background, /accessibilitySnapshot\.js/);
+  assert.match(background, /uiGraph\.js/);
   assert.match(background, /pageReader\.js/);
   assert.match(background, /intentExtractors\.js/);
+  assert.ok(
+    background.indexOf("'uiGraph.js'") < background.indexOf("'contentScript.js'"),
+    'uiGraph.js should load before contentScript.js'
+  );
   assert.ok(
     background.indexOf("'pageReader.js'") < background.indexOf("'contentScript.js'"),
     'pageReader.js should load before contentScript.js'
