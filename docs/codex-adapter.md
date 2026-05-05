@@ -74,7 +74,7 @@ When the daemon created an approval request, the hint includes the `approvalId`,
 - `approval-reject <approvalId>`
 - `approval-run <approvalId>`
 
-The adapter currently exposes 29 strict tools:
+The adapter currently exposes 30 strict tools:
 
 - `codex_chrome_status`
 - `codex_chrome_prepare_origin`
@@ -88,6 +88,7 @@ The adapter currently exposes 29 strict tools:
 - `codex_chrome_batch`
 - `codex_chrome_visual_observe`
 - `codex_chrome_visual_analyze`
+- `codex_chrome_media_inspect`
 - `codex_chrome_upload_file`
 - `codex_chrome_cart_prepare`
 - `codex_chrome_fill`
@@ -171,6 +172,11 @@ arguments; the adapter normalizes URL-like origin inputs to an origin before the
 daemon call. Raw screenshot bytes and `dataUrl` fields are redacted before the
 result reaches Codex unless a future policy explicitly allows a different
 handoff.
+
+`codex_chrome_media_inspect` routes to `page.mediaInspect` and returns bounded,
+untrusted state for visible video/audio elements such as `paused`,
+`currentTime`, `duration`, dimensions, and safe source metadata. It never returns
+raw media bytes.
 
 `codex_chrome_upload_file` routes to `page.uploadFile` with `origin`, target
 `handle`, optional `ruleset`, optional `verifyPreview`, and a `files` array. The

@@ -22,6 +22,8 @@ function element(tagName, attrs = {}, children = []) {
         .map(([key, value]) => [key.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), String(value)]))
     },
     children,
+    shadowRoot: attrs.shadowRoot || null,
+    contentDocument: attrs.contentDocument || null,
     childNodes: attrs.text ? [{ nodeType: 3, textContent: attrs.text }] : [],
     innerText: attrs.text || '',
     textContent: attrs.text || '',
@@ -62,6 +64,9 @@ function element(tagName, attrs = {}, children = []) {
     },
     dispatchEvent(event) {
       this.events.push(event.type);
+    },
+    contains(target) {
+      return flattenElements(this).includes(target);
     }
   };
   for (const child of children) {
@@ -77,6 +82,12 @@ function flattenElements(rootElement) {
       return;
     }
     results.push(node);
+    if (node.shadowRoot) {
+      visit(node.shadowRoot);
+    }
+    if (node.contentDocument && node.contentDocument.body) {
+      visit(node.contentDocument.body);
+    }
     for (const child of node.children || []) {
       visit(child);
     }
@@ -86,6 +97,9 @@ function flattenElements(rootElement) {
 }
 
 function selectorMatchesElement(selector, node) {
+  if (selector === '*') {
+    return true;
+  }
   if (selector === 'a') {
     return node.tagName === 'A';
   }
@@ -94,6 +108,12 @@ function selectorMatchesElement(selector, node) {
   }
   if (selector === 'input') {
     return node.tagName === 'INPUT';
+  }
+  if (selector === 'video') {
+    return node.tagName === 'VIDEO';
+  }
+  if (selector === 'audio') {
+    return node.tagName === 'AUDIO';
   }
   if (selector === 'textarea') {
     return node.tagName === 'TEXTAREA';
@@ -200,8 +220,15 @@ function loadContentScript(rootElement) {
         const selectors = selector.split(',').map((item) => item.trim());
         return allElements.filter((node) => selectors.some((part) => selectorMatchesElement(part, node)));
       },
-      querySelector() {
-        return null;
+      elementFromPoint(x, y) {
+        return [...allElements].reverse().find((node) => {
+          const rect = node.getBoundingClientRect();
+          return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
+        }) || null;
+      },
+      querySelector(selector) {
+        const selectors = selector.split(',').map((item) => item.trim());
+        return allElements.find((node) => selectors.some((part) => selectorMatchesElement(part, node))) || null;
       },
       getElementById() {
         return null;
@@ -484,6 +511,51 @@ test('content observe can include a fallback uiGraph for icon-only accessible bu
   assert.ok(observed.uiGraph.nodes[0].target.evidence.includes('dom-label'));
   assert.equal(observed.uiGraph.nodes[0].confidence >= 0.5, true);
   assert.ok(observed.uiGraph.nodes[0].evidence.includes('dom-label'));
+});
+
+test('content observe includes controls from open shadow roots and same-origin iframes', async () => {
+  const shadowButton = element('button', { 'aria-label': 'Shadow save' });
+  const host = element('section', {
+    shadowRoot: element('div', {}, [shadowButton])
+  });
+  const frameButton = element('button', { 'aria-label': 'Frame submit' });
+  const iframe = element('iframe', {
+    contentDocument: {
+      body: element('main', {}, [frameButton])
+    }
+  });
+  const root = element('main', { text: 'Shell' }, [host, iframe]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    mode: 'medium',
+    includeAx: true
+  });
+
+  assert.ok(observed.elements.some((entry) => entry.label === 'Shadow save'));
+  assert.ok(observed.elements.some((entry) => entry.label === 'Frame submit'));
+  assert.ok(observed.uiGraph.nodes.some((node) => node.name === 'Shadow save'));
+  assert.ok(observed.uiGraph.nodes.some((node) => node.name === 'Frame submit'));
+});
+
+test('content observe marks UI graph nodes occluded when hit testing finds an overlay', async () => {
+  const covered = element('button', { 'aria-label': 'Covered action' });
+  covered.getBoundingClientRect = () => ({ x: 10, y: 20, width: 160, height: 32 });
+  const overlay = element('div', { text: 'Overlay' });
+  overlay.getBoundingClientRect = () => ({ x: 10, y: 20, width: 160, height: 32 });
+  const root = element('main', {}, [covered, overlay]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    includeAx: true,
+    mode: 'medium'
+  });
+  const node = observed.uiGraph.nodes.find((entry) => entry.name === 'Covered action');
+
+  assert.equal(node.states.occluded, true);
+  assert.ok(node.evidence.includes('hit-test-occluded'));
 });
 
 test('content observe returns compact unchanged delta without element dump', async () => {
@@ -779,4 +851,38 @@ test('content extract rejects unsupported intents without dumping DOM', async ()
   assert.deepEqual([...extracted.supportedIntents], ['shopping.productCandidates']);
   assert.equal(Object.hasOwn(extracted, 'elements'), false);
   assert.equal(Object.hasOwn(extracted, 'pageContent'), false);
+});
+
+test('content mediaInspect returns bounded media element state', async () => {
+  const video = element('video', {
+    id: 'demo-video',
+    'aria-label': 'Demo video',
+    src: 'https://cdn.example.test/demo.mp4',
+    poster: 'https://cdn.example.test/demo.jpg'
+  });
+  video.currentTime = 12.5;
+  video.duration = 90;
+  video.paused = true;
+  video.muted = false;
+  video.volume = 0.75;
+  video.readyState = 4;
+  video.networkState = 1;
+  video.videoWidth = 1280;
+  video.videoHeight = 720;
+  const root = element('main', { text: 'Video page' }, [video]);
+  const content = loadContentScript(root);
+
+  const inspected = await content.send({
+    type: 'content.mediaInspect',
+    maxItems: 5
+  });
+
+  assert.equal(inspected.ok, true);
+  assert.equal(inspected.result.media.length, 1);
+  assert.equal(inspected.result.media[0].kind, 'video');
+  assert.equal(inspected.result.media[0].label, 'Demo video');
+  assert.equal(inspected.result.media[0].paused, true);
+  assert.equal(inspected.result.media[0].currentTime, 12.5);
+  assert.equal(inspected.result.media[0].videoWidth, 1280);
+  assert.equal(inspected.result.media[0].videoHeight, 720);
 });

@@ -21,6 +21,7 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   const readPage = tools.find((tool) => tool.name === 'codex_chrome_read_page');
   const batch = tools.find((tool) => tool.name === 'codex_chrome_batch');
   const visualObserve = tools.find((tool) => tool.name === 'codex_chrome_visual_observe');
+  const mediaInspect = tools.find((tool) => tool.name === 'codex_chrome_media_inspect');
 
   assert.equal(ADAPTER_PROTOCOL_VERSION, '1.0');
   assert.ok(status);
@@ -89,6 +90,10 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.deepEqual(visualObserve.inputSchema.properties.mode.enum, ['tiny', 'medium', 'full']);
   assert.equal(visualObserve.inputSchema.properties.reason.type, 'string');
   assert.match(visualObserve.description, /visual verification/i);
+  assert.ok(mediaInspect);
+  assert.deepEqual(mediaInspect.inputSchema.required, ['origin']);
+  assert.equal(mediaInspect.inputSchema.properties.maxItems.minimum, 1);
+  assert.match(mediaInspect.description, /media/i);
   assert.match(toolDefinitionsHash(), /^[a-f0-9]{64}$/);
   assert.equal(toolDefinitionsHash(), toolDefinitionsHash());
 });
@@ -769,6 +774,37 @@ test('CodexChromeToolAdapter routes visual analyze with normalized origin and op
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, 'page.visualAnalyze');
+});
+
+test('CodexChromeToolAdapter routes media inspect with normalized origin', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return { ok: true, result: { media: [] } };
+    }
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_media_inspect',
+    input: {
+      origin: 'https://example.com/watch?v=1',
+      maxItems: 3
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'page.mediaInspect');
+  assert.deepEqual(calls[0].params, {
+    origin: 'https://example.com',
+    maxItems: 3
+  });
 });
 
 test('CodexChromeToolAdapter routes visual observe with normalized origin and screenshot budget options', async () => {

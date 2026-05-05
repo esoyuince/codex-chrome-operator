@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { buildDoctorReport, loadConfig, loadInstalledToken } = require('../operator-daemon/daemon');
+const { buildDoctorReport, loadConfig, loadInstalledToken, resolveDaemonToken } = require('../operator-daemon/daemon');
 
 test('loadConfig reads installer-written daemon config', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-config-'));
@@ -36,6 +36,37 @@ test('loadInstalledToken returns null when token file is absent or blank', () =>
 
   fs.writeFileSync(tokenPath, '  \n', 'utf8');
   assert.equal(loadInstalledToken(tokenPath), null);
+});
+
+test('resolveDaemonToken fails closed for release dev or short tokens', () => {
+  assert.equal(resolveDaemonToken({
+    env: {},
+    config: {},
+    installedToken: null,
+    isRelease: false
+  }), 'dev-token');
+
+  assert.throws(() => resolveDaemonToken({
+    env: {},
+    config: {},
+    installedToken: null,
+    isRelease: true
+  }), /requires a generated random token/);
+
+  assert.throws(() => resolveDaemonToken({
+    env: { CODEX_CHROME_OPERATOR_TOKEN: 'short-token' },
+    config: {},
+    installedToken: null,
+    isRelease: true
+  }), /token is too short/);
+
+  const strongToken = 'abcdefghijklmnopqrstuvwxyzABCDEF1234567890';
+  assert.equal(resolveDaemonToken({
+    env: {},
+    config: {},
+    installedToken: strongToken,
+    isRelease: true
+  }), strongToken);
 });
 
 test('buildDoctorReport enforces the Node 24 runtime contract', () => {

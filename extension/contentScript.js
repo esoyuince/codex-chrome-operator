@@ -177,6 +177,23 @@ function formValueForElement(element, options = {}) {
   return String(rawValue || '').slice(0, maxChars);
 }
 
+function isOccludedElement(element, rect) {
+  if (!document || typeof document.elementFromPoint !== 'function' || !rect || rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+  const x = rect.x + rect.width / 2;
+  const y = rect.y + rect.height / 2;
+  try {
+    const hit = document.elementFromPoint(x, y);
+    if (!hit || hit === element || (element.contains && element.contains(hit))) {
+      return false;
+    }
+    return true;
+  } catch {
+    return null;
+  }
+}
+
 function elementSummary(element, handle, options = {}) {
   const rect = element.getBoundingClientRect();
   const dataRisk = element.getAttribute('data-risk') || null;
@@ -221,6 +238,7 @@ function elementSummary(element, handle, options = {}) {
     label: String(label).trim().slice(0, 200),
     value: formValue,
     disabled: Boolean(element.disabled),
+    occluded: isOccludedElement(element, rect),
     context: layoutContext(),
     bbox: {
       x: Math.round(rect.x),
@@ -232,9 +250,9 @@ function elementSummary(element, handle, options = {}) {
 }
 
 function collectInteractiveElements() {
-  return [...document.querySelectorAll(
+  return querySelectorAllDeep(
     'a,button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]'
-  )].filter(isVisible).slice(0, 200);
+  ).filter(isVisible).slice(0, 200);
 }
 
 function hasVisibleUploadAssociation(input) {
@@ -261,19 +279,19 @@ function hasVisibleUploadAssociation(input) {
 }
 
 function collectUploadElements() {
-  const visibleUploadWidgets = [...document.querySelectorAll([
+  const visibleUploadWidgets = querySelectorAllDeep([
     '[data-upload-role]',
     '[data-preview-role]',
     '[data-validation-message]'
-  ].join(','))].filter(isVisible);
-  const associatedHiddenInputs = [...document.querySelectorAll('input[type="file"][data-upload-role]')]
+  ].join(',')).filter(isVisible);
+  const associatedHiddenInputs = querySelectorAllDeep('input[type="file"][data-upload-role]')
     .filter((element) => !isVisible(element) && hasVisibleUploadAssociation(element));
 
   return [...visibleUploadWidgets, ...associatedHiddenInputs].slice(0, 200);
 }
 
 function collectVisualElements() {
-  return [...document.querySelectorAll([
+  return querySelectorAllDeep([
     '[data-visual-card]',
     '[data-analyzer-field]',
     '[data-sensitive-page]',
@@ -286,7 +304,47 @@ function collectVisualElements() {
     '[role="dialog"]',
     '[role="status"]',
     '[role="alert"]'
-  ].join(','))].filter(isVisible).slice(0, 200);
+  ].join(',')).filter(isVisible).slice(0, 200);
+}
+
+function querySelectorAllSafe(root, selector) {
+  if (!root || typeof root.querySelectorAll !== 'function') {
+    return [];
+  }
+  try {
+    return [...root.querySelectorAll(selector)];
+  } catch {
+    return [];
+  }
+}
+
+function sameOriginFrameDocument(element) {
+  if (!element || element.tagName !== 'IFRAME') {
+    return null;
+  }
+  try {
+    return element.contentDocument || (element.contentWindow && element.contentWindow.document) || null;
+  } catch {
+    return null;
+  }
+}
+
+function querySelectorAllDeep(selector, root = document, seen = new Set()) {
+  if (!root || seen.has(root)) {
+    return [];
+  }
+  seen.add(root);
+  const results = querySelectorAllSafe(root, selector);
+  for (const element of querySelectorAllSafe(root, '*')) {
+    if (element.shadowRoot) {
+      results.push(...querySelectorAllDeep(selector, element.shadowRoot, seen));
+    }
+    const frameDocument = sameOriginFrameDocument(element);
+    if (frameDocument) {
+      results.push(...querySelectorAllDeep(selector, frameDocument, seen));
+    }
+  }
+  return [...new Set(results)];
 }
 
 function collectObservedElements() {
@@ -781,6 +839,74 @@ function extractIntent(message = {}) {
   });
 }
 
+function mediaElementSummary(element, handle) {
+  const rect = element.getBoundingClientRect();
+  const kind = element.tagName.toLowerCase();
+  const src = element.currentSrc || element.src || element.getAttribute('src') || null;
+  const label = String(
+    element.getAttribute('aria-label') ||
+    element.getAttribute('title') ||
+    element.getAttribute('alt') ||
+    element.id ||
+    ''
+  ).replace(/\s+/g, ' ').trim().slice(0, 120);
+  return compactElementSummary({
+    handle,
+    kind,
+    id: element.id || null,
+    label,
+    src,
+    poster: element.getAttribute('poster') || null,
+    controls: Boolean(element.controls),
+    autoplay: Boolean(element.autoplay),
+    loop: Boolean(element.loop),
+    muted: Boolean(element.muted),
+    paused: Boolean(element.paused),
+    ended: Boolean(element.ended),
+    currentTime: Number.isFinite(Number(element.currentTime)) ? Number(element.currentTime) : null,
+    duration: Number.isFinite(Number(element.duration)) ? Number(element.duration) : null,
+    volume: Number.isFinite(Number(element.volume)) ? Number(element.volume) : null,
+    readyState: Number.isFinite(Number(element.readyState)) ? Number(element.readyState) : null,
+    networkState: Number.isFinite(Number(element.networkState)) ? Number(element.networkState) : null,
+    videoWidth: kind === 'video' && Number.isFinite(Number(element.videoWidth)) ? Number(element.videoWidth) : null,
+    videoHeight: kind === 'video' && Number.isFinite(Number(element.videoHeight)) ? Number(element.videoHeight) : null,
+    bbox: {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    }
+  });
+}
+
+function mediaInspect(message = {}) {
+  const allMedia = querySelectorAllDeep('video,audio').filter(isVisible).slice(0, 100);
+  const limit = Number.isFinite(Number(message.maxItems))
+    ? Math.max(1, Math.min(100, Math.floor(Number(message.maxItems))))
+    : 20;
+  const described = globalThis.CodexPageHandles.describeElements(allMedia, {
+    location,
+    document,
+    window
+  });
+  return {
+    ok: true,
+    result: {
+      url: location.href,
+      origin: location.origin,
+      contentScriptVersion: CODEX_CONTENT_SCRIPT_VERSION,
+      media: allMedia.slice(0, limit).map((element, index) => (
+        mediaElementSummary(element, described.items[index].handle)
+      )),
+      limits: {
+        maxItems: limit,
+        defaultMaxItems: 20,
+        availableMedia: allMedia.length
+      }
+    }
+  };
+}
+
 function resolveHandle(handle) {
   const remembered = resolveLastReadableHandle(handle);
   if (remembered && remembered.ok) {
@@ -1203,6 +1329,11 @@ function handleContentMessage(message, sender, sendResponse) {
 
     if (message && message.type === 'content.extract') {
       sendResponse(extractIntent(message));
+      return;
+    }
+
+    if (message && message.type === 'content.mediaInspect') {
+      sendResponse(mediaInspect(message));
       return;
     }
 

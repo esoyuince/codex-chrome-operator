@@ -1,8 +1,8 @@
 {
   "adapterProtocolVersion": "1.0",
   "toolSchemaVersion": "2026-05-01.m1",
-  "toolDefinitionsHash": "293ad8c0296bab39efc8f594ed07e91afaa717d3e7e5e1ed784ddd23d71e9aea",
-  "toolCount": 29,
+  "toolDefinitionsHash": "8b0010ef82a4cdcda89ca3ef984dc0e766fc94ffc3609860bb6c9c19ac1c425a",
+  "toolCount": 30,
   "toolNames": [
     "codex_chrome_status",
     "codex_chrome_prepare_origin",
@@ -16,6 +16,7 @@
     "codex_chrome_batch",
     "codex_chrome_visual_observe",
     "codex_chrome_visual_analyze",
+    "codex_chrome_media_inspect",
     "codex_chrome_upload_file",
     "codex_chrome_cart_prepare",
     "codex_chrome_fill",
@@ -504,6 +505,29 @@
           },
           "allowSensitive": {
             "type": "boolean"
+          }
+        },
+        "required": [
+          "origin"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_media_inspect",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "type": "string"
+          },
+          "maxItems": {
+            "type": "number",
+            "minimum": 1
           }
         },
         "required": [

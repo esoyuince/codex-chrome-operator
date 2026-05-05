@@ -71,6 +71,11 @@
     if (element.bbox) {
       evidence.push('dom-bbox');
     }
+    if (element.occluded === true) {
+      evidence.push('hit-test-occluded');
+    } else if (element.occluded === false) {
+      evidence.push('hit-test-clear');
+    }
     if (axNode && axNode.name) {
       evidence.push('ax-name');
     }
@@ -463,7 +468,9 @@
         selected: axNode ? axNode.selected : null,
         expanded: axNode ? axNode.expanded : null,
         required: axNode ? axNode.required : null,
-        invalid: axNode ? axNode.invalid : null
+        invalid: axNode ? axNode.invalid : null,
+        editable: element.tag === 'input' || element.tag === 'textarea' || element.tag === 'select' ? true : null,
+        occluded: element.occluded === undefined ? null : element.occluded
       },
       location: {
         bbox: element.bbox || null,

@@ -271,6 +271,7 @@ The adapter exposes strict `codex_chrome_*` tools, including:
 - `codex_chrome_batch`
 - `codex_chrome_visual_observe`
 - `codex_chrome_visual_analyze`
+- `codex_chrome_media_inspect`
 - `codex_chrome_upload_file`
 - `codex_chrome_cart_prepare`
 - `codex_chrome_fill`

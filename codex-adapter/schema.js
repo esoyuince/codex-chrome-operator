@@ -291,6 +291,23 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'codex_chrome_media_inspect',
+    description: 'Inspect visible video and audio elements on an approved active tab without returning raw media bytes.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        origin: { type: 'string' },
+        maxItems: { type: 'number', minimum: 1 }
+      },
+      required: ['origin']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
     name: 'codex_chrome_upload_file',
     description: 'Upload guarded draft-only files to an approved page file input handle, returning redacted file references.',
     inputSchema: {

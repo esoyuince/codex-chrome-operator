@@ -39,6 +39,25 @@ function loadInstalledToken(tokenPath = defaultTokenPath()) {
   return token || null;
 }
 
+function resolveDaemonToken({
+  env = process.env,
+  config = {},
+  installedToken = loadInstalledToken(),
+  isRelease = config.release === true || env.NODE_ENV === 'production'
+} = {}) {
+  const token = env.CODEX_CHROME_OPERATOR_TOKEN || config.token || installedToken || 'dev-token';
+  if (!isRelease) {
+    return token;
+  }
+  if (!token || token === 'dev-token') {
+    throw new Error('Release daemon requires a generated random token.');
+  }
+  if (String(token).length < 32) {
+    throw new Error('Release daemon token is too short.');
+  }
+  return token;
+}
+
 function parseNodeMajor(nodeVersion) {
   const match = /^v?(\d+)\./.exec(nodeVersion || '');
   return match ? Number.parseInt(match[1], 10) : 0;
@@ -97,7 +116,7 @@ async function main() {
   }
 
   const config = loadConfig();
-  const token = process.env.CODEX_CHROME_OPERATOR_TOKEN || config.token || loadInstalledToken() || 'dev-token';
+  const token = resolveDaemonToken({ config });
   const port = Number(parseArgValue('--port', config.port || 17391));
   const session = new SessionManager({
     ...config,
@@ -119,5 +138,6 @@ module.exports = {
   defaultConfigPath,
   defaultTokenPath,
   loadConfig,
-  loadInstalledToken
+  loadInstalledToken,
+  resolveDaemonToken
 };

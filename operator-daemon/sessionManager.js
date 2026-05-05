@@ -119,6 +119,7 @@ const PAGE_ACTION_KINDS = Object.freeze({
   'page.observe': 'observe',
   'page.readPage': 'observe',
   'page.extract': 'observe',
+  'page.mediaInspect': 'observe',
   'page.visualObserve': 'screenshot',
   'page.visualAnalyze': 'screenshot',
   'page.uploadFile': 'upload',
@@ -289,6 +290,7 @@ function originFromParams(params = {}) {
 function summarizeReadiness({
   origin,
   profileVerified,
+  profileConfidence,
   domainApproved,
   hostPermissionGranted,
   siteBlocked = false,
@@ -305,6 +307,7 @@ function summarizeReadiness({
     origin,
     ready: missing.length === 0,
     profileVerified,
+    profileConfidence,
     domainApproved,
     hostPermissionGranted,
     siteBlocked: Boolean(siteBlocked),
@@ -445,6 +448,7 @@ class SessionManager {
   }
 
   status({ detail = 'full' } = {}) {
+    const profileConfidence = this.profileConfidence();
     const fullStatus = {
       connectionState: this.connectionState,
       connectionId: this.connectionId,
@@ -452,6 +456,7 @@ class SessionManager {
       lastDisconnect: this.lastDisconnect,
       reconnectCount: this.reconnectCount,
       profileVerified: this.profileVerified,
+      profileConfidence,
       profileBindingStatus: this.profileBindingStatus,
       approvedOrigins: this.activeDomainApprovalOrigins(),
       hostPermissionOrigins: [...this.hostPermissions],
@@ -486,6 +491,7 @@ class SessionManager {
       lastDisconnect: fullStatus.lastDisconnect,
       reconnectCount: fullStatus.reconnectCount,
       profileVerified: fullStatus.profileVerified,
+      profileConfidence: fullStatus.profileConfidence,
       profileBindingStatus: fullStatus.profileBindingStatus,
       activeTab: fullStatus.activeTab ? { ...fullStatus.activeTab } : null,
       warmSession: { ...fullStatus.warmSession },
@@ -618,6 +624,7 @@ class SessionManager {
       case 'page.observe':
       case 'page.readPage':
       case 'page.extract':
+      case 'page.mediaInspect':
       case 'page.batch':
       case 'page.visualObserve':
       case 'page.visualAnalyze':
@@ -1395,10 +1402,39 @@ class SessionManager {
     return {
       origin,
       profileVerified: this.profileVerified,
+      profileConfidence: this.profileConfidence(),
       domainApproved: this.hasDomainApproval(origin),
       hostPermissionGranted: this.hasHostPermission(origin),
       siteBlocked: Boolean(blocked),
       blockedPattern: blocked ? blocked.pattern : null
+    };
+  }
+
+  profileConfidence() {
+    const evidence = ['daemon-session-active'];
+    const configuredProfile = this.stateStore.getConfiguredProfile();
+    let score = 0.35;
+    let status = 'unverified';
+    if (configuredProfile) {
+      score = 0.65;
+      status = 'configured';
+      evidence.push('configured-profile-present');
+    }
+    if (this.profileVerified) {
+      score = 0.94;
+      status = 'verified';
+      evidence.push('profile-verified-by-extension');
+    }
+    if (this.connectionState === 'EXTENSION_CONNECTED') {
+      evidence.push('extension-connected');
+      if (this.lastVersionMismatch === null) {
+        evidence.push('version-match');
+      }
+    }
+    return {
+      score,
+      status,
+      evidence
     };
   }
 

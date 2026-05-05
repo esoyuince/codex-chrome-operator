@@ -446,6 +446,12 @@ class CodexChromeToolAdapter {
           ...(input.allowSensitive === undefined ? {} : { allowSensitive: input.allowSensitive })
         });
         break;
+      case 'codex_chrome_media_inspect':
+        response = await this.sendRpc('page.mediaInspect', {
+          origin: normalizeOrigin(input.origin),
+          ...(input.maxItems === undefined ? {} : { maxItems: input.maxItems })
+        });
+        break;
       case 'codex_chrome_upload_file':
         response = await this.sendRpc('page.uploadFile', {
           origin: normalizeOrigin(input.origin),

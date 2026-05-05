@@ -649,6 +649,40 @@ async function observePage(tabId, params = {}) {
   return attachUiGraph(observation, { axSnapshot });
 }
 
+function dispatchMethodForActionResult(result = {}) {
+  if (result.provider === 'chrome.debugger.Input.dispatchMouseEvent') {
+    return 'cdp.mouse';
+  }
+  if (result.provider === 'chrome.debugger.Input.insertText') {
+    return 'cdp.keyboard';
+  }
+  if (result.provider === 'chrome.debugger.Runtime.evaluate') {
+    return 'dom';
+  }
+  return 'dom';
+}
+
+function snapshotHasObservableChange(snapshot) {
+  return Boolean(snapshot && snapshot.delta && snapshot.delta.unchanged === false);
+}
+
+function verifyBackgroundAction(actionResponse, snapshot) {
+  if (snapshotHasObservableChange(snapshot)) {
+    return {
+      status: 'succeeded',
+      expected: ['observable page state change'],
+      observed: ['post-action snapshot changed'],
+      evidence: ['post-action snapshot changed']
+    };
+  }
+  return {
+    status: 'inconclusive',
+    expected: ['observable page state change'],
+    observed: ['post-action snapshot unchanged'],
+    evidence: ['action dispatched but no observable post-condition changed']
+  };
+}
+
 async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
   if (!actionResponse || actionResponse.ok !== true || params.postActionSnapshot !== 'delta') {
     return actionResponse;
@@ -663,6 +697,12 @@ async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
       ...actionResponse,
       result: {
         ...(actionResponse.result || {}),
+        dispatch: {
+          ok: true,
+          method: dispatchMethodForActionResult(actionResponse.result || {}),
+          provider: actionResponse.result && actionResponse.result.provider ? actionResponse.result.provider : null
+        },
+        verification: verifyBackgroundAction(actionResponse, snapshot),
         postActionSnapshot: snapshot
       }
     };
@@ -906,6 +946,13 @@ async function handleOperatorCommand(command) {
         maxCandidates: params.maxCandidates
       });
       return { ok: true, result: extraction };
+    }
+
+    if (command.method === 'page.mediaInspect') {
+      return chrome.tabs.sendMessage(ready.tab.id, {
+        type: 'content.mediaInspect',
+        maxItems: params.maxItems
+      });
     }
 
     if (command.method === 'page.batch') {

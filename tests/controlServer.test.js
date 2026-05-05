@@ -263,6 +263,11 @@ test('operator.ensureStarted summarizes target readiness for requested origin', 
       origin: 'https://example.com',
       ready: false,
       profileVerified: false,
+      profileConfidence: {
+        score: 0.35,
+        status: 'unverified',
+        evidence: ['daemon-session-active']
+      },
       domainApproved: false,
       hostPermissionGranted: false,
       siteBlocked: false,
@@ -1079,6 +1084,38 @@ test('page.extract queues read-only intent extraction for approved origins', asy
     const result = await extractPromise;
     assert.equal(result.body.ok, true);
     assert.equal(result.body.result.intent, 'shopping.productCandidates');
+  });
+});
+
+test('page.mediaInspect queues bounded media inspection for approved origins', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const mediaPromise = postJson(baseUrl, 'page.mediaInspect', {
+      origin: 'https://example.com',
+      maxItems: 3
+    });
+
+    const command = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: {
+        origin: 'https://example.com',
+        media: [{
+          kind: 'video',
+          label: 'Demo',
+          paused: true
+        }]
+      }
+    });
+    assert.equal(command.method, 'page.mediaInspect');
+    assert.deepEqual(command.params, {
+      origin: 'https://example.com',
+      maxItems: 3
+    });
+
+    const result = await mediaPromise;
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.media[0].kind, 'video');
   });
 });
 
