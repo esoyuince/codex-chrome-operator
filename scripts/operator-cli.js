@@ -52,19 +52,20 @@ function usage() {
   node scripts/operator-cli.js navigate <url>
   node scripts/operator-cli.js wait-for <origin> <condition-json> [timeoutMs] [pollIntervalMs]
   node scripts/operator-cli.js fill <origin> <handle> <text>
-  node scripts/operator-cli.js type <origin> <handle> <text>
+  node scripts/operator-cli.js type <origin> <handle> <text> [--target-json <path>]
   node scripts/operator-cli.js clear <origin> <handle>
-  node scripts/operator-cli.js focus <origin> <handle>
+  node scripts/operator-cli.js focus <origin> <handle> [--target-json <path>]
   node scripts/operator-cli.js select <origin> <handle> <value>
   node scripts/operator-cli.js check <origin> <handle> [true|false]
-  node scripts/operator-cli.js scroll <origin> <handle> <deltaX> <deltaY>
-  node scripts/operator-cli.js press-key <origin> <handle> <key>
-  node scripts/operator-cli.js click <origin> <handle>
+  node scripts/operator-cli.js scroll <origin> <handle> <deltaX> <deltaY> [--target-json <path>]
+  node scripts/operator-cli.js press-key <origin> <handle> <key> [--target-json <path>]
+  node scripts/operator-cli.js click <origin> <handle> [--target-json <path>]
 
 Options:
-  --base-url <url>   Override daemon base URL
-  --token <token>    Override daemon bearer token
-  --no-bootstrap     Do not launch Chrome bootstrap from ensure-started
+  --base-url <url>       Override daemon base URL
+  --token <token>        Override daemon bearer token
+  --target-json <path>   Attach an observed target summary to click/type/focus/scroll/press-key
+  --no-bootstrap         Do not launch Chrome bootstrap from ensure-started
 `;
 }
 
@@ -85,6 +86,9 @@ function splitOptions(argv) {
       index += 1;
     } else if (arg === '--install-dir') {
       options.installDir = argv[index + 1];
+      index += 1;
+    } else if (arg === '--target-json') {
+      options.targetJson = argv[index + 1];
       index += 1;
     } else if (arg === '--no-bootstrap') {
       options.openBootstrap = false;
@@ -109,6 +113,25 @@ function parseJsonArg(value, label) {
   }
 }
 
+function readJsonFileArg(filePath, label) {
+  if (!filePath) {
+    return undefined;
+  }
+  try {
+    return parseJsonArg(fs.readFileSync(path.resolve(filePath), 'utf8'), label);
+  } catch (error) {
+    if (/must be valid JSON/.test(error.message || '')) {
+      throw error;
+    }
+    throw new Error(`${label} could not be read from ${filePath}: ${error.message || String(error)}\n\n${usage()}`);
+  }
+}
+
+function targetJsonParams(options) {
+  const target = readJsonFileArg(options.targetJson, '--target-json');
+  return target === undefined ? {} : { target };
+}
+
 function parseBooleanArg(value, defaultValue = true) {
   if (value === undefined) {
     return defaultValue;
@@ -123,7 +146,7 @@ function parseBooleanArg(value, defaultValue = true) {
 }
 
 function buildRpcRequest(argv) {
-  const { positional } = splitOptions(argv);
+  const { options, positional } = splitOptions(argv);
   const [command, ...args] = positional;
 
   switch (command) {
@@ -379,7 +402,8 @@ function buildRpcRequest(argv) {
         params: {
           origin: args[0],
           handle: args[1],
-          text: args.slice(2).join(' ')
+          text: args.slice(2).join(' '),
+          ...targetJsonParams(options)
         }
       };
     case 'clear':
@@ -397,7 +421,8 @@ function buildRpcRequest(argv) {
         method: 'page.focus',
         params: {
           origin: args[0],
-          handle: args[1]
+          handle: args[1],
+          ...targetJsonParams(options)
         }
       };
     case 'select':
@@ -428,7 +453,8 @@ function buildRpcRequest(argv) {
           origin: args[0],
           handle: args[1],
           deltaX: Number(args[2]),
-          deltaY: Number(args[3])
+          deltaY: Number(args[3]),
+          ...targetJsonParams(options)
         }
       };
     case 'press-key':
@@ -438,7 +464,8 @@ function buildRpcRequest(argv) {
         params: {
           origin: args[0],
           handle: args[1],
-          key: args.slice(2).join(' ')
+          key: args.slice(2).join(' '),
+          ...targetJsonParams(options)
         }
       };
     case 'click':
@@ -447,7 +474,8 @@ function buildRpcRequest(argv) {
         method: 'page.click',
         params: {
           origin: args[0],
-          handle: args[1]
+          handle: args[1],
+          ...targetJsonParams(options)
         }
       };
     default:

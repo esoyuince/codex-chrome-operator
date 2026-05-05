@@ -113,6 +113,60 @@
         : attr(element, 'href');
     }
 
+    function elementTagName(element) {
+      return String(element && element.tagName ? element.tagName : '').toLowerCase();
+    }
+
+    function normalizedControlType(element) {
+      const tag = elementTagName(element);
+      const rawType = attr(element, 'type') || (element && element.type ? element.type : '');
+      if (tag === 'button') {
+        return String(rawType || 'button').toLowerCase();
+      }
+      if (tag === 'input') {
+        return String(rawType || 'text').toLowerCase();
+      }
+      return String(rawType || '').toLowerCase();
+    }
+
+    function implicitRole(element) {
+      const explicitRole = attr(element, 'role');
+      if (explicitRole) {
+        return explicitRole;
+      }
+      const tag = elementTagName(element);
+      const type = normalizedControlType(element);
+      if (tag === 'button') {
+        return 'button';
+      }
+      if (tag === 'a' && normalizedHref(element)) {
+        return 'link';
+      }
+      if (tag === 'textarea') {
+        return 'textbox';
+      }
+      if (tag === 'select') {
+        return 'combobox';
+      }
+      if (tag === 'input') {
+        if (['button', 'submit', 'reset', 'image'].includes(type)) {
+          return 'button';
+        }
+        if (['checkbox', 'radio', 'range'].includes(type)) {
+          return type;
+        }
+        return 'textbox';
+      }
+      return '';
+    }
+
+    function elementTestId(element) {
+      return attr(element, 'data-testid') ||
+        attr(element, 'data-test-id') ||
+        attr(element, 'data-test') ||
+        '';
+    }
+
     function normalizeText(value) {
       return String(value || '').replace(/\s+/g, ' ').trim();
     }
@@ -147,7 +201,6 @@
         attr(element, 'aria-label') ||
         attr(element, 'title') ||
         element.innerText ||
-        element.value ||
         attr(element, 'placeholder') ||
         attr(element, 'name') ||
         ''
@@ -243,6 +296,114 @@
         Math.abs(expectedCenter.y - currentCenter.y) <= yTolerance;
     }
 
+    function finiteNumber(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? number : null;
+    }
+
+    function firstFiniteNumber(...values) {
+      for (const value of values) {
+        const number = finiteNumber(value);
+        if (number !== null) {
+          return number;
+        }
+      }
+      return null;
+    }
+
+    function withoutHash(url) {
+      return String(url || '').replace(/#.*$/, '');
+    }
+
+    function targetLayoutContext(target) {
+      if (!target || typeof target !== 'object') {
+        return null;
+      }
+      const source = target.context || target.layoutContext || null;
+      const viewport = source && source.viewport && typeof source.viewport === 'object'
+        ? source.viewport
+        : (target.viewport && typeof target.viewport === 'object' ? target.viewport : source);
+      const scroll = source && source.scroll && typeof source.scroll === 'object'
+        ? source.scroll
+        : source;
+      if (!source && !target.viewport) {
+        return null;
+      }
+      return {
+        url: (source && (source.url || source.href)) || target.url || '',
+        width: firstFiniteNumber(
+          viewport && viewport.width,
+          viewport && viewport.innerWidth,
+          source && source.viewportWidth
+        ),
+        height: firstFiniteNumber(
+          viewport && viewport.height,
+          viewport && viewport.innerHeight,
+          source && source.viewportHeight
+        ),
+        scrollX: firstFiniteNumber(
+          scroll && scroll.x,
+          scroll && scroll.scrollX,
+          source && source.scrollX,
+          target.viewport && target.viewport.scrollX
+        ),
+        scrollY: firstFiniteNumber(
+          scroll && scroll.y,
+          scroll && scroll.scrollY,
+          source && source.scrollY,
+          target.viewport && target.viewport.scrollY
+        ),
+        devicePixelRatio: firstFiniteNumber(
+          source && source.devicePixelRatio,
+          source && source.dpr,
+          target.viewport && target.viewport.devicePixelRatio
+        )
+      };
+    }
+
+    function currentLayoutContext() {
+      return {
+        url: location.href,
+        width: finiteNumber(window.innerWidth),
+        height: finiteNumber(window.innerHeight),
+        scrollX: finiteNumber(window.scrollX),
+        scrollY: finiteNumber(window.scrollY),
+        devicePixelRatio: finiteNumber(window.devicePixelRatio)
+      };
+    }
+
+    function layoutContextMatches(target) {
+      const expected = targetLayoutContext(target);
+      if (!expected) {
+        return false;
+      }
+      const current = currentLayoutContext();
+      if (expected.url && withoutHash(expected.url) !== withoutHash(current.url)) {
+        return false;
+      }
+      if (expected.width !== null && Math.abs(expected.width - current.width) > 2) {
+        return false;
+      }
+      if (expected.height !== null && Math.abs(expected.height - current.height) > 2) {
+        return false;
+      }
+      if (expected.scrollX !== null && Math.abs(expected.scrollX - current.scrollX) > 2) {
+        return false;
+      }
+      if (expected.scrollY !== null && Math.abs(expected.scrollY - current.scrollY) > 2) {
+        return false;
+      }
+      if (
+        expected.devicePixelRatio !== null &&
+        current.devicePixelRatio !== null &&
+        Math.abs(expected.devicePixelRatio - current.devicePixelRatio) > 0.01
+      ) {
+        return false;
+      }
+      return [expected.url, expected.width, expected.height, expected.scrollX, expected.scrollY]
+        .some((value) => value !== null && value !== '');
+    }
+
     function collectInteractiveElements() {
       return [...document.querySelectorAll(
         'a,button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]'
@@ -294,15 +455,15 @@
       }
 
       const exactChecks = [
-        ['tag', String(element.tagName || '').toLowerCase()],
+        ['tag', elementTagName(element)],
         ['id', element.id || ''],
         ['name', attr(element, 'name')],
-        ['type', attr(element, 'type')],
-        ['role', attr(element, 'role')],
+        ['type', normalizedControlType(element)],
+        ['role', implicitRole(element)],
         ['href', normalizedHref(element)],
         ['placeholder', attr(element, 'placeholder')],
         ['title', attr(element, 'title')],
-        ['testid', attr(element, 'data-testid')],
+        ['testid', elementTestId(element)],
         ['productId', attr(element, 'data-product-id')],
         ['dataRisk', attr(element, 'data-risk')]
       ].map(([key, value]) => [key, targetValue(target, key), value])
@@ -334,8 +495,8 @@
           matches.push({ element: elements[index], index });
         }
       }
-      const targetHasBox = Boolean(targetBox(target));
-      const narrowedMatches = matches.length > 1 && targetHasBox
+      const targetHasContextualBox = Boolean(targetBox(target)) && layoutContextMatches(target);
+      const narrowedMatches = matches.length > 1 && targetHasContextualBox
         ? matches.filter((match) => elementMatchesTargetBox(target, match.element))
         : matches;
       const resolvedMatches = narrowedMatches.length > 0 ? narrowedMatches : matches;

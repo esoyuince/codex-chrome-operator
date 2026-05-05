@@ -1101,6 +1101,85 @@ test('buildRpcRequest maps approval and page commands', () => {
       handle: 'el_2'
     }
   });
+  const targetJsonPath = path.join(os.tmpdir(), `codex-target-${process.pid}-${Date.now()}.json`);
+  const observedTarget = {
+    tag: 'button',
+    role: 'button',
+    type: 'button',
+    label: 'Yanıtla',
+    data: { 'data-test-id': 'tweetButton' },
+    bbox: { x: 100, y: 900, width: 84, height: 36 },
+    context: {
+      url: 'https://example.com',
+      viewport: { width: 1280, height: 720 },
+      scroll: { x: 0, y: 0 }
+    }
+  };
+  fs.writeFileSync(targetJsonPath, JSON.stringify(observedTarget), 'utf8');
+  try {
+    assert.deepEqual(buildRpcRequest([
+      'click',
+      'https://example.com',
+      'el_2',
+      '--target-json',
+      targetJsonPath
+    ]), {
+      method: 'page.click',
+      params: {
+        origin: 'https://example.com',
+        handle: 'el_2',
+        target: observedTarget
+      }
+    });
+    assert.deepEqual(buildRpcRequest([
+      'type',
+      'https://example.com',
+      'el_0',
+      'hello world',
+      '--target-json',
+      targetJsonPath
+    ]), {
+      method: 'page.type',
+      params: {
+        origin: 'https://example.com',
+        handle: 'el_0',
+        text: 'hello world',
+        target: observedTarget
+      }
+    });
+    assert.deepEqual(buildRpcRequest([
+      'focus',
+      'https://example.com',
+      'el_0',
+      '--target-json',
+      targetJsonPath
+    ]), {
+      method: 'page.focus',
+      params: {
+        origin: 'https://example.com',
+        handle: 'el_0',
+        target: observedTarget
+      }
+    });
+    assert.deepEqual(buildRpcRequest([
+      'press-key',
+      'https://example.com',
+      'el_0',
+      'Enter',
+      '--target-json',
+      targetJsonPath
+    ]), {
+      method: 'page.pressKey',
+      params: {
+        origin: 'https://example.com',
+        handle: 'el_0',
+        key: 'Enter',
+        target: observedTarget
+      }
+    });
+  } finally {
+    fs.rmSync(targetJsonPath, { force: true });
+  }
   assert.deepEqual(buildRpcRequest([
     'upload-file',
     'https://example.com',

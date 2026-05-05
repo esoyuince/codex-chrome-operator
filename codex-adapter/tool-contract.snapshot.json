@@ -1,7 +1,7 @@
 {
   "adapterProtocolVersion": "1.0",
   "toolSchemaVersion": "2026-05-01.m1",
-  "toolDefinitionsHash": "f814387945dd383946586877f0c08b6fded343d3a889d39349130e071567857c",
+  "toolDefinitionsHash": "9820a3bfafbfaa18d21183f44bef56c47a9f2c6836ff3d3d815e8177e9d620b7",
   "toolCount": 29,
   "toolNames": [
     "codex_chrome_status",
@@ -176,6 +176,13 @@
           },
           "sincePageStateId": {
             "type": "string"
+          },
+          "includeFormValues": {
+            "type": "boolean"
+          },
+          "maxFieldValueChars": {
+            "type": "number",
+            "minimum": 0
           }
         },
         "required": [
@@ -214,6 +221,13 @@
           },
           "sincePageStateId": {
             "type": "string"
+          },
+          "includeFormValues": {
+            "type": "boolean"
+          },
+          "maxFieldValueChars": {
+            "type": "number",
+            "minimum": 0
           }
         },
         "required": [
@@ -247,6 +261,13 @@
           },
           "refId": {
             "type": "string"
+          },
+          "includeFormValues": {
+            "type": "boolean"
+          },
+          "maxFieldValueChars": {
+            "type": "number",
+            "minimum": 0
           }
         },
         "required": [
@@ -369,6 +390,13 @@
                 "sincePageStateId": {
                   "type": "string"
                 },
+                "includeFormValues": {
+                  "type": "boolean"
+                },
+                "maxFieldValueChars": {
+                  "type": "number",
+                  "minimum": 0
+                },
                 "postActionSnapshot": {
                   "type": "string",
                   "enum": [
@@ -422,6 +450,13 @@
           },
           "sincePageStateId": {
             "type": "string"
+          },
+          "includeFormValues": {
+            "type": "boolean"
+          },
+          "maxFieldValueChars": {
+            "type": "number",
+            "minimum": 0
           },
           "maxBytes": {
             "type": "number",

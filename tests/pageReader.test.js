@@ -131,7 +131,7 @@ test('generatePageSnapshot can include safe form values without leaking sensitiv
 
   assert.equal(snapshot.ok, true);
   assert.match(snapshot.result.pageContent, /textbox "Full description" \[el_state1_1\] value="CaptainCalc ist da"/);
-  assert.match(snapshot.result.pageContent, /textbox "CaptainCalc" \[el_state1_4\] type="text" value="CaptainCalc"/);
+  assert.match(snapshot.result.pageContent, /textbox "public-title" \[el_state1_4\] type="text" value="CaptainCalc"/);
   assert.doesNotMatch(snapshot.result.pageContent, /captain@example\.com/);
   assert.doesNotMatch(snapshot.result.pageContent, /secret-token-123/);
   assert.equal(
@@ -140,6 +140,40 @@ test('generatePageSnapshot can include safe form values without leaking sensitiv
   );
   assert.equal(snapshot.result.handles.some((handle) => handle.value === 'captain@example.com'), false);
   assert.equal(snapshot.result.handles.some((handle) => handle.value === 'secret-token-123'), false);
+});
+
+test('generatePageSnapshot keeps text input values out of labels unless explicitly requested as values', () => {
+  const root = node('main', {}, [
+    node('input', {
+      id: 'draft-title',
+      type: 'text',
+      value: 'Private launch draft',
+      placeholder: 'Title'
+    })
+  ]);
+
+  const defaultSnapshot = generatePageSnapshot(env(root), {
+    filter: 'all',
+    depth: 4,
+    maxChars: 1200
+  });
+  const valueSnapshot = generatePageSnapshot(env(root), {
+    filter: 'all',
+    depth: 4,
+    maxChars: 1200,
+    includeFormValues: true,
+    maxFieldValueChars: 12
+  });
+
+  assert.equal(defaultSnapshot.ok, true);
+  assert.doesNotMatch(defaultSnapshot.result.pageContent, /Private launch draft/);
+  assert.equal(defaultSnapshot.result.handles.find((handle) => handle.tag === 'input').label, 'Title');
+  assert.equal(Object.hasOwn(defaultSnapshot.result.handles.find((handle) => handle.tag === 'input'), 'value'), false);
+
+  assert.equal(valueSnapshot.ok, true);
+  assert.match(valueSnapshot.result.pageContent, /textbox "Title" \[el_state1_1\] type="text" placeholder="Title" value="Private laun"/);
+  assert.equal(valueSnapshot.result.handles.find((handle) => handle.tag === 'input').label, 'Title');
+  assert.equal(valueSnapshot.result.handles.find((handle) => handle.tag === 'input').value, 'Private laun');
 });
 
 test('generatePageSnapshot can focus an existing handle and enforces maxChars', () => {

@@ -258,9 +258,7 @@
     }
 
     const tag = tagName(element);
-    const controlValue = isSensitiveFormValueElement(element) ? '' : element && element.value;
     const controlText = normalizeText(
-      controlValue ||
       attr(element, 'placeholder') ||
       attr(element, 'name')
     );

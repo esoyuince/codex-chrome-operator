@@ -319,7 +319,14 @@ function pickDefined(input, fields) {
 }
 
 function observeOptions(input) {
-  return pickDefined(input, ['mode', 'maxActionableHandles', 'summaryMaxChars', 'sincePageStateId']);
+  return pickDefined(input, [
+    'mode',
+    'maxActionableHandles',
+    'summaryMaxChars',
+    'sincePageStateId',
+    'includeFormValues',
+    'maxFieldValueChars'
+  ]);
 }
 
 function postActionSnapshotOptions(input) {
@@ -399,7 +406,14 @@ class CodexChromeToolAdapter {
       case 'codex_chrome_read_page':
         response = await this.sendRpc('page.readPage', {
           origin: normalizeOrigin(input.origin),
-          ...pickDefined(input, ['filter', 'depth', 'maxChars', 'refId'])
+          ...pickDefined(input, [
+            'filter',
+            'depth',
+            'maxChars',
+            'refId',
+            'includeFormValues',
+            'maxFieldValueChars'
+          ])
         });
         break;
       case 'codex_chrome_extract':

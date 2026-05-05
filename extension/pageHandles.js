@@ -29,12 +29,24 @@
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
+  function tagName(element) {
+    return String(element && element.tagName ? element.tagName : '').toLowerCase();
+  }
+
+  function isUserEditableFormElement(element) {
+    const tag = tagName(element);
+    const type = attr(element, 'type').toLowerCase();
+    return tag === 'textarea' ||
+      tag === 'select' ||
+      (tag === 'input' && !['button', 'submit', 'reset', 'file', 'image'].includes(type));
+  }
+
   function elementLabel(element) {
     return normalizeText(
       attr(element, 'aria-label') ||
       attr(element, 'title') ||
       element.innerText ||
-      element.value ||
+      (isUserEditableFormElement(element) ? '' : element.value) ||
       attr(element, 'placeholder') ||
       attr(element, 'name') ||
       ''

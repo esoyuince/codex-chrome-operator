@@ -22,6 +22,7 @@ function element(attrs = {}) {
   return {
     tagName: attrs.tagName || 'INPUT',
     id: attrs.id || '',
+    value: attrs.value || '',
     disabled: Boolean(attrs.disabled),
     getBoundingClientRect() {
       return attrs.rect || { x: 0, y: 0, width: 0, height: 0 };
@@ -291,4 +292,36 @@ test('resolveVersionedHandle resolves the same page state and rejects malformed 
   assert.equal(invalid.ok, false);
   assert.equal(invalid.error.code, 'STALE_HANDLE');
   assert.equal(invalid.error.reason, 'UNVERSIONED_HANDLE');
+});
+
+test('page handle identity does not depend on mutable text input values', () => {
+  const context = env('https://example.com/form');
+  const original = element({
+    id: 'draft-title',
+    name: 'title',
+    type: 'text',
+    placeholder: 'Title',
+    value: 'First private draft'
+  });
+  const described = describeElements([original], context);
+  const updated = element({
+    id: 'draft-title',
+    name: 'title',
+    type: 'text',
+    placeholder: 'Title',
+    value: 'Second private draft'
+  });
+
+  const resolved = resolveVersionedHandle({
+    handle: described.items[0].handle,
+    elements: [
+      element({ id: 'other', name: 'other', type: 'text', placeholder: 'Other' }),
+      updated
+    ],
+    context
+  });
+
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.recovered, true);
+  assert.equal(resolved.element, updated);
 });

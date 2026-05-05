@@ -173,7 +173,7 @@ test('package and Windows runbook expose the M6 final check path', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const runbook = fs.readFileSync(path.join(ROOT, 'docs', 'windows-install-runbook.md'), 'utf8');
 
-  assert.equal(packageJson.scripts['release:m6'], 'node scripts/m6-final-check.js');
+  assert.equal(packageJson.scripts['release:m6'], 'npm run check:version-discipline && node scripts/m6-final-check.js');
   assert.match(runbook, /npm run release:m6/);
   assert.match(runbook, /install\\install\.ps1/);
   assert.match(runbook, /install\\doctor\.ps1/);

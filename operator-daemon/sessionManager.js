@@ -398,8 +398,8 @@ class SessionManager {
     this.config = {
       expectedExtensionId: config.expectedExtensionId || 'development-extension-id',
       expectedProtocolVersion: config.expectedProtocolVersion || '1.0',
-      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.9',
-      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.9',
+      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.10',
+      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.10',
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       visualAnalyzerRegistry: config.visualAnalyzerRegistry || createVisualAnalyzerRegistry(),

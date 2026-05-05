@@ -15,6 +15,17 @@ artifacts/
 test-results/
 playwright-report/
 
+# Live browser/debug screenshots. Keep intentional fixtures and extension icons tracked.
+/after_*.png
+/chrome_*.png
+/codex_screen_capture.png
+/tweet_*.png
+/tweet_*.jpg
+/tweet_*.jpeg
+/x_reply_*.png
+/*_screen_capture.png
+/live-artifacts/
+
 # OS/editor noise
 .DS_Store
 Thumbs.db

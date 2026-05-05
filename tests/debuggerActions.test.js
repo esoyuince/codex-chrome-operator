@@ -280,6 +280,60 @@ test('runtime target recovery uses data-testid from content target summaries', (
   assert.equal(result.result.y, 598);
 });
 
+test('runtime target recovery matches native controls with implicit role/type and data-test-id', () => {
+  const button = {
+    tagName: 'BUTTON',
+    id: '',
+    type: 'button',
+    innerText: 'Yanıtla',
+    disabled: false,
+    scrollIntoView() {},
+    getAttribute(name) {
+      if (name === 'data-test-id') return 'tweetButton';
+      return '';
+    },
+    getBoundingClientRect() {
+      return { left: 100, top: 900, right: 184, bottom: 936, width: 84, height: 36 };
+    }
+  };
+  const expression = buildRuntimeActionExpression({
+    action: 'resolvePointerTarget',
+    handle: 'el_oldstate_0',
+    target: {
+      tag: 'button',
+      role: 'button',
+      type: 'button',
+      data: { 'data-test-id': 'tweetButton' },
+      label: 'Yanıtla'
+    }
+  });
+  const context = {
+    URL,
+    location: { href: 'https://x.com/intent/post' },
+    document: {
+      title: 'X',
+      querySelectorAll() {
+        return [button];
+      }
+    },
+    window: {
+      innerWidth: 1400,
+      innerHeight: 1000,
+      scrollX: 0,
+      scrollY: 0,
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.recovered, true);
+  assert.equal(result.result.y, 918);
+});
+
 test('runtime target recovery narrows duplicate controls by target bbox', () => {
   function button(top) {
     return {
@@ -310,7 +364,13 @@ test('runtime target recovery narrows duplicate controls by target bbox', () => 
       type: 'button',
       testid: 'tweetButton',
       label: 'Yanıtla',
-      bbox: { x: 100, y: 900, width: 84, height: 36 }
+      bbox: { x: 100, y: 900, width: 84, height: 36 },
+      context: {
+        url: 'https://x.com/intent/post',
+        viewport: { width: 1400, height: 1000 },
+        scroll: { x: 0, y: 0 },
+        devicePixelRatio: 1
+      }
     }
   });
   const context = {
@@ -325,6 +385,9 @@ test('runtime target recovery narrows duplicate controls by target bbox', () => 
     window: {
       innerWidth: 1400,
       innerHeight: 1000,
+      scrollX: 0,
+      scrollY: 0,
+      devicePixelRatio: 1,
       getComputedStyle() {
         return { visibility: 'visible', display: 'block' };
       }
@@ -336,4 +399,71 @@ test('runtime target recovery narrows duplicate controls by target bbox', () => 
   assert.equal(result.ok, true);
   assert.equal(result.result.recovered, true);
   assert.equal(result.result.y, 918);
+});
+
+test('runtime target recovery refuses bbox narrowing when snapshot layout context drifted', () => {
+  function button(top) {
+    return {
+      tagName: 'BUTTON',
+      id: '',
+      innerText: 'Yanıtla',
+      disabled: false,
+      scrollIntoView() {},
+      getAttribute(name) {
+        if (name === 'data-testid') return 'tweetButton';
+        if (name === 'type') return 'button';
+        if (name === 'role') return 'button';
+        return '';
+      },
+      getBoundingClientRect() {
+        return { left: 100, top, right: 184, bottom: top + 36, width: 84, height: 36 };
+      }
+    };
+  }
+
+  const buttons = [button(580), button(900)];
+  const expression = buildRuntimeActionExpression({
+    action: 'resolvePointerTarget',
+    handle: 'el_oldstate_0',
+    target: {
+      tag: 'button',
+      role: 'button',
+      type: 'button',
+      testid: 'tweetButton',
+      label: 'Yanıtla',
+      bbox: { x: 100, y: 900, width: 84, height: 36 },
+      context: {
+        url: 'https://x.com/intent/post',
+        viewport: { width: 1400, height: 1000 },
+        scroll: { x: 0, y: 600 },
+        devicePixelRatio: 1
+      }
+    }
+  });
+  const context = {
+    URL,
+    location: { href: 'https://x.com/intent/post' },
+    document: {
+      title: 'X',
+      querySelectorAll() {
+        return buttons;
+      }
+    },
+    window: {
+      innerWidth: 1400,
+      innerHeight: 1000,
+      scrollX: 0,
+      scrollY: 0,
+      devicePixelRatio: 1,
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.reason, 'RECOVERY_NOT_UNIQUE');
+  assert.equal(result.error.matchCount, 2);
 });

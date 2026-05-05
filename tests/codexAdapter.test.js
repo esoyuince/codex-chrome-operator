@@ -42,6 +42,8 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.equal(observe.inputSchema.properties.maxActionableHandles.minimum, 1);
   assert.equal(observe.inputSchema.properties.summaryMaxChars.minimum, 1);
   assert.equal(observe.inputSchema.properties.sincePageStateId.type, 'string');
+  assert.equal(observe.inputSchema.properties.includeFormValues.type, 'boolean');
+  assert.equal(observe.inputSchema.properties.maxFieldValueChars.type, 'number');
   assert.ok(profileOnboard);
   assert.equal(profileOnboard.inputSchema.type, 'object');
   assert.equal(profileOnboard.inputSchema.additionalProperties, false);
@@ -74,6 +76,8 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.deepEqual(readPage.inputSchema.required, ['origin']);
   assert.equal(readPage.inputSchema.properties.maxChars.type, 'number');
   assert.equal(readPage.inputSchema.properties.refId.type, 'string');
+  assert.equal(readPage.inputSchema.properties.includeFormValues.type, 'boolean');
+  assert.equal(readPage.inputSchema.properties.maxFieldValueChars.type, 'number');
   assert.ok(batch);
   assert.deepEqual(batch.inputSchema.required, ['origin', 'actions']);
   assert.equal(batch.inputSchema.properties.actions.type, 'array');
@@ -243,7 +247,9 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
       filter: 'interactive',
       depth: 4,
       maxChars: 12000,
-      refId: 'el_state_0'
+      refId: 'el_state_0',
+      includeFormValues: true,
+      maxFieldValueChars: 80
     }).ok,
     true
   );
@@ -295,7 +301,9 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
         sincePageStateId: 'state_previous',
         mode: 'tiny',
         maxActionableHandles: 10,
-        summaryMaxChars: 300
+        summaryMaxChars: 300,
+        includeFormValues: true,
+        maxFieldValueChars: 80
       }, {
         action: 'fill',
         handle: 'el_state_0',
@@ -353,6 +361,54 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     }).error.code,
     'INVALID_TOOL_INPUT'
   );
+});
+
+test('CodexChromeToolAdapter forwards explicit form value observe and read-page options', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return { ok: true, result: { method: request.method, params: request.params } };
+    }
+  });
+
+  const observed = await adapter.executeTool({
+    toolName: 'codex_chrome_observe',
+    input: {
+      origin: 'https://example.com/form',
+      mode: 'full',
+      includeFormValues: true,
+      maxFieldValueChars: 64
+    }
+  });
+  const read = await adapter.executeTool({
+    toolName: 'codex_chrome_read_page',
+    input: {
+      origin: 'https://example.com/form',
+      filter: 'all',
+      includeFormValues: true,
+      maxFieldValueChars: 32
+    }
+  });
+
+  assert.equal(observed.ok, true);
+  assert.equal(read.ok, true);
+  assert.deepEqual(calls.map((call) => call.params), [{
+    origin: 'https://example.com',
+    mode: 'full',
+    includeFormValues: true,
+    maxFieldValueChars: 64
+  }, {
+    origin: 'https://example.com',
+    filter: 'all',
+    includeFormValues: true,
+    maxFieldValueChars: 32
+  }]);
 });
 
 test('CodexChromeToolAdapter defaults status to compact, forwards detail, and attaches telemetry', async () => {

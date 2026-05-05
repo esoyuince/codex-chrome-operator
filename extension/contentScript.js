@@ -1,5 +1,16 @@
 'use strict';
 
+function currentContentScriptVersion() {
+  try {
+    return chrome.runtime.getManifest().version || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+var CODEX_CONTENT_SCRIPT_VERSION = currentContentScriptVersion();
+globalThis.__codexContentScriptVersion = CODEX_CONTENT_SCRIPT_VERSION;
+
 function isVisible(element) {
   const style = window.getComputedStyle(element);
   const rect = element.getBoundingClientRect();
@@ -99,6 +110,21 @@ function compactElementSummary(summary) {
   }));
 }
 
+function layoutContext() {
+  return {
+    url: location.href,
+    viewport: {
+      width: window.innerWidth,
+      height: window.innerHeight
+    },
+    scroll: {
+      x: window.scrollX,
+      y: window.scrollY
+    },
+    devicePixelRatio: window.devicePixelRatio
+  };
+}
+
 function booleanOption(value, fallback = false) {
   return value === undefined ? fallback : value === true;
 }
@@ -161,11 +187,9 @@ function elementSummary(element, handle, options = {}) {
     : element.getAttribute('href') || null;
   const placeholder = element.getAttribute('placeholder') || null;
   const title = element.getAttribute('title') || null;
-  const safeControlValue = isSensitiveFormValueElement(element) ? '' : element.value;
   const label = element.getAttribute('aria-label') ||
     title ||
     element.innerText ||
-    safeControlValue ||
     placeholder ||
     element.getAttribute('name') ||
     '';
@@ -197,6 +221,7 @@ function elementSummary(element, handle, options = {}) {
     label: String(label).trim().slice(0, 200),
     value: formValue,
     disabled: Boolean(element.disabled),
+    context: layoutContext(),
     bbox: {
       x: Math.round(rect.x),
       y: Math.round(rect.y),
@@ -556,6 +581,7 @@ function collectObservation(options = {}) {
   const observation = {
     url: location.href,
     origin: location.origin,
+    contentScriptVersion: CODEX_CONTENT_SCRIPT_VERSION,
     title: document.title,
     pageStateId: described.pageStateId,
     visibleTextSummary: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, limits.summaryMaxChars),
@@ -714,6 +740,13 @@ function readPage(message = {}) {
   const response = globalThis.CodexPageReader.generatePageSnapshot(pageReaderContext(), options);
   if (response && response.ok) {
     rememberReadableElements(options);
+    return {
+      ...response,
+      result: {
+        ...(response.result || {}),
+        contentScriptVersion: CODEX_CONTENT_SCRIPT_VERSION
+      }
+    };
   }
   return response;
 }
@@ -1115,7 +1148,18 @@ function handleContentMessage(message, sender, sendResponse) {
   return true;
 }
 
-if (!globalThis.__codexContentScriptListenerInstalled) {
-  globalThis.__codexContentScriptListenerInstalled = true;
+function installContentScriptListener() {
+  if (
+    globalThis.__codexContentScriptListener &&
+    chrome.runtime.onMessage &&
+    typeof chrome.runtime.onMessage.removeListener === 'function'
+  ) {
+    chrome.runtime.onMessage.removeListener(globalThis.__codexContentScriptListener);
+  }
   chrome.runtime.onMessage.addListener(handleContentMessage);
+  globalThis.__codexContentScriptListener = handleContentMessage;
+  globalThis.__codexContentScriptListenerInstalled = true;
+  globalThis.__codexContentScriptVersion = CODEX_CONTENT_SCRIPT_VERSION;
 }
+
+installContentScriptListener();

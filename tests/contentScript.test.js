@@ -155,6 +155,8 @@ function selectorMatchesElement(selector, node) {
 function loadContentScript(rootElement) {
   let listener = null;
   let listenerCount = 0;
+  let removeCount = 0;
+  const activeListeners = new Set();
   const allElements = flattenElements(rootElement);
   const context = {
     console,
@@ -201,10 +203,22 @@ function loadContentScript(rootElement) {
     },
     chrome: {
       runtime: {
+        getManifest() {
+          return { version: '0.2.10' };
+        },
         onMessage: {
           addListener(callback) {
             listener = callback;
+            activeListeners.add(callback);
             listenerCount += 1;
+          },
+          removeListener(callback) {
+            if (activeListeners.delete(callback)) {
+              removeCount += 1;
+            }
+            if (listener === callback) {
+              listener = null;
+            }
           }
         }
       }
@@ -229,12 +243,20 @@ function loadContentScript(rootElement) {
         listener(message, {}, resolve);
       });
     },
-    listenerCount,
+    get listenerCount() {
+      return listenerCount;
+    },
+    get removeCount() {
+      return removeCount;
+    },
+    get activeListenerCount() {
+      return activeListeners.size;
+    },
     runScriptAgain() {
       vm.runInContext(fs.readFileSync(path.join(ROOT, 'extension/contentScript.js'), 'utf8'), context, {
         filename: 'extension/contentScript.js'
       });
-      return listenerCount;
+      return activeListeners.size;
     }
   };
 }
@@ -278,10 +300,15 @@ test('content script tolerates duplicate injection without duplicate listener re
   const content = loadContentScript(root);
 
   assert.equal(content.listenerCount, 1);
+  assert.equal(content.activeListenerCount, 1);
   assert.equal(content.runScriptAgain(), 1);
+  assert.equal(content.listenerCount, 2);
+  assert.equal(content.removeCount, 1);
+  assert.equal(content.activeListenerCount, 1);
   const observed = await content.send({ type: 'content.observe' });
 
   assert.equal(observed.origin, 'https://example.com');
+  assert.equal(observed.contentScriptVersion, '0.2.10');
   assert.equal(observed.elements.length, 1);
 });
 
@@ -338,6 +365,35 @@ test('content observe includes safe form values only when explicitly requested',
   assert.equal(Object.hasOwn(observed.elements.find((entry) => entry.tag === 'input'), 'value'), false);
   assert.equal(observed.elements.find((entry) => entry.tag === 'input').label, '');
   assert.doesNotMatch(JSON.stringify(observed), /captain@example\.com/);
+});
+
+test('content observe keeps text input values out of labels unless explicitly requested as values', async () => {
+  const root = element('main', {}, [
+    element('input', {
+      id: 'draft-title',
+      type: 'text',
+      placeholder: 'Title',
+      value: 'Private launch draft'
+    })
+  ]);
+  const content = loadContentScript(root);
+
+  const defaultObserved = await content.send({
+    type: 'content.observe',
+    mode: 'full'
+  });
+  const valueObserved = await content.send({
+    type: 'content.observe',
+    mode: 'full',
+    includeFormValues: true,
+    maxFieldValueChars: 12
+  });
+
+  assert.equal(defaultObserved.elements[0].label, 'Title');
+  assert.equal(Object.hasOwn(defaultObserved.elements[0], 'value'), false);
+  assert.doesNotMatch(JSON.stringify(defaultObserved), /Private launch draft/);
+  assert.equal(valueObserved.elements[0].label, 'Title');
+  assert.equal(valueObserved.elements[0].value, 'Private laun');
 });
 
 test('content observe defaults to tiny bounded observation', async () => {
