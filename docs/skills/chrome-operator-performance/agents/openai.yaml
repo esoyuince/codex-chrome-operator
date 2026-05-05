@@ -1,4 +1,4 @@
 interface:
-  display_name: "Chrome Operator Performance"
-  short_description: "Optimize and live-test Codex Chrome Operator work."
-  default_prompt: "Use this skill to diagnose, optimize, and validate Codex Chrome Operator browser automation with real-profile smoke tests."
+  display_name: "Chrome Operator Usage"
+  short_description: "Use, validate, and improve Codex Chrome Operator work."
+  default_prompt: "Use this skill to operate the Codex Chrome Operator extension correctly, verify live browser outcomes, and diagnose or improve the extension when needed."

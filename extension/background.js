@@ -566,8 +566,12 @@ function tabInfo(tab) {
 }
 
 async function activeTabInfo() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tabInfo(tab);
+  const [lastFocusedTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (lastFocusedTab) {
+    return tabInfo(lastFocusedTab);
+  }
+  const [currentWindowTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tabInfo(currentWindowTab);
 }
 
 function isExtensionPageTab(tab) {
@@ -615,7 +619,9 @@ function observeOptions(params = {}) {
     ...(params.mode === undefined ? {} : { mode: params.mode }),
     ...(params.maxActionableHandles === undefined ? {} : { maxActionableHandles: params.maxActionableHandles }),
     ...(params.summaryMaxChars === undefined ? {} : { summaryMaxChars: params.summaryMaxChars }),
-    ...(params.sincePageStateId === undefined ? {} : { sincePageStateId: params.sincePageStateId })
+    ...(params.sincePageStateId === undefined ? {} : { sincePageStateId: params.sincePageStateId }),
+    ...(params.includeFormValues === undefined ? {} : { includeFormValues: params.includeFormValues }),
+    ...(params.maxFieldValueChars === undefined ? {} : { maxFieldValueChars: params.maxFieldValueChars })
   };
 }
 
@@ -866,7 +872,9 @@ async function handleOperatorCommand(command) {
         filter: params.filter,
         depth: params.depth,
         maxChars: params.maxChars,
-        refId: params.refId
+        refId: params.refId,
+        includeFormValues: params.includeFormValues,
+        maxFieldValueChars: params.maxFieldValueChars
       });
     }
 
@@ -1201,6 +1209,12 @@ chrome.permissions.onAdded.addListener(syncPermissionsAfterChange);
 chrome.permissions.onRemoved.addListener(syncPermissionsAfterChange);
 chrome.tabs.onActivated.addListener(() => {
   reportAndWarmActiveTab('tab-activated').catch(() => {});
+});
+chrome.windows.onFocusChanged.addListener((windowId) => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) {
+    return;
+  }
+  reportAndWarmActiveTab('window-focus-changed').catch(() => {});
 });
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status || changeInfo.url || changeInfo.title) {

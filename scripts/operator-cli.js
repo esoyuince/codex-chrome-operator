@@ -44,6 +44,7 @@ function usage() {
   node scripts/operator-cli.js full-auto-stop [reason]
   node scripts/operator-cli.js disconnect [reason]
   node scripts/operator-cli.js observe <origin>
+  node scripts/operator-cli.js read-page <origin> [filter] [maxChars] [includeFormValues] [maxFieldValueChars]
   node scripts/operator-cli.js visual-observe <origin>
   node scripts/operator-cli.js visual-analyze <origin> [provider]
   node scripts/operator-cli.js upload-file <origin> <handle> <ruleset> <files-json> [verifyPreview]
@@ -277,6 +278,18 @@ function buildRpcRequest(argv) {
     case 'observe':
       requireArgs(args, 1);
       return { method: 'page.observe', params: { origin: args[0] } };
+    case 'read-page':
+      requireArgs(args, 1);
+      return {
+        method: 'page.readPage',
+        params: {
+          origin: args[0],
+          ...(args[1] === undefined ? {} : { filter: args[1] }),
+          ...(args[2] === undefined ? {} : { maxChars: Number(args[2]) }),
+          ...(args[3] === undefined ? {} : { includeFormValues: parseBooleanArg(args[3]) }),
+          ...(args[4] === undefined ? {} : { maxFieldValueChars: Number(args[4]) })
+        }
+      };
     case 'visual-observe':
       requireArgs(args, 1);
       return { method: 'page.visualObserve', params: { origin: args[0] } };

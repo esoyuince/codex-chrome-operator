@@ -154,6 +154,7 @@ function selectorMatchesElement(selector, node) {
 
 function loadContentScript(rootElement) {
   let listener = null;
+  let listenerCount = 0;
   const allElements = flattenElements(rootElement);
   const context = {
     console,
@@ -203,6 +204,7 @@ function loadContentScript(rootElement) {
         onMessage: {
           addListener(callback) {
             listener = callback;
+            listenerCount += 1;
           }
         }
       }
@@ -226,6 +228,13 @@ function loadContentScript(rootElement) {
       return new Promise((resolve) => {
         listener(message, {}, resolve);
       });
+    },
+    listenerCount,
+    runScriptAgain() {
+      vm.runInContext(fs.readFileSync(path.join(ROOT, 'extension/contentScript.js'), 'utf8'), context, {
+        filename: 'extension/contentScript.js'
+      });
+      return listenerCount;
     }
   };
 }
@@ -260,6 +269,75 @@ test('content script can use compact read_page handles for follow-up DOM actions
   assert.equal(filled.ok, true);
   assert.equal(input.value, 'captain@example.com');
   assert.deepEqual(input.events, ['input', 'change']);
+});
+
+test('content script tolerates duplicate injection without duplicate listener registration', async () => {
+  const root = element('main', {}, [
+    element('button', { text: 'Save draft' })
+  ]);
+  const content = loadContentScript(root);
+
+  assert.equal(content.listenerCount, 1);
+  assert.equal(content.runScriptAgain(), 1);
+  const observed = await content.send({ type: 'content.observe' });
+
+  assert.equal(observed.origin, 'https://example.com');
+  assert.equal(observed.elements.length, 1);
+});
+
+test('content readPage can include safe textarea values for long-form copy', async () => {
+  const root = element('main', {}, [
+    element('textarea', {
+      id: 'full-description',
+      'aria-label': 'Full description',
+      value: 'CaptainCalc ist das Offline-Navigationswerkzeug fuer Kapitaene.'
+    })
+  ]);
+  const content = loadContentScript(root);
+
+  const read = await content.send({
+    type: 'content.readPage',
+    filter: 'all',
+    depth: 4,
+    maxChars: 2000,
+    includeFormValues: true,
+    maxFieldValueChars: 22
+  });
+
+  assert.equal(read.ok, true);
+  assert.match(read.result.pageContent, /value="CaptainCalc ist das Of"/);
+  assert.equal(
+    read.result.handles.find((handle) => handle.tag === 'textarea').value,
+    'CaptainCalc ist das Of'
+  );
+});
+
+test('content observe includes safe form values only when explicitly requested', async () => {
+  const root = element('main', {}, [
+    element('textarea', {
+      id: 'full-description',
+      'aria-label': 'Full description',
+      value: 'CaptainCalc ist das Offline-Navigationswerkzeug fuer Kapitaene.'
+    }),
+    element('input', {
+      id: 'support-email',
+      type: 'email',
+      value: 'captain@example.com'
+    })
+  ]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    mode: 'full',
+    includeFormValues: true,
+    maxFieldValueChars: 14
+  });
+
+  assert.equal(observed.elements.find((entry) => entry.tag === 'textarea').value, 'CaptainCalc is');
+  assert.equal(Object.hasOwn(observed.elements.find((entry) => entry.tag === 'input'), 'value'), false);
+  assert.equal(observed.elements.find((entry) => entry.tag === 'input').label, '');
+  assert.doesNotMatch(JSON.stringify(observed), /captain@example\.com/);
 });
 
 test('content observe defaults to tiny bounded observation', async () => {

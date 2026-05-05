@@ -99,7 +99,59 @@ function compactElementSummary(summary) {
   }));
 }
 
-function elementSummary(element, handle) {
+function booleanOption(value, fallback = false) {
+  return value === undefined ? fallback : value === true;
+}
+
+function sensitiveFormAttributeText(element) {
+  return [
+    element.getAttribute('type') || '',
+    element.getAttribute('autocomplete') || '',
+    element.getAttribute('name') || '',
+    element.id || '',
+    element.getAttribute('aria-label') || '',
+    element.getAttribute('placeholder') || '',
+    element.getAttribute('title') || ''
+  ].join(' ').toLowerCase();
+}
+
+function isSensitiveFormValueElement(element) {
+  if (isSensitiveElement(element)) {
+    return true;
+  }
+  const tag = element.tagName.toLowerCase();
+  const type = (element.getAttribute('type') || '').toLowerCase();
+  if (tag === 'input' && ['hidden', 'password', 'email', 'tel'].includes(type)) {
+    return true;
+  }
+  return /\b(pass(word)?|token|secret|api[-_ ]?key|otp|one[-_ ]?time|2fa|mfa|email|e-mail|mail|phone|tel|mobile|credit|card|cc-|cvv|cvc)\b/.test(sensitiveFormAttributeText(element));
+}
+
+function formValueForElement(element, options = {}) {
+  if (!booleanOption(options.includeFormValues)) {
+    return null;
+  }
+  const tag = element.tagName.toLowerCase();
+  if (!['input', 'textarea', 'select'].includes(tag)) {
+    return null;
+  }
+  if (isSensitiveFormValueElement(element)) {
+    return null;
+  }
+  const type = (element.getAttribute('type') || '').toLowerCase();
+  if (tag === 'input' && ['button', 'submit', 'reset', 'file', 'image'].includes(type)) {
+    return null;
+  }
+  const rawValue = tag === 'select'
+    ? (element.value || element.getAttribute('value') || '')
+    : element.value;
+  const maxChars = Number.isFinite(Number(options.maxFieldValueChars))
+    ? Math.max(0, Math.floor(Number(options.maxFieldValueChars)))
+    : 4000;
+  return String(rawValue || '').slice(0, maxChars);
+}
+
+function elementSummary(element, handle, options = {}) {
   const rect = element.getBoundingClientRect();
   const dataRisk = element.getAttribute('data-risk') || null;
   const uploadInput = uploadInputForElement(element);
@@ -109,16 +161,18 @@ function elementSummary(element, handle) {
     : element.getAttribute('href') || null;
   const placeholder = element.getAttribute('placeholder') || null;
   const title = element.getAttribute('title') || null;
+  const safeControlValue = isSensitiveFormValueElement(element) ? '' : element.value;
   const label = element.getAttribute('aria-label') ||
     title ||
     element.innerText ||
-    element.value ||
+    safeControlValue ||
     placeholder ||
     element.getAttribute('name') ||
     '';
 
   const visualRole = visualRoleForElement(element);
   const ratingValue = numericAttribute(element, 'data-rating');
+  const formValue = formValueForElement(element, options);
   return compactElementSummary({
     handle,
     tag: element.tagName.toLowerCase(),
@@ -141,6 +195,7 @@ function elementSummary(element, handle) {
     ratingValue,
     sensitive: isSensitiveElement(element),
     label: String(label).trim().slice(0, 200),
+    value: formValue,
     disabled: Boolean(element.disabled),
     bbox: {
       x: Math.round(rect.x),
@@ -213,8 +268,9 @@ function collectObservedElements() {
   return [...new Set([...collectInteractiveElements(), ...collectVisualElements(), ...collectUploadElements()])].slice(0, 300);
 }
 
-const lastObservationSummaries = new Map();
-const MAX_OBSERVATION_SUMMARIES = 8;
+var lastObservationSummaries = globalThis.__codexLastObservationSummaries || new Map();
+globalThis.__codexLastObservationSummaries = lastObservationSummaries;
+var MAX_OBSERVATION_SUMMARIES = 8;
 
 function boundedText(value, maxChars = 80) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxChars);
@@ -516,8 +572,8 @@ function collectObservation(options = {}) {
       detectedSensitiveFields: sensitiveFields.map((field) => field.reason),
       detectedGates: detectedGates.map((gate) => gate.type)
     },
-    elements: candidates.map((element, index) => elementSummary(element, described.items[index].handle)),
-    focusedElement: document.activeElement ? elementSummary(document.activeElement, null) : null,
+    elements: candidates.map((element, index) => elementSummary(element, described.items[index].handle, options)),
+    focusedElement: document.activeElement ? elementSummary(document.activeElement, null, options) : null,
     viewport: {
       width: window.innerWidth,
       height: window.innerHeight,
@@ -544,7 +600,8 @@ function collectObservation(options = {}) {
   return observation;
 }
 
-let lastReadableElements = [];
+var lastReadableElements = globalThis.__codexLastReadableElements || [];
+globalThis.__codexLastReadableElements = lastReadableElements;
 
 function pageReaderContext() {
   return {
@@ -566,7 +623,9 @@ function pageReaderOptions(message = {}) {
     filter: message.filter,
     depth: message.depth,
     maxChars: message.maxChars,
-    refId: message.refId
+    refId: message.refId,
+    includeFormValues: message.includeFormValues,
+    maxFieldValueChars: message.maxFieldValueChars
   };
 }
 
@@ -993,7 +1052,7 @@ async function resolveActionTarget(message) {
   };
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+function handleContentMessage(message, sender, sendResponse) {
   (async () => {
     if (message && message.type === 'content.readPage') {
       sendResponse(readPage(message));
@@ -1054,4 +1113,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: false, error: { code: 'UNKNOWN_MESSAGE' } });
   })();
   return true;
-});
+}
+
+if (!globalThis.__codexContentScriptListenerInstalled) {
+  globalThis.__codexContentScriptListenerInstalled = true;
+  chrome.runtime.onMessage.addListener(handleContentMessage);
+}

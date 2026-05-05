@@ -135,6 +135,82 @@ test('resolveVersionedHandle uses stable layout to recover repeated action butto
   assert.equal(resolved.recovered, true);
 });
 
+test('resolveVersionedHandle recovers unique data-testid controls after layout drift', () => {
+  const context = env('https://x.com/intent/post');
+  const targetReply = element({
+    tagName: 'BUTTON',
+    role: 'button',
+    type: 'button',
+    'data-testid': 'tweetButton',
+    rect: { x: 1160, y: 885, width: 84, height: 36 }
+  });
+  const described = describeElements([targetReply], context);
+
+  const resolved = resolveVersionedHandle({
+    handle: described.items[0].handle,
+    elements: [
+      element({
+        tagName: 'BUTTON',
+        role: 'button',
+        type: 'button',
+        'data-testid': 'tweetButtonInline',
+        rect: { x: 1094, y: 586, width: 84, height: 36 }
+      }),
+      element({
+        tagName: 'BUTTON',
+        role: 'button',
+        type: 'button',
+        'data-testid': 'tweetButton',
+        rect: { x: 1145, y: 886, width: 84, height: 36 }
+      })
+    ],
+    context
+  });
+
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.index, 1);
+  assert.equal(resolved.recovered, true);
+  assert.equal(resolved.recovery.strategy, 'stable-identity');
+});
+
+test('resolveVersionedHandle narrows repeated identity controls by previous layout proximity', () => {
+  const context = env('https://x.com/intent/post');
+  const targetReply = element({
+    tagName: 'BUTTON',
+    role: 'button',
+    type: 'button',
+    'data-testid': 'tweetButton',
+    rect: { x: 1160, y: 885, width: 84, height: 36 }
+  });
+  const described = describeElements([targetReply], context);
+
+  const resolved = resolveVersionedHandle({
+    handle: described.items[0].handle,
+    elements: [
+      element({
+        tagName: 'BUTTON',
+        role: 'button',
+        type: 'button',
+        'data-testid': 'tweetButton',
+        rect: { x: 560, y: 430, width: 84, height: 36 }
+      }),
+      element({
+        tagName: 'BUTTON',
+        role: 'button',
+        type: 'button',
+        'data-testid': 'tweetButton',
+        rect: { x: 1145, y: 886, width: 84, height: 36 }
+      })
+    ],
+    context
+  });
+
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.index, 1);
+  assert.equal(resolved.recovered, true);
+  assert.equal(resolved.recovery.strategy, 'stable-identity-layout');
+});
+
 test('resolveVersionedHandle falls back to previous index when repeated controls remain aligned', () => {
   const context = env('https://example.com/thread');
   const buttons = Array.from({ length: 4 }, () => element({

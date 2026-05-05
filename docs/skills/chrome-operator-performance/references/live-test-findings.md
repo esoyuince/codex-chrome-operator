@@ -24,6 +24,8 @@ Observed failure: X reply buttons share weak fingerprints; stale recovery return
 Best practice:
 
 - Include stable layout fingerprint information in handle descriptors.
+- Include stable identity fields such as `data-testid`, `data-test-id`, role/type, href, product id, and bounded label text in handle descriptors.
+- When identity still repeats, use previous layout proximity (`bbox`/center) before falling back to stable index.
 - Track original fingerprint counts so repeated controls can recover by stable index only when the repeated set remains aligned.
 - Preserve ambiguity protection for single-to-many or drifted targets.
 - In debugger target recovery, do not treat `data-testid` alone as unique on feeds. Pair it with label, href, role, or position evidence.
@@ -35,6 +37,7 @@ Observed failure: callers supplied an explicit target, but preflight/debugger pa
 Best practice:
 
 - Keep `params.target` as the strongest caller intent.
+- Direct RPC can carry target summaries that the simple CLI cannot. If `page.click <origin> <handle>` keeps losing stale React targets, retry with `page.click` params that include handle plus target `tag`, `role`, `type`, `label`, `data.testid`, top-level `testid`, and `bbox`.
 - If content preflight fails only with `STALE_HANDLE` and a caller target exists, let debugger target recovery attempt the action.
 - When content preflight succeeds, pass `params.target || preflight.result.target` to the debugger, not only the preflight target.
 
@@ -58,11 +61,12 @@ Observed behavior: a content `page.batch` click on the modal `tweetButton` retur
 Best practice:
 
 - Use `https://x.com/intent/post?in_reply_to=<tweet-id>&text=<urlencoded-text>` to prepare replies when possible.
-- Wait for the URL card preview and enabled `Yanıtla` button before attempting submit.
+- Wait for the URL card preview and enabled `Yanıtla` button before attempting submit. Use full observe with a larger handle budget if the submit button is outside the tiny default handle window.
+- Prefer the intent-modal submit control (`data-testid`/`data.testid` usually `tweetButton`) over inline timeline controls (`tweetButtonInline`) and include the observed `bbox` in direct RPC target summaries.
 - If individual click returns stale/ambiguous and content batch reports `clicked` without closing the composer, do not count it as a successful submit.
 - After explicit user authorization, foreground Chrome and send an OS-level `Ctrl+Enter` key event to the open composer; then wait and re-observe.
 - Verify success from the new account-authored status link, for example `https://x.com/<account>/status/<id>`, not from a click result alone.
-- Check for leftover top-level composer drafts after a keyboard fallback so a duplicate standalone post is not left ready to publish.
+- Check for leftover top-level composer drafts after any fallback so a duplicate standalone post is not left ready to publish; a disabled/empty reply composer on the status page is fine, but an enabled top-level post composer with the same text is not.
 
 ## Public Action Safety
 

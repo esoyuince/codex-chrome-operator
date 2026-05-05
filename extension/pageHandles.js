@@ -25,6 +25,22 @@
       : attr(element, 'href');
   }
 
+  function normalizeText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function elementLabel(element) {
+    return normalizeText(
+      attr(element, 'aria-label') ||
+      attr(element, 'title') ||
+      element.innerText ||
+      element.value ||
+      attr(element, 'placeholder') ||
+      attr(element, 'name') ||
+      ''
+    ).slice(0, 200);
+  }
+
   function hashText(value) {
     let hash = 2166136261;
     for (let index = 0; index < value.length; index += 1) {
@@ -34,20 +50,50 @@
     return (hash >>> 0).toString(36);
   }
 
-  function layoutFingerprint(element) {
+  function layoutBox(element) {
     if (!element || typeof element.getBoundingClientRect !== 'function') {
-      return '';
+      return null;
     }
     const rect = element.getBoundingClientRect();
     if (!rect || (!rect.width && !rect.height)) {
+      return null;
+    }
+    const x = Math.round(rect.x || 0);
+    const y = Math.round(rect.y || 0);
+    const width = Math.round(rect.width || 0);
+    const height = Math.round(rect.height || 0);
+    if (width <= 0 || height <= 0) {
+      return null;
+    }
+    return { x, y, width, height };
+  }
+
+  function layoutFingerprint(element) {
+    const box = layoutBox(element);
+    if (!box) {
       return '';
     }
-    return [
-      Math.round(rect.x || 0),
-      Math.round(rect.y || 0),
-      Math.round(rect.width || 0),
-      Math.round(rect.height || 0)
-    ].join(',');
+    return [box.x, box.y, box.width, box.height].join(',');
+  }
+
+  function boxCenter(box) {
+    return {
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2
+    };
+  }
+
+  function elementNearLayout(element, previousBox) {
+    const currentBox = layoutBox(element);
+    if (!currentBox || !previousBox) {
+      return false;
+    }
+    const currentCenter = boxCenter(currentBox);
+    const previousCenter = boxCenter(previousBox);
+    const xTolerance = Math.max(16, Math.min(80, Math.max(currentBox.width, previousBox.width) * 0.75));
+    const yTolerance = Math.max(16, Math.min(80, Math.max(currentBox.height, previousBox.height) * 1.5));
+    return Math.abs(currentCenter.x - previousCenter.x) <= xTolerance &&
+      Math.abs(currentCenter.y - previousCenter.y) <= yTolerance;
   }
 
   function elementFingerprint(element) {
@@ -57,6 +103,8 @@
       attr(element, 'name'),
       attr(element, 'type'),
       attr(element, 'role'),
+      attr(element, 'data-testid'),
+      attr(element, 'data-test-id'),
       attr(element, 'data-risk'),
       attr(element, 'aria-label'),
       attr(element, 'placeholder'),
@@ -64,6 +112,25 @@
       normalizedHref(element),
       attr(element, 'data-product-id'),
       layoutFingerprint(element)
+    ].join('|');
+  }
+
+  function elementIdentityFingerprint(element) {
+    return [
+      element.tagName || '',
+      element.id || '',
+      attr(element, 'name'),
+      attr(element, 'type'),
+      attr(element, 'role'),
+      attr(element, 'data-testid'),
+      attr(element, 'data-test-id'),
+      attr(element, 'data-risk'),
+      attr(element, 'aria-label'),
+      attr(element, 'placeholder'),
+      attr(element, 'title'),
+      normalizedHref(element),
+      attr(element, 'data-product-id'),
+      elementLabel(element)
     ].join('|');
   }
 
@@ -93,10 +160,10 @@
     }
   }
 
-  function fingerprintCounts(elements) {
+  function fingerprintCounts(elements, fingerprintFn = elementFingerprint) {
     const counts = new Map();
     for (const element of elements) {
-      const fingerprint = elementFingerprint(element);
+      const fingerprint = fingerprintFn(element);
       counts.set(fingerprint, (counts.get(fingerprint) || 0) + 1);
     }
     return counts;
@@ -105,18 +172,24 @@
   function describeElements(elements, context) {
     const pageStateId = buildPageStateId(elements, context);
     const counts = fingerprintCounts(elements);
+    const identityCounts = fingerprintCounts(elements, elementIdentityFingerprint);
     return {
       pageStateId,
       items: elements.map((element, index) => {
         const handle = `el_${pageStateId}_${index}`;
         const fingerprint = elementFingerprint(element);
+        const identityFingerprint = elementIdentityFingerprint(element);
+        const previousLayout = layoutBox(element);
         rememberDescriptor({
           handle,
           index,
           pageStateId,
           url: contextUrl(context),
           fingerprint,
-          originalMatchCount: counts.get(fingerprint) || 1
+          identityFingerprint,
+          previousLayout,
+          originalMatchCount: counts.get(fingerprint) || 1,
+          originalIdentityMatchCount: identityCounts.get(identityFingerprint) || 1
         });
         return {
           element,
@@ -200,6 +273,61 @@
         currentPageStateId,
         matchCount: matches.length
       });
+    }
+
+    if (descriptor.identityFingerprint && descriptor.originalIdentityMatchCount === 1) {
+      const identityMatches = [];
+      for (let index = 0; index < elements.length; index += 1) {
+        if (elementIdentityFingerprint(elements[index]) === descriptor.identityFingerprint) {
+          identityMatches.push({ element: elements[index], index });
+        }
+      }
+
+      if (identityMatches.length === 1) {
+        return {
+          ok: true,
+          element: identityMatches[0].element,
+          pageStateId: currentPageStateId,
+          previousPageStateId: handlePageStateId,
+          index: identityMatches[0].index,
+          previousIndex: descriptor.index,
+          recovered: true,
+          recovery: {
+            strategy: 'stable-identity',
+            reason: 'PAGE_STATE_CHANGED'
+          }
+        };
+      }
+
+      if (identityMatches.length > 1 && descriptor.previousLayout) {
+        const layoutMatches = identityMatches.filter((match) => (
+          elementNearLayout(match.element, descriptor.previousLayout)
+        ));
+        if (layoutMatches.length === 1) {
+          return {
+            ok: true,
+            element: layoutMatches[0].element,
+            pageStateId: currentPageStateId,
+            previousPageStateId: handlePageStateId,
+            index: layoutMatches[0].index,
+            previousIndex: descriptor.index,
+            recovered: true,
+            recovery: {
+              strategy: 'stable-identity-layout',
+              reason: 'PAGE_STATE_CHANGED',
+              matchCount: identityMatches.length
+            }
+          };
+        }
+      }
+
+      if (identityMatches.length > 1) {
+        return staleHandle('RECOVERY_NOT_UNIQUE', {
+          handlePageStateId,
+          currentPageStateId,
+          matchCount: identityMatches.length
+        });
+      }
     }
 
     return null;

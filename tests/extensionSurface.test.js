@@ -224,6 +224,19 @@ test('extension ships offscreen warm-session heartbeat and active-tab warmup wir
   assert.match(background, /operator\.offscreenHeartbeat/);
 });
 
+test('background reads the real user-focused active tab before currentWindow fallback', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+
+  assert.match(background, /lastFocusedWindow:\s*true/);
+  assert.match(background, /currentWindow:\s*true/);
+  assert.ok(
+    background.indexOf('lastFocusedWindow: true') < background.indexOf('currentWindow: true'),
+    'lastFocusedWindow should be queried before currentWindow fallback'
+  );
+  assert.match(background, /chrome\.windows\.onFocusChanged\.addListener/);
+  assert.match(background, /window-focus-changed/);
+});
+
 test('background injects compact page reader and intent extractors before the content script', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 

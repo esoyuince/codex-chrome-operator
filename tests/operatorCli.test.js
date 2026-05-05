@@ -980,6 +980,23 @@ test('buildRpcRequest maps approval and page commands', () => {
     method: 'page.observe',
     params: { origin: 'https://example.com' }
   });
+  assert.deepEqual(buildRpcRequest([
+    'read-page',
+    'https://example.com',
+    'all',
+    '12000',
+    'true',
+    '4000'
+  ]), {
+    method: 'page.readPage',
+    params: {
+      origin: 'https://example.com',
+      filter: 'all',
+      maxChars: 12000,
+      includeFormValues: true,
+      maxFieldValueChars: 4000
+    }
+  });
   assert.deepEqual(buildRpcRequest(['visual-observe', 'https://example.com']), {
     method: 'page.visualObserve',
     params: { origin: 'https://example.com' }

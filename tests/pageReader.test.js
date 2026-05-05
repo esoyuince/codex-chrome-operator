@@ -98,6 +98,50 @@ test('generatePageSnapshot returns compact accessibility-like content with stabl
   assert.doesNotMatch(snapshot.result.pageContent, /ignored/);
 });
 
+test('generatePageSnapshot can include safe form values without leaking sensitive fields', () => {
+  const root = node('main', {}, [
+    node('textarea', {
+      id: 'full-description',
+      'aria-label': 'Full description',
+      value: 'CaptainCalc ist das Offline-Navigationswerkzeug fuer Kapitaene.'
+    }),
+    node('input', {
+      id: 'support-email',
+      type: 'email',
+      value: 'captain@example.com'
+    }),
+    node('input', {
+      id: 'api-token',
+      type: 'text',
+      value: 'secret-token-123'
+    }),
+    node('input', {
+      id: 'public-title',
+      type: 'text',
+      value: 'CaptainCalc'
+    })
+  ]);
+  const snapshot = generatePageSnapshot(env(root), {
+    filter: 'all',
+    depth: 4,
+    maxChars: 2000,
+    includeFormValues: true,
+    maxFieldValueChars: 18
+  });
+
+  assert.equal(snapshot.ok, true);
+  assert.match(snapshot.result.pageContent, /textbox "Full description" \[el_state1_1\] value="CaptainCalc ist da"/);
+  assert.match(snapshot.result.pageContent, /textbox "CaptainCalc" \[el_state1_4\] type="text" value="CaptainCalc"/);
+  assert.doesNotMatch(snapshot.result.pageContent, /captain@example\.com/);
+  assert.doesNotMatch(snapshot.result.pageContent, /secret-token-123/);
+  assert.equal(
+    snapshot.result.handles.find((handle) => handle.tag === 'textarea').value,
+    'CaptainCalc ist da'
+  );
+  assert.equal(snapshot.result.handles.some((handle) => handle.value === 'captain@example.com'), false);
+  assert.equal(snapshot.result.handles.some((handle) => handle.value === 'secret-token-123'), false);
+});
+
 test('generatePageSnapshot can focus an existing handle and enforces maxChars', () => {
   const root = node('main', {}, [
     node('section', { 'aria-label': 'Large panel' }, [

@@ -58,12 +58,62 @@
     return Number.isFinite(parsed) ? parsed : fallback;
   }
 
+  function booleanOption(value, fallback = false) {
+    return value === undefined ? fallback : value === true;
+  }
+
   function isSensitiveElement(element) {
     return Boolean(
       element &&
       typeof element.matches === 'function' &&
       element.matches('input[type="password"], [autocomplete="one-time-code"]')
     );
+  }
+
+  function sensitiveFormAttributeText(element) {
+    return [
+      attr(element, 'type'),
+      attr(element, 'autocomplete'),
+      attr(element, 'name'),
+      attr(element, 'id'),
+      attr(element, 'aria-label'),
+      attr(element, 'placeholder'),
+      attr(element, 'title')
+    ].join(' ').toLowerCase();
+  }
+
+  function isSensitiveFormValueElement(element) {
+    if (isSensitiveElement(element)) {
+      return true;
+    }
+    const tag = tagName(element);
+    const type = attr(element, 'type').toLowerCase();
+    if (tag === 'input' && ['hidden', 'password', 'email', 'tel'].includes(type)) {
+      return true;
+    }
+    return /\b(pass(word)?|token|secret|api[-_ ]?key|otp|one[-_ ]?time|2fa|mfa|email|e-mail|mail|phone|tel|mobile|credit|card|cc-|cvv|cvc)\b/.test(sensitiveFormAttributeText(element));
+  }
+
+  function formValueForElement(element, options = {}) {
+    if (!booleanOption(options.includeFormValues)) {
+      return null;
+    }
+    const tag = tagName(element);
+    if (!['input', 'textarea', 'select'].includes(tag)) {
+      return null;
+    }
+    if (isSensitiveFormValueElement(element)) {
+      return null;
+    }
+    const type = attr(element, 'type').toLowerCase();
+    if (tag === 'input' && ['button', 'submit', 'reset', 'file', 'image'].includes(type)) {
+      return null;
+    }
+    const rawValue = tag === 'select'
+      ? (element.value || attr(element, 'value'))
+      : element.value;
+    const maxChars = Math.max(0, numberOption(options.maxFieldValueChars, 4000));
+    return String(rawValue || '').slice(0, maxChars);
   }
 
   function directText(element) {
@@ -208,8 +258,9 @@
     }
 
     const tag = tagName(element);
+    const controlValue = isSensitiveFormValueElement(element) ? '' : element && element.value;
     const controlText = normalizeText(
-      element && element.value ||
+      controlValue ||
       attr(element, 'placeholder') ||
       attr(element, 'name')
     );
@@ -313,13 +364,14 @@
     return null;
   }
 
-  function attributeParts(element, role) {
+  function attributeParts(element, role, options = {}) {
     const parts = [];
     const tag = tagName(element);
     const type = attr(element, 'type');
     const placeholder = attr(element, 'placeholder');
     const href = attr(element, 'href');
     const ariaExpanded = attr(element, 'aria-expanded');
+    const formValue = formValueForElement(element, options);
 
     if (tag === 'input' && type && !isSensitiveElement(element)) {
       parts.push(`type="${escapeText(type)}"`);
@@ -339,13 +391,16 @@
     if (element.disabled) {
       parts.push('disabled');
     }
+    if (formValue !== null) {
+      parts.push(`value="${escapeText(formValue)}"`);
+    }
     return parts;
   }
 
-  function buildLine(entry, handle) {
+  function buildLine(entry, handle, options = {}) {
     const indent = '  '.repeat(entry.depth);
     const label = entry.label ? ` "${escapeText(entry.label)}"` : '';
-    const attrs = attributeParts(entry.element, entry.role);
+    const attrs = attributeParts(entry.element, entry.role, options);
     return `${indent}${entry.role}${label} [${handle}]${attrs.length ? ` ${attrs.join(' ')}` : ''}`;
   }
 
@@ -381,7 +436,7 @@
     const described = describeElements(effectiveContext, entries);
     const lines = entries.map((entry, index) => {
       const item = described.items[index] || {};
-      return buildLine(entry, item.handle || `el_snapshot_${index}`);
+      return buildLine(entry, item.handle || `el_snapshot_${index}`, snapshotOptions);
     });
     const pageContent = lines.join('\n');
     const maxChars = Math.max(0, numberOption(snapshotOptions.maxChars, DEFAULT_MAX_CHARS));
@@ -410,13 +465,18 @@
         pageContent,
         handles: entries.map((entry, index) => {
           const item = described.items[index] || {};
-          return {
+          const handle = {
             handle: item.handle || `el_snapshot_${index}`,
             role: entry.role,
             label: entry.label,
             tag: tagName(entry.element),
             depth: entry.depth
           };
+          const formValue = formValueForElement(entry.element, snapshotOptions);
+          if (formValue !== null) {
+            handle.value = formValue;
+          }
+          return handle;
         }),
         viewport: viewport(effectiveContext)
       }

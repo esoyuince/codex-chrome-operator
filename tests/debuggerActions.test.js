@@ -219,3 +219,121 @@ test('runtime target recovery narrows repeated test ids with label text', () => 
   assert.equal(result.result.recovered, true);
   assert.equal(result.result.x, 100);
 });
+
+test('runtime target recovery uses data-testid from content target summaries', () => {
+  function button(testid, top) {
+    return {
+      tagName: 'BUTTON',
+      id: '',
+      innerText: 'Yanıtla',
+      disabled: false,
+      scrollIntoView() {},
+      getAttribute(name) {
+        if (name === 'data-testid') return testid;
+        if (name === 'type') return 'button';
+        if (name === 'role') return 'button';
+        return '';
+      },
+      getBoundingClientRect() {
+        return { left: 100, top, right: 184, bottom: top + 36, width: 84, height: 36 };
+      }
+    };
+  }
+
+  const buttons = [
+    button('tweetButton', 900),
+    button('tweetButtonInline', 580)
+  ];
+  const expression = buildRuntimeActionExpression({
+    action: 'resolvePointerTarget',
+    handle: 'el_oldstate_0',
+    target: {
+      tag: 'button',
+      role: 'button',
+      type: 'button',
+      data: { testid: 'tweetButtonInline' },
+      label: 'Yanıtla'
+    }
+  });
+  const context = {
+    URL,
+    location: { href: 'https://x.com/intent/post' },
+    document: {
+      title: 'X',
+      querySelectorAll() {
+        return buttons;
+      }
+    },
+    window: {
+      innerWidth: 1400,
+      innerHeight: 1000,
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.recovered, true);
+  assert.equal(result.result.y, 598);
+});
+
+test('runtime target recovery narrows duplicate controls by target bbox', () => {
+  function button(top) {
+    return {
+      tagName: 'BUTTON',
+      id: '',
+      innerText: 'Yanıtla',
+      disabled: false,
+      scrollIntoView() {},
+      getAttribute(name) {
+        if (name === 'data-testid') return 'tweetButton';
+        if (name === 'type') return 'button';
+        if (name === 'role') return 'button';
+        return '';
+      },
+      getBoundingClientRect() {
+        return { left: 100, top, right: 184, bottom: top + 36, width: 84, height: 36 };
+      }
+    };
+  }
+
+  const buttons = [button(580), button(900)];
+  const expression = buildRuntimeActionExpression({
+    action: 'resolvePointerTarget',
+    handle: 'el_oldstate_0',
+    target: {
+      tag: 'button',
+      role: 'button',
+      type: 'button',
+      testid: 'tweetButton',
+      label: 'Yanıtla',
+      bbox: { x: 100, y: 900, width: 84, height: 36 }
+    }
+  });
+  const context = {
+    URL,
+    location: { href: 'https://x.com/intent/post' },
+    document: {
+      title: 'X',
+      querySelectorAll() {
+        return buttons;
+      }
+    },
+    window: {
+      innerWidth: 1400,
+      innerHeight: 1000,
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.recovered, true);
+  assert.equal(result.result.y, 918);
+});

@@ -154,6 +154,95 @@
       ).slice(0, 200);
     }
 
+    function nestedDataValue(target, ...keys) {
+      const data = target && target.data && typeof target.data === 'object' ? target.data : null;
+      if (!data) {
+        return '';
+      }
+      for (const key of keys) {
+        if (data[key] !== undefined && data[key] !== null && data[key] !== '') {
+          return data[key];
+        }
+      }
+      return '';
+    }
+
+    function targetValue(target, key) {
+      if (!target || typeof target !== 'object') {
+        return '';
+      }
+      if (target[key] !== undefined && target[key] !== null && target[key] !== '') {
+        return target[key];
+      }
+      if (key === 'testid') {
+        return nestedDataValue(target, 'testid', 'testId', 'testID', 'data-testid', 'data-test-id');
+      }
+      return '';
+    }
+
+    function hasTargetValue(value) {
+      return value !== undefined && value !== null && String(value) !== '';
+    }
+
+    function elementBox(element) {
+      if (!element || typeof element.getBoundingClientRect !== 'function') {
+        return null;
+      }
+      const rect = element.getBoundingClientRect();
+      if (!rect) {
+        return null;
+      }
+      const left = Number.isFinite(rect.x) ? rect.x : rect.left;
+      const top = Number.isFinite(rect.y) ? rect.y : rect.top;
+      const width = Number.isFinite(rect.width) ? rect.width : (rect.right - rect.left);
+      const height = Number.isFinite(rect.height) ? rect.height : (rect.bottom - rect.top);
+      if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+        return null;
+      }
+      return { x: left, y: top, width, height };
+    }
+
+    function targetBox(target) {
+      const source = target && typeof target === 'object'
+        ? (target.bbox || target.rect)
+        : null;
+      if (!source || typeof source !== 'object') {
+        return null;
+      }
+      const left = Number.isFinite(source.x) ? source.x : source.left;
+      const top = Number.isFinite(source.y) ? source.y : source.top;
+      const width = Number.isFinite(source.width) ? source.width : (source.right - source.left);
+      const height = Number.isFinite(source.height) ? source.height : (source.bottom - source.top);
+      if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+        return null;
+      }
+      return { x: left, y: top, width, height };
+    }
+
+    function boxCenter(box) {
+      return {
+        x: box.x + box.width / 2,
+        y: box.y + box.height / 2
+      };
+    }
+
+    function elementMatchesTargetBox(target, element) {
+      const expected = targetBox(target);
+      if (!expected) {
+        return false;
+      }
+      const current = elementBox(element);
+      if (!current) {
+        return false;
+      }
+      const expectedCenter = boxCenter(expected);
+      const currentCenter = boxCenter(current);
+      const xTolerance = Math.max(8, Math.min(48, Math.max(expected.width, current.width) * 0.5));
+      const yTolerance = Math.max(8, Math.min(48, Math.max(expected.height, current.height) * 0.75));
+      return Math.abs(expectedCenter.x - currentCenter.x) <= xTolerance &&
+        Math.abs(expectedCenter.y - currentCenter.y) <= yTolerance;
+    }
+
     function collectInteractiveElements() {
       return [...document.querySelectorAll(
         'a,button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]'
@@ -216,10 +305,11 @@
         ['testid', attr(element, 'data-testid')],
         ['productId', attr(element, 'data-product-id')],
         ['dataRisk', attr(element, 'data-risk')]
-      ].filter(([key]) => target[key]);
+      ].map(([key, value]) => [key, targetValue(target, key), value])
+        .filter(([, expected]) => hasTargetValue(expected));
 
-      for (const [key, value] of exactChecks) {
-        if (String(target[key]) !== String(value)) {
+      for (const [key, expected, value] of exactChecks) {
+        if (String(expected) !== String(value)) {
           return false;
         }
       }
@@ -244,21 +334,27 @@
           matches.push({ element: elements[index], index });
         }
       }
-      if (matches.length === 1) {
+      const targetHasBox = Boolean(targetBox(target));
+      const narrowedMatches = matches.length > 1 && targetHasBox
+        ? matches.filter((match) => elementMatchesTargetBox(target, match.element))
+        : matches;
+      const resolvedMatches = narrowedMatches.length > 0 ? narrowedMatches : matches;
+      const narrowedByBox = resolvedMatches !== matches;
+      if (resolvedMatches.length === 1) {
         return {
           ok: true,
-          element: matches[0].element,
-          index: matches[0].index,
+          element: resolvedMatches[0].element,
+          index: resolvedMatches[0].index,
           recovered: true,
           recovery: {
-            strategy: 'target-summary',
+            strategy: narrowedByBox ? 'target-summary-bbox' : 'target-summary',
             reason: 'PAGE_STATE_CHANGED'
           }
         };
       }
-      if (matches.length > 1) {
+      if (resolvedMatches.length > 1) {
         return staleHandle('RECOVERY_NOT_UNIQUE', {
-          matchCount: matches.length
+          matchCount: resolvedMatches.length
         });
       }
       return null;
