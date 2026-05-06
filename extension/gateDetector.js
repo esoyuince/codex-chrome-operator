@@ -64,7 +64,7 @@
     {
       type: 'AUTH_REQUIRED',
       label: 'authentication gate',
-      fieldPattern: /\b(email|username|login|signin|sign-in)\b/i,
+      fieldPattern: /\b(username|login|signin|sign-in)\b/i,
       textPattern: /\b(sign in|log in|login required|authentication required|continue to sign in)\b/i,
       recommendedUserAction: 'Sign in through the site in Chrome.'
     }

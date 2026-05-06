@@ -63,6 +63,24 @@ test('detectGatesFromSnapshot ignores auth phrases in normal feed content', () =
   assert.deepEqual(gates.map((gate) => gate.type), []);
 });
 
+test('detectGatesFromSnapshot does not treat a contact email field as an auth gate', () => {
+  const gates = detectGatesFromSnapshot({
+    visibleText: 'Content ratings Category Email address This will be used to contact you about your content ratings. Other app types Terms and conditions Next',
+    fields: [
+      {
+        tag: 'input',
+        type: 'email',
+        id: null,
+        name: null,
+        placeholder: null,
+        label: ''
+      }
+    ]
+  });
+
+  assert.deepEqual(gates.map((gate) => gate.type), []);
+});
+
 test('firstGateError returns wait-and-reobserve handoff details', () => {
   const [gate] = detectGatesFromSnapshot({
     visibleText: 'Suspicious activity detected. Verify you are human to continue.'
