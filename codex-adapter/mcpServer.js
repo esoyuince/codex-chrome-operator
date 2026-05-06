@@ -10,12 +10,13 @@ const {
   CodexChromeToolAdapter,
   listTools,
   toolDefinitionsHash,
-  validateToolInput
+  validateToolInput,
+  wrapToolResponse
 } = require('./toolAdapter');
 
 const DEFAULT_MCP_PROTOCOL_VERSION = '2025-06-18';
 const SERVER_NAME = 'codex-chrome-operator';
-const SERVER_VERSION = '0.2.10';
+const SERVER_VERSION = '0.2.11';
 
 function makeSessionId() {
   return `task_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -178,7 +179,7 @@ function createMcpMessageHandler({
         const validation = validateToolInput(toolName, input);
         const toolResponse = validation.ok
           ? await getAdapter().executeTool({ toolName, input })
-          : validation;
+          : wrapToolResponse(toolName, validation);
         const sessionSnapshot = taskSession.recordToolResult(toolName, toolResponse);
         return jsonRpcResult(id, normalizeToolResult(toolResponse, sessionSnapshot));
       }

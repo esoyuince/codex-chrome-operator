@@ -412,7 +412,8 @@ function buildRpcRequest(argv) {
         method: 'page.clear',
         params: {
           origin: args[0],
-          handle: args[1]
+          handle: args[1],
+          ...targetJsonParams(options)
         }
       };
     case 'focus':
@@ -475,6 +476,8 @@ function buildRpcRequest(argv) {
         params: {
           origin: args[0],
           handle: args[1],
+          postActionSnapshot: 'delta',
+          requireVerified: true,
           ...targetJsonParams(options)
         }
       };

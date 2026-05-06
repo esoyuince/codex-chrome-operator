@@ -1,7 +1,7 @@
 {
   "adapterProtocolVersion": "1.0",
   "toolSchemaVersion": "2026-05-01.m1",
-  "toolDefinitionsHash": "68ce9b78e34b5ee9e55f82f247efd910ca9eff90c4bd9f1e97b79c5781cdfece",
+  "toolDefinitionsHash": "e5b2a26f2b216959cfaa344994cadcc839c1056e4719a248969dadd743475c93",
   "toolCount": 34,
   "toolNames": [
     "codex_chrome_status",
@@ -867,6 +867,9 @@
             "type": "number",
             "minimum": 1
           },
+          "requireVerified": {
+            "type": "boolean"
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -959,6 +962,9 @@
             "type": "number",
             "minimum": 1
           },
+          "requireVerified": {
+            "type": "boolean"
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -1048,6 +1054,9 @@
             "type": "number",
             "minimum": 1
           },
+          "requireVerified": {
+            "type": "boolean"
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -1135,6 +1144,9 @@
           "summaryMaxChars": {
             "type": "number",
             "minimum": 1
+          },
+          "requireVerified": {
+            "type": "boolean"
           },
           "verify": {
             "type": "object",
@@ -1227,6 +1239,9 @@
             "type": "number",
             "minimum": 1
           },
+          "requireVerified": {
+            "type": "boolean"
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -1318,6 +1333,9 @@
           "summaryMaxChars": {
             "type": "number",
             "minimum": 1
+          },
+          "requireVerified": {
+            "type": "boolean"
           },
           "verify": {
             "type": "object",
@@ -1414,6 +1432,9 @@
             "type": "number",
             "minimum": 1
           },
+          "requireVerified": {
+            "type": "boolean"
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -1507,6 +1528,9 @@
             "type": "number",
             "minimum": 1
           },
+          "requireVerified": {
+            "type": "boolean"
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -1595,6 +1619,9 @@
           "summaryMaxChars": {
             "type": "number",
             "minimum": 1
+          },
+          "requireVerified": {
+            "type": "boolean"
           },
           "verify": {
             "type": "object",

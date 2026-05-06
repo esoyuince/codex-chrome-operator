@@ -153,6 +153,18 @@ function isSensitiveFormValueElement(element) {
   return /\b(pass(word)?|token|secret|api[-_ ]?key|otp|one[-_ ]?time|2fa|mfa|email|e-mail|mail|phone|tel|mobile|credit|card|cc-|cvv|cvc)\b/.test(sensitiveFormAttributeText(element));
 }
 
+function isSensitiveFormFillElement(element) {
+  if (isSensitiveElement(element)) {
+    return true;
+  }
+  const tag = element.tagName.toLowerCase();
+  const type = (element.getAttribute('type') || '').toLowerCase();
+  if (tag === 'input' && ['hidden', 'password'].includes(type)) {
+    return true;
+  }
+  return /\b(pass(word)?|token|secret|api[-_ ]?key|otp|one[-_ ]?time|2fa|mfa|credit|card|cc-|cvv|cvc)\b/.test(sensitiveFormAttributeText(element));
+}
+
 function formValueForElement(element, options = {}) {
   if (!booleanOption(options.includeFormValues)) {
     return null;
@@ -1130,30 +1142,36 @@ function formFillPlan(message = {}) {
       return { ok: false, error: resolved.error };
     }
     const summary = formFieldSummary(resolved.element, field.handle, { includeValues: false });
+    const sensitiveFill = isSensitiveFormFillElement(resolved.element);
     steps.push({
       action: 'fill',
       handle: field.handle,
       text: String(field.text || field.value || ''),
       fieldId: summary.fieldId,
       label: summary.label,
-      sensitive: summary.sensitive,
-      risk: summary.sensitive ? 'sensitive' : 'low'
+      sensitive: sensitiveFill,
+      risk: sensitiveFill ? 'sensitive' : 'low'
     });
   }
+  const requiresUserApproval = steps.some((step) => step.sensitive === true);
   return {
     ok: true,
     result: {
       steps,
       submit: null,
-      requiresUserApproval: false
+      requiresUserApproval
     }
   };
 }
 
 async function formFillExecute(message = {}) {
   const steps = Array.isArray(message.steps) ? message.steps : [];
+  const approvedSensitiveFill = message.approval &&
+    message.approval.allowSensitiveFormFill === true &&
+    message.approval.approvalKind === 'sensitive-form-fill';
   const executed = [];
-  for (const step of steps) {
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index];
     if (!step || step.action !== 'fill') {
       return {
         ok: false,
@@ -1168,6 +1186,19 @@ async function formFillExecute(message = {}) {
       return { ok: false, error: resolved.error };
     }
     const element = resolved.element;
+    const summary = formFieldSummary(element, step.handle, { includeValues: false });
+    if ((step.sensitive === true || isSensitiveFormFillElement(element)) && !approvedSensitiveFill) {
+      return {
+        ok: false,
+        error: {
+          code: 'SENSITIVE_FORM_FILL_BLOCKED',
+          message: 'Sensitive form fields require explicit user approval before filling.',
+          approvalKind: 'sensitive-form-fill',
+          actionIndex: index,
+          targetSummary: summary.label || summary.fieldId || step.handle || 'sensitive field'
+        }
+      };
+    }
     element.focus();
     element.value = step.text || step.value || '';
     element.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1654,6 +1685,26 @@ async function runBatch(message = {}) {
       stoppedOnError = true;
       break;
     }
+  }
+
+  const firstFailureIndex = results.findIndex((response) => !response || response.ok === false);
+  if (firstFailureIndex !== -1) {
+    const failed = results[firstFailureIndex] || {};
+    return {
+      ok: false,
+      error: {
+        ...(failed.error || {
+          code: 'BATCH_ACTION_FAILED',
+          message: 'A batch child action failed.'
+        }),
+        actionIndex: firstFailureIndex
+      },
+      result: {
+        origin: location.origin,
+        results,
+        stoppedOnError
+      }
+    };
   }
 
   return {

@@ -237,6 +237,13 @@ test('background reads the real user-focused active tab before currentWindow fal
   assert.match(background, /window-focus-changed/);
 });
 
+test('background fails closed when required click verification is inconclusive', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+
+  assert.match(background, /requireVerified/);
+  assert.match(background, /ACTION_RESULT_UNVERIFIED/);
+});
+
 test('background injects compact page reader and intent extractors before the content script', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 

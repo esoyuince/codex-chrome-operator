@@ -345,6 +345,38 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   assert.equal(
     validateToolInput('codex_chrome_batch', {
       origin: 'https://example.com',
+      actions: []
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_fill', {
+      origin: 'https://example.com',
+      handle: 'el_state_0',
+      text: 'Draft',
+      verify: {
+        oneOf: []
+      }
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_form_fill_plan', {
+      origin: 'https://example.com',
+      fields: []
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_form_fill_execute', {
+      origin: 'https://example.com',
+      steps: []
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_batch', {
+      origin: 'https://example.com',
       actions: [{
         action: 'observe',
         sincePageStateId: 'state_previous'
@@ -418,9 +450,20 @@ test('CodexChromeToolAdapter forwards explicit form value observe and read-page 
       maxFieldValueChars: 32
     }
   });
+  const visual = await adapter.executeTool({
+    toolName: 'codex_chrome_visual_observe',
+    input: {
+      origin: 'https://example.com/form',
+      mode: 'medium',
+      includeFormValues: true,
+      maxFieldValueChars: 16,
+      reason: 'verify visible form'
+    }
+  });
 
   assert.equal(observed.ok, true);
   assert.equal(read.ok, true);
+  assert.equal(visual.ok, true);
   assert.deepEqual(calls.map((call) => call.params), [{
     origin: 'https://example.com',
     mode: 'full',
@@ -431,6 +474,12 @@ test('CodexChromeToolAdapter forwards explicit form value observe and read-page 
     filter: 'all',
     includeFormValues: true,
     maxFieldValueChars: 32
+  }, {
+    origin: 'https://example.com',
+    mode: 'medium',
+    includeFormValues: true,
+    maxFieldValueChars: 16,
+    reason: 'verify visible form'
   }]);
 });
 

@@ -29,7 +29,7 @@ test('ensureExtensionKey writes a manifest key once and keeps id stable', () => 
   fs.writeFileSync(manifestPath, JSON.stringify({
     manifest_version: 3,
     name: 'Test Extension',
-    version: '0.2.10'
+    version: '0.2.11'
   }), 'utf8');
 
   const first = ensureExtensionKey({ manifestPath });
@@ -49,7 +49,7 @@ test('ensure-extension-key CLI can derive JSON without mutating the manifest', (
   fs.writeFileSync(manifestPath, JSON.stringify({
     manifest_version: 3,
     name: 'Test Extension',
-    version: '0.2.10'
+    version: '0.2.11'
   }), 'utf8');
   const seeded = ensureExtensionKey({ manifestPath });
   const seededKey = JSON.parse(fs.readFileSync(manifestPath, 'utf8')).key;
@@ -79,7 +79,7 @@ test('ensure-extension-key CLI --no-write fails instead of creating a missing ke
   fs.writeFileSync(manifestPath, JSON.stringify({
     manifest_version: 3,
     name: 'Test Extension',
-    version: '0.2.10'
+    version: '0.2.11'
   }), 'utf8');
 
   const result = childProcess.spawnSync(process.execPath, [

@@ -1098,7 +1098,9 @@ test('buildRpcRequest maps approval and page commands', () => {
     method: 'page.click',
     params: {
       origin: 'https://example.com',
-      handle: 'el_2'
+      handle: 'el_2',
+      postActionSnapshot: 'delta',
+      requireVerified: true
     }
   });
   const targetJsonPath = path.join(os.tmpdir(), `codex-target-${process.pid}-${Date.now()}.json`);
@@ -1128,7 +1130,9 @@ test('buildRpcRequest maps approval and page commands', () => {
       params: {
         origin: 'https://example.com',
         handle: 'el_2',
-        target: observedTarget
+        target: observedTarget,
+        postActionSnapshot: 'delta',
+        requireVerified: true
       }
     });
     assert.deepEqual(buildRpcRequest([

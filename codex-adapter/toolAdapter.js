@@ -69,6 +69,9 @@ function validateValue(name, value, schema) {
     if (!Array.isArray(value)) {
       return validationError(`${name} must be array.`, { field: name });
     }
+    if (schema.minItems !== undefined && value.length < schema.minItems) {
+      return validationError(`${name} must contain at least ${schema.minItems} item(s).`, { field: name });
+    }
     if (schema.items) {
       for (let index = 0; index < value.length; index += 1) {
         const nested = validateValue(`${name}[${index}]`, value[index], schema.items);
@@ -337,6 +340,7 @@ function postActionSnapshotOptions(input) {
     'mode',
     'maxActionableHandles',
     'summaryMaxChars',
+    'requireVerified',
     'verify'
   ]);
 }
@@ -348,6 +352,8 @@ function visualObserveOptions(input) {
     'summaryMaxChars',
     'sincePageStateId',
     'includeAx',
+    'includeFormValues',
+    'maxFieldValueChars',
     'maxBytes',
     'reason'
   ]);
@@ -689,5 +695,6 @@ module.exports = {
   listTools,
   redactRawVisualData,
   toolDefinitionsHash,
-  validateToolInput
+  validateToolInput,
+  wrapToolResponse
 };

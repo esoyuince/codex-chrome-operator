@@ -49,6 +49,7 @@ const ERROR_CODES = Object.freeze({
   APPROVAL_REQUIRED: 'APPROVAL_REQUIRED',
   MANUAL_STEP_REQUIRED: 'MANUAL_STEP_REQUIRED',
   HIGH_RISK_BLOCKED: 'HIGH_RISK_BLOCKED',
+  SENSITIVE_FORM_FILL_BLOCKED: 'SENSITIVE_FORM_FILL_BLOCKED',
   PASSWORD_REQUIRED: 'PASSWORD_REQUIRED',
   OTP_REQUIRED: 'OTP_REQUIRED',
   WEBAUTHN_REQUIRED: 'WEBAUTHN_REQUIRED',
@@ -196,7 +197,11 @@ function validateHello(hello, options = {}) {
     return fail(ERROR_CODES.INVALID_SCHEMA, 'profileBindingState must be not-required, bound, missing, or dev-unbound.');
   }
 
-  return ok({ profileBindingStatus: 'not-required' });
+  return ok({
+    profileBindingStatus: 'not-required',
+    profileVerificationMode: 'not-required',
+    profileIdentityVerified: false
+  });
 }
 
 function assertReadyForRealSiteAction(state) {

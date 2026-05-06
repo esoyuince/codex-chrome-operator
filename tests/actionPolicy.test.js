@@ -32,6 +32,13 @@ test('classifyActionRisk blocks common final-action labels', () => {
     action: 'click',
     target: { tag: 'button', label: 'Place order' }
   }).approvalKind, 'order-placement');
+
+  for (const label of ['Submit', 'Post', 'Tweet', 'Send', 'Gonder', 'Gönder', 'Yanitla', 'Yanıtla']) {
+    assert.equal(classifyActionRisk({
+      action: 'click',
+      target: { tag: 'button', label }
+    }).approvalKind, 'publish', `${label} should be guarded as a final publishing action`);
+  }
 });
 
 test('classifyActionRisk allows low-risk draft controls', () => {

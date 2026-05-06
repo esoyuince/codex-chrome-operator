@@ -45,6 +45,7 @@ const POST_ACTION_SNAPSHOT_PROPERTIES = {
   mode: OBSERVE_OPTION_PROPERTIES.mode,
   maxActionableHandles: OBSERVE_OPTION_PROPERTIES.maxActionableHandles,
   summaryMaxChars: OBSERVE_OPTION_PROPERTIES.summaryMaxChars,
+  requireVerified: { type: 'boolean' },
   verify: {
     type: 'object',
     additionalProperties: false,

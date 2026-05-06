@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
+const { collectTestVersionSources } = require('../scripts/check-version-discipline');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -43,4 +44,21 @@ test('version discipline check passes for synchronized release surfaces', () => 
   assert.equal(payload.ok, true);
   assert.match(payload.version, /^\d+\.\d+\.\d+$/);
   assert.deepEqual(payload.mismatches, []);
+});
+
+test('version discipline scans test semver strings beyond the 0.2 release line', () => {
+  const sources = collectTestVersionSources([{
+    name: 'future.test.js',
+    content: `assert.equal(version, '${['0', '3', '0'].join('.')}');`
+  }], { releaseMajorMinor: '0.3' });
+
+  assert.deepEqual(sources.map((source) => source.version), ['0.3.0']);
+});
+
+test('node CI runs release/install gates, not only unit tests', () => {
+  const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'node-checks.yml'), 'utf8');
+
+  assert.match(workflow, /runs-on:\s+windows-latest/);
+  assert.match(workflow, /npm run release:m1/);
+  assert.match(workflow, /npm run release:m6 -- --skip-clean-smoke/);
 });

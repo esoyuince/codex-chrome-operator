@@ -171,6 +171,18 @@ test('uninstall removes runtime artifacts while preserving audit and screenshot 
   assert.equal(fs.existsSync(path.join(installDir, 'screenshots')), true);
 });
 
+test('uninstall RemoveLogs refuses broad custom directories without operator sentinels', () => {
+  const unsafeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-unrelated-'));
+  const keepFile = path.join(unsafeDir, 'keep.txt');
+  fs.writeFileSync(keepFile, 'do-not-delete', 'utf8');
+
+  const uninstall = runUninstall(unsafeDir, ['-RemoveLogs']);
+
+  assert.notEqual(uninstall.status, 0);
+  assert.match(uninstall.stderr, /Refusing to recursively remove/i);
+  assert.equal(fs.existsSync(keepFile), true);
+});
+
 test('doctor fails when token ACL allows Everyone', () => {
   const installDir = tempInstallDir();
   const install = runInstall(installDir);

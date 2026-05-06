@@ -112,6 +112,7 @@ function blockedPatternMatchesOrigin(pattern, origin) {
 class OperatorStateStore {
   constructor({ statePath = defaultStatePath() } = {}) {
     this.statePath = statePath;
+    this.loadError = null;
     this.state = this.load();
   }
 
@@ -119,7 +120,26 @@ class OperatorStateStore {
     if (!fs.existsSync(this.statePath)) {
       return emptyState();
     }
-    const parsed = JSON.parse(fs.readFileSync(this.statePath, 'utf8'));
+    let parsed;
+    try {
+      parsed = JSON.parse(fs.readFileSync(this.statePath, 'utf8'));
+    } catch (error) {
+      this.loadError = {
+        code: 'STATE_FILE_CORRUPT',
+        message: `Operator state file could not be parsed and was reset: ${error.message}`,
+        statePath: this.statePath,
+        repairedAt: new Date().toISOString()
+      };
+      const corruptPath = `${this.statePath}.corrupt`;
+      try {
+        if (!fs.existsSync(corruptPath)) {
+          fs.renameSync(this.statePath, corruptPath);
+        }
+      } catch {
+        // Startup must recover even if the corrupt file cannot be moved.
+      }
+      return emptyState();
+    }
     return {
       ...emptyState(),
       ...parsed,

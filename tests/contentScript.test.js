@@ -269,7 +269,7 @@ function loadContentScript(rootElement) {
     chrome: {
       runtime: {
         getManifest() {
-          return { version: '0.2.10' };
+          return { version: '0.2.11' };
         },
         onMessage: {
           addListener(callback) {
@@ -375,7 +375,7 @@ test('content script tolerates duplicate injection without duplicate listener re
   const observed = await content.send({ type: 'content.observe' });
 
   assert.equal(observed.origin, 'https://example.com');
-  assert.equal(observed.contentScriptVersion, '0.2.10');
+  assert.equal(observed.contentScriptVersion, '0.2.11');
   assert.equal(observed.elements.length, 1);
 });
 
@@ -733,7 +733,7 @@ test('content actions can attach post-action delta snapshots when requested', as
 
 test('content click reports inconclusive when post-action snapshot is unchanged', async () => {
   const button = element('button', {
-    text: 'Submit'
+    text: 'Preview'
   });
   const root = element('main', { text: 'Static form' }, [button]);
   const content = loadContentScript(root);
@@ -823,6 +823,32 @@ test('content batch observe and actions carry delta snapshot options', async () 
   assert.equal(batch.result.results[0].result.delta.unchanged, true);
   assert.equal(batch.result.results[1].result.postActionSnapshot.delta.unchanged, true);
   assert.equal(input.value, 'deck@example.com');
+});
+
+test('content batch propagates child action failures to the outer response', async () => {
+  const publish = element('button', {
+    text: 'Publish',
+    'data-risk': 'publish'
+  });
+  const root = element('main', { text: 'Release controls' }, [publish]);
+  const content = loadContentScript(root);
+  const observed = await content.send({ type: 'content.observe' });
+  const handle = observed.elements.find((entry) => entry.tag === 'button').handle;
+
+  const batch = await content.send({
+    type: 'content.batch',
+    actions: [{
+      action: 'click',
+      handle
+    }]
+  });
+
+  assert.equal(batch.ok, false);
+  assert.equal(batch.error.code, 'HIGH_RISK_BLOCKED');
+  assert.equal(batch.error.actionIndex, 0);
+  assert.equal(batch.result.results.length, 1);
+  assert.equal(batch.result.results[0].ok, false);
+  assert.equal(batch.result.stoppedOnError, true);
 });
 
 test('content extract returns bounded shopping product candidates without generic DOM dump', async () => {
@@ -1021,4 +1047,47 @@ test('content form extract plan and execute returns validation state without lea
   assert.equal(executed.ok, true);
   assert.equal(email.value, 'captain@example.com');
   assert.equal(executed.result.invalidFields.length, 0);
+});
+
+test('content form fill requires explicit approval for sensitive fields', async () => {
+  const password = element('input', {
+    id: 'password',
+    name: 'password',
+    type: 'password',
+    'aria-label': 'Password'
+  });
+  const root = element('main', {}, [element('form', { id: 'login' }, [password])]);
+  const content = loadContentScript(root);
+  const extracted = await content.send({
+    type: 'content.formExtract',
+    includeValues: false
+  });
+  const handle = extracted.result.forms[0].fields[0].handle;
+
+  const plan = await content.send({
+    type: 'content.formFillPlan',
+    fields: [{ handle, text: 'new-secret' }]
+  });
+  assert.equal(plan.ok, true);
+  assert.equal(plan.result.requiresUserApproval, true);
+  assert.equal(plan.result.steps[0].sensitive, true);
+
+  const blocked = await content.send({
+    type: 'content.formFillExecute',
+    steps: plan.result.steps
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error.code, 'SENSITIVE_FORM_FILL_BLOCKED');
+  assert.equal(password.value, '');
+
+  const approved = await content.send({
+    type: 'content.formFillExecute',
+    steps: plan.result.steps,
+    approval: {
+      allowSensitiveFormFill: true,
+      approvalKind: 'sensitive-form-fill'
+    }
+  });
+  assert.equal(approved.ok, true);
+  assert.equal(password.value, 'new-secret');
 });

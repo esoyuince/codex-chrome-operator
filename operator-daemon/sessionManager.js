@@ -423,8 +423,8 @@ class SessionManager {
     this.config = {
       expectedExtensionId: config.expectedExtensionId || 'development-extension-id',
       expectedProtocolVersion: config.expectedProtocolVersion || '1.0',
-      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.10',
-      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.10',
+      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.11',
+      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.11',
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       visualAnalyzerRegistry: config.visualAnalyzerRegistry || createVisualAnalyzerRegistry(),
@@ -441,6 +441,8 @@ class SessionManager {
     this.siteProfiles = this.config.siteProfiles;
     this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
     this.profileVerified = false;
+    this.profileIdentityVerified = false;
+    this.profileVerificationMode = 'not-required';
     this.profileBindingStatus = 'not-required';
     this.bridgeInstanceId = null;
     this.connectionId = null;
@@ -478,6 +480,9 @@ class SessionManager {
       lastDisconnect: this.lastDisconnect,
       reconnectCount: this.reconnectCount,
       profileVerified: this.profileVerified,
+      profileReady: this.profileVerified,
+      profileIdentityVerified: this.profileIdentityVerified,
+      profileVerificationMode: this.profileVerificationMode,
       profileConfidence,
       profileBindingStatus: this.profileBindingStatus,
       approvedOrigins: this.activeDomainApprovalOrigins(),
@@ -513,6 +518,9 @@ class SessionManager {
       lastDisconnect: fullStatus.lastDisconnect,
       reconnectCount: fullStatus.reconnectCount,
       profileVerified: fullStatus.profileVerified,
+      profileReady: fullStatus.profileReady,
+      profileIdentityVerified: fullStatus.profileIdentityVerified,
+      profileVerificationMode: fullStatus.profileVerificationMode,
       profileConfidence: fullStatus.profileConfidence,
       profileBindingStatus: fullStatus.profileBindingStatus,
       activeTab: fullStatus.activeTab ? { ...fullStatus.activeTab } : null,
@@ -917,6 +925,7 @@ class SessionManager {
     if (!result.ok) {
       this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
       this.profileVerified = false;
+      this.profileIdentityVerified = false;
       this.profileBindingStatus = 'rejected';
       this.lastVersionMismatch = [
         ERROR_CODES.PROTOCOL_VERSION_MISMATCH,
@@ -930,6 +939,8 @@ class SessionManager {
 
     this.lastVersionMismatch = null;
     this.profileBindingStatus = result.profileBindingStatus;
+    this.profileVerificationMode = result.profileVerificationMode || 'not-required';
+    this.profileIdentityVerified = result.profileIdentityVerified === true;
     this.profileVerified = true;
     this.bridgeInstanceId = bridgeInstanceId;
     const previousState = this.connectionState;
@@ -944,6 +955,9 @@ class SessionManager {
       connectionState: this.connectionState,
       connectionId: this.connectionId,
       bridgeInstanceId: this.bridgeInstanceId,
+      profileReady: this.profileVerified,
+      profileIdentityVerified: this.profileIdentityVerified,
+      profileVerificationMode: this.profileVerificationMode,
       profileBindingStatus: this.profileBindingStatus
     });
   }
@@ -1000,6 +1014,11 @@ class SessionManager {
         code: ERROR_CODES.INVALID_SCHEMA,
         message: 'Warm session origin must match the active tab origin.'
       });
+    }
+    const readiness = assertReadyForRealSiteAction(this.readinessStateForOrigin(origin));
+    if (!readiness.ok) {
+      this.clearWarmSessionCache('warmup-domain-not-approved');
+      return rpcError(id, readiness.error);
     }
 
     const updatedAtMs = Date.now();
@@ -1285,7 +1304,12 @@ class SessionManager {
   }
 
   handleDisconnected(id, params = {}) {
-    if (params.source !== 'operator-cli') {
+    const bridgeInstanceId = typeof params.bridgeInstanceId === 'string' && params.bridgeInstanceId.trim()
+      ? params.bridgeInstanceId.trim()
+      : null;
+    const bridgeOwnedDisconnectWithoutId = !bridgeInstanceId &&
+      ['native-port', 'native-bridge', 'extension'].includes(params.source);
+    if (params.source !== 'operator-cli' && !bridgeOwnedDisconnectWithoutId) {
       const bridgeCheck = this.checkBridgeInstance(params);
       if (!bridgeCheck.ok) {
         return rpcOk(id, {
@@ -1299,6 +1323,7 @@ class SessionManager {
     const previousConnectionId = this.connectionId;
     this.connectionState = 'RECONNECTING';
     this.profileVerified = false;
+    this.profileIdentityVerified = false;
     this.bridgeInstanceId = null;
     this.connectionId = null;
     this.lastDisconnect = {
@@ -1472,8 +1497,8 @@ class SessionManager {
     }
     if (this.profileVerified) {
       score = 0.94;
-      status = 'verified';
-      evidence.push('profile-verified-by-extension');
+      status = 'ready';
+      evidence.push('extension-profile-ready');
     }
     if (this.connectionState === 'EXTENSION_CONNECTED') {
       evidence.push('extension-connected');
@@ -1511,6 +1536,8 @@ class SessionManager {
     });
 
     this.profileBindingStatus = 'not-required';
+    this.profileVerificationMode = 'not-required';
+    this.profileIdentityVerified = false;
     this.hostPermissions = new Set(this.activeHostPermissionOrigins());
 
     return rpcOk(id, configuredProfile);
@@ -1527,6 +1554,9 @@ class SessionManager {
     return rpcOk(id, {
       configuredProfile,
       profileVerified: this.profileVerified,
+      profileReady: this.profileVerified,
+      profileIdentityVerified: this.profileIdentityVerified,
+      profileVerificationMode: this.profileVerificationMode,
       profileBindingStatus: this.profileBindingStatus,
       connectionState: this.connectionState
     });
@@ -2213,6 +2243,23 @@ class SessionManager {
       if (!extensionResponse.ok) {
         return rpcError(id, this.attachApprovalRequest(method, batch.commandParams, extensionResponse.error));
       }
+      const childFailureIndex = Array.isArray(extensionResponse.result && extensionResponse.result.results)
+        ? extensionResponse.result.results.findIndex((entry) => !entry || entry.ok === false)
+        : -1;
+      if (childFailureIndex !== -1) {
+        const childFailure = extensionResponse.result.results[childFailureIndex] || {};
+        const childError = {
+          ...(childFailure.error || {
+            code: ERROR_CODES.INVALID_SCHEMA,
+            message: 'Batch child action failed without a structured error.'
+          }),
+          childActionIndex: childFailureIndex,
+          childAction: batch.childActions[childFailureIndex]
+            ? batch.childActions[childFailureIndex].action
+            : null
+        };
+        return rpcError(id, this.attachApprovalRequest(method, batch.commandParams, childError));
+      }
       if (shouldInvalidateWarmSession(method, batch.childActions)) {
         this.clearWarmSessionCache(method);
       }
@@ -2444,7 +2491,8 @@ class SessionManager {
   attachApprovalRequest(method, params, error) {
     if (!error || ![
       ERROR_CODES.HIGH_RISK_BLOCKED,
-      ERROR_CODES.APPROVAL_REQUIRED
+      ERROR_CODES.APPROVAL_REQUIRED,
+      ERROR_CODES.SENSITIVE_FORM_FILL_BLOCKED
     ].includes(error.code)) {
       return error;
     }
@@ -2571,13 +2619,18 @@ class SessionManager {
     }
 
     record.status = 'running';
+    const approval = {
+      approvalId: record.approvalId,
+      approvalKind: record.approvalKind
+    };
+    if (record.approvalKind === 'sensitive-form-fill') {
+      approval.allowSensitiveFormFill = true;
+    } else {
+      approval.allowHighRisk = true;
+    }
     const extensionResponse = await this.enqueueExtensionCommand(record.method, {
       ...record.params,
-      approval: {
-        approvalId: record.approvalId,
-        allowHighRisk: true,
-        approvalKind: record.approvalKind
-      }
+      approval
     });
     if (!extensionResponse.ok) {
       record.status = 'failed';

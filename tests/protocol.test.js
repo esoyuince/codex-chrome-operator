@@ -13,8 +13,8 @@ function boundHello(overrides = {}) {
     type: 'HELLO',
     protocolVersion: '1.0',
     extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    extensionVersion: '0.2.10',
-    bridgeVersion: '0.2.10',
+    extensionVersion: '0.2.11',
+    bridgeVersion: '0.2.11',
     sessionBootstrapId: 'boot_abc',
     profileBindingState: 'bound',
     profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -39,6 +39,8 @@ test('validateHello accepts extension HELLO without profile binding', () => {
 
   assert.equal(result.ok, true);
   assert.equal(result.profileBindingStatus, 'not-required');
+  assert.equal(result.profileIdentityVerified, false);
+  assert.equal(result.profileVerificationMode, 'not-required');
 });
 
 test('validateHello treats missing legacy profile binding as not required', () => {
@@ -88,8 +90,8 @@ test('validateHello rejects protocol extension and bridge version mismatch', () 
   const commonOptions = {
     expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
     expectedProtocolVersion: '1.0',
-    expectedExtensionVersion: '0.2.10',
-    expectedBridgeVersion: '0.2.10',
+    expectedExtensionVersion: '0.2.11',
+    expectedBridgeVersion: '0.2.11',
     expectedProfileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
     expectedProfileBindingVersion: 3,
     allowUnboundSetup: false,
@@ -103,12 +105,12 @@ test('validateHello rejects protocol extension and bridge version mismatch', () 
 
   const extensionMismatch = validateHello(boundHello({ extensionVersion: '0.3.0' }), commonOptions);
   assert.equal(extensionMismatch.error.code, ERROR_CODES.EXTENSION_VERSION_MISMATCH);
-  assert.equal(extensionMismatch.error.expectedExtensionVersion, '0.2.10');
+  assert.equal(extensionMismatch.error.expectedExtensionVersion, '0.2.11');
   assert.equal(extensionMismatch.error.actualExtensionVersion, '0.3.0');
 
   const bridgeMismatch = validateHello(boundHello({ bridgeVersion: '0.3.0' }), commonOptions);
   assert.equal(bridgeMismatch.error.code, ERROR_CODES.BRIDGE_VERSION_MISMATCH);
-  assert.equal(bridgeMismatch.error.expectedBridgeVersion, '0.2.10');
+  assert.equal(bridgeMismatch.error.expectedBridgeVersion, '0.2.11');
   assert.equal(bridgeMismatch.error.actualBridgeVersion, '0.3.0');
 });
 

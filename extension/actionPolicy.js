@@ -2,7 +2,7 @@
   'use strict';
 
   const HIGH_RISK_RULES = [
-    { kind: 'publish', pattern: /\b(publish|send\s+for\s+review|release|rollout)\b/i },
+    { kind: 'publish', pattern: /\b(publish|submit|post|tweet|send|reply|yan[iı]tla|g[oö]nder|send\s+for\s+review|release|rollout)\b/i },
     { kind: 'payment', pattern: /\b(pay|payment|billing|subscribe|purchase)\b/i },
     { kind: 'checkout', pattern: /\b(checkout)\b/i },
     { kind: 'order-placement', pattern: /\b(place\s+order|order\s+now|submit\s+order)\b/i },

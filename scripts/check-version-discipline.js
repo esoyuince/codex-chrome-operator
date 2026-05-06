@@ -22,20 +22,33 @@ function extract(file, label, pattern) {
   };
 }
 
-function collectTestVersionSources() {
-  const testDir = path.join(ROOT, 'tests');
-  return fs.readdirSync(testDir)
+function semverStrings(content, { releaseMajorMinor } = {}) {
+  const majorMinor = releaseMajorMinor || '0.0';
+  const escaped = majorMinor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`(?<![\\d.])${escaped}\\.\\d+\\b`, 'g');
+  return [...new Set((String(content || '').match(pattern) || []))];
+}
+
+function collectTestVersionSources(testFiles, options = {}) {
+  const releaseMajorMinor = options.releaseMajorMinor ||
+    ((readJson('package.json').version || '0.0.0').match(/^(\d+\.\d+)\./) || [null, '0.0'])[1];
+  const entries = testFiles || fs.readdirSync(path.join(ROOT, 'tests'))
     .filter((name) => name.endsWith('.test.js'))
-    .flatMap((name) => {
-      const file = path.join('tests', name);
-      const content = read(file);
-      const versions = [...new Set((content.match(/\b0\.2\.\d+\b/g) || []))];
-      return versions.map((version) => ({
-        label: `test:${name}`,
-        file,
-        version
-      }));
-    });
+    .map((name) => ({
+      name,
+      content: read(path.join('tests', name))
+    }));
+
+  return entries.flatMap((entry) => {
+    const name = entry.name;
+    const file = entry.file || path.join('tests', name);
+    const versions = semverStrings(entry.content, { releaseMajorMinor });
+    return versions.map((version) => ({
+      label: `test:${name}`,
+      file,
+      version
+    }));
+  });
 }
 
 function collectVersionSources() {
@@ -82,5 +95,6 @@ if (require.main === module) {
 
 module.exports = {
   checkVersionDiscipline,
+  collectTestVersionSources,
   collectVersionSources
 };

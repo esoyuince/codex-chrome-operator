@@ -8,7 +8,7 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,3 +23,9 @@ jobs:
 
       - name: Unit Tests
         run: npm test
+
+      - name: M1 Release Gates
+        run: npm run release:m1
+
+      - name: M6 Sandbox Install Gates
+        run: npm run release:m6 -- --skip-clean-smoke

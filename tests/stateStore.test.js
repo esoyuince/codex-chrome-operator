@@ -91,6 +91,19 @@ test('OperatorStateStore strips legacy binding metadata when loading state', () 
   });
 });
 
+test('OperatorStateStore recovers from corrupt state with a repair warning', () => {
+  const statePath = tempStatePath();
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  fs.writeFileSync(statePath, '{not valid json', 'utf8');
+
+  const store = new OperatorStateStore({ statePath });
+
+  assert.deepEqual(store.listDomainApprovals(), {});
+  assert.equal(store.getConfiguredProfile(), null);
+  assert.equal(store.loadError.code, 'STATE_FILE_CORRUPT');
+  assert.ok(fs.existsSync(`${statePath}.corrupt`));
+});
+
 test('OperatorStateStore syncs host permissions as one profile-independent set', () => {
   const statePath = tempStatePath();
   const store = new OperatorStateStore({ statePath });

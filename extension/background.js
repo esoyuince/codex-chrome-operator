@@ -1,6 +1,6 @@
 'use strict';
 
-importScripts('permissionOrigins.js', 'visualCapture.js', 'accessibilitySnapshot.js', 'uiGraph.js', 'fileUpload.js', 'cartWorkflow.js', 'debuggerActions.js', 'pageReader.js');
+importScripts('permissionOrigins.js', 'actionPolicy.js', 'visualCapture.js', 'accessibilitySnapshot.js', 'uiGraph.js', 'fileUpload.js', 'cartWorkflow.js', 'debuggerActions.js', 'pageReader.js');
 
 const NATIVE_HOST = 'com.codex.chrome_operator';
 const BLOCKED_ORIGINS_KEY = 'blockedOrigins';
@@ -60,7 +60,7 @@ async function buildHello() {
     protocolVersion: '1.0',
     extensionId: chrome.runtime.id,
     extensionVersion: chrome.runtime.getManifest().version,
-  bridgeVersion: '0.2.10',
+  bridgeVersion: '0.2.11',
     sessionBootstrapId: requestId('boot'),
     ...getProfileBinding(),
     capabilities: [
@@ -758,6 +758,22 @@ async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
       mode: params.mode || 'tiny',
       ...observeOptions(params)
     });
+    const verification = verifyBackgroundAction(actionResponse, snapshot, params);
+    if (params.requireVerified === true && verification.status !== 'succeeded') {
+      return {
+        ok: false,
+        error: {
+          code: 'ACTION_RESULT_UNVERIFIED',
+          message: 'Action dispatch was not treated as success because the required post-action verification did not pass.',
+          verification
+        },
+        result: {
+          ...(actionResponse.result || {}),
+          verification,
+          postActionSnapshot: snapshot
+        }
+      };
+    }
     return {
       ...actionResponse,
       result: {
@@ -767,7 +783,7 @@ async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
           method: dispatchMethodForActionResult(actionResponse.result || {}),
           provider: actionResponse.result && actionResponse.result.provider ? actionResponse.result.provider : null
         },
-        verification: verifyBackgroundAction(actionResponse, snapshot, params),
+        verification,
         postActionSnapshot: snapshot
       }
     };
@@ -783,6 +799,11 @@ async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
       }
     };
   }
+}
+
+async function approvedForWarmSession(origin) {
+  const readiness = await requestNativeRpc('operator.verifyReadiness', { origin }, { timeoutMs: 2000 });
+  return Boolean(readiness && readiness.ok === true && readiness.result && readiness.result.ready === true);
 }
 
 async function postWarmSessionFailure(tab, reason, error) {
@@ -826,6 +847,13 @@ async function warmActiveSession({ reason = 'manual' } = {}) {
       await postWarmSessionFailure(tab, 'blocked-origin', {
         code: 'SITE_BLOCKED_BY_USER_SETTINGS',
         message: 'Origin is blocked by user extension settings.'
+      });
+      return null;
+    }
+    if (!await approvedForWarmSession(origin)) {
+      await postWarmSessionFailure(tab, 'domain-not-approved', {
+        code: 'DOMAIN_NOT_APPROVED',
+        message: 'Domain approval is required before active-tab warmup reads page content.'
       });
       return null;
     }
@@ -923,7 +951,18 @@ async function preflightDebuggerAction(ready, action, params) {
       preflight.error &&
       preflight.error.code === 'STALE_HANDLE'
     ) {
-      return { ok: true, result: { target: params.target, risk: null } };
+      const risk = globalThis.CodexActionPolicy.classifyActionRisk({
+        action,
+        target: params.target
+      });
+      const approvedHighRisk = risk &&
+        params.approval &&
+        params.approval.allowHighRisk === true &&
+        params.approval.approvalKind === risk.approvalKind;
+      if (risk && !approvedHighRisk) {
+        return { ok: false, error: risk };
+      }
+      return { ok: true, result: { target: params.target, risk } };
     }
     return preflight || {
       ok: false,
@@ -1037,7 +1076,8 @@ async function handleOperatorCommand(command) {
     if (command.method === 'page.formFillExecute') {
       return chrome.tabs.sendMessage(ready.tab.id, {
         type: 'content.formFillExecute',
-        steps: params.steps
+        steps: params.steps,
+        approval: params.approval
       });
     }
 

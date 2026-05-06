@@ -276,7 +276,7 @@ test('extension wires upload and cart helpers into background and content script
   const contentScript = fs.readFileSync(path.join(__dirname, '..', 'extension', 'contentScript.js'), 'utf8');
 
   assertIncludesAll(background, [
-    "importScripts('permissionOrigins.js', 'visualCapture.js', 'accessibilitySnapshot.js', 'uiGraph.js', 'fileUpload.js', 'cartWorkflow.js', 'debuggerActions.js', 'pageReader.js')",
+    "importScripts('permissionOrigins.js', 'actionPolicy.js', 'visualCapture.js', 'accessibilitySnapshot.js', 'uiGraph.js', 'fileUpload.js', 'cartWorkflow.js', 'debuggerActions.js', 'pageReader.js')",
     "'fileUpload.v1'",
     "'cartPreparation.v1'",
     "'actions.cdp.v1'",

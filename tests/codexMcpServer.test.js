@@ -458,6 +458,12 @@ test('MCP handler returns deterministic JSON-RPC errors for malformed calls', as
   const payload = JSON.parse(response.result.content[0].text);
   assert.equal(payload.ok, false);
   assert.equal(payload.error.code, 'UNKNOWN_TOOL');
+  assert.equal(payload.toolName, 'missing_tool');
+  assert.equal(payload.protocolVersion, '1.0');
+  assert.equal(payload.untrusted, true);
+  assert.match(payload.toolDefinitionsHash, /^[a-f0-9]{64}$/);
+  assert.equal(typeof payload.telemetry.responseChars, 'number');
+  assert.equal(response.result.structuredContent.toolName, 'missing_tool');
 });
 
 test('normalizeToolResult preserves structured response and marks errors', () => {
