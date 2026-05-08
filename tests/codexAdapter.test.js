@@ -33,6 +33,23 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   const nameSession = tools.find((tool) => tool.name === 'codex_chrome_name_session');
   const finalizeTabs = tools.find((tool) => tool.name === 'codex_chrome_finalize_tabs');
   const tabScreenshot = tools.find((tool) => tool.name === 'codex_chrome_tab_screenshot');
+  const tabGoto = tools.find((tool) => tool.name === 'codex_chrome_tab_goto');
+  const tabObserve = tools.find((tool) => tool.name === 'codex_chrome_tab_observe');
+  const tabReadPage = tools.find((tool) => tool.name === 'codex_chrome_tab_read_page');
+  const tabLocator = tools.find((tool) => tool.name === 'codex_chrome_tab_locator');
+  const recentTabs = tools.find((tool) => tool.name === 'codex_chrome_recent_tabs');
+  const historySearch = tools.find((tool) => tool.name === 'codex_chrome_history_search');
+  const bookmarkSearch = tools.find((tool) => tool.name === 'codex_chrome_bookmark_search');
+  const reopenClosedTab = tools.find((tool) => tool.name === 'codex_chrome_reopen_closed_tab');
+  const downloadWait = tools.find((tool) => tool.name === 'codex_chrome_download_wait');
+  const downloadShow = tools.find((tool) => tool.name === 'codex_chrome_download_show');
+  const tabFocus = tools.find((tool) => tool.name === 'codex_chrome_tab_focus');
+  const tabPin = tools.find((tool) => tool.name === 'codex_chrome_tab_pin');
+  const tabMove = tools.find((tool) => tool.name === 'codex_chrome_tab_move');
+  const tabGroupRename = tools.find((tool) => tool.name === 'codex_chrome_tab_group_rename');
+  const policyStatus = tools.find((tool) => tool.name === 'codex_chrome_policy_status');
+  const policyUpdate = tools.find((tool) => tool.name === 'codex_chrome_policy_update');
+  const tabShowTarget = tools.find((tool) => tool.name === 'codex_chrome_tab_show_target');
 
   assert.equal(ADAPTER_PROTOCOL_VERSION, '1.0');
   assert.ok(status);
@@ -139,6 +156,42 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.deepEqual(tabScreenshot.inputSchema.properties.format.enum, ['png', 'jpeg', 'webp']);
   assert.equal(tabScreenshot.inputSchema.properties.quality.minimum, 1);
   assert.equal(tabScreenshot.outputContract.rawScreenshotBytes, false);
+  assert.ok(tabGoto);
+  assert.deepEqual(tabGoto.inputSchema.required, ['tabId', 'url']);
+  assert.ok(tabObserve);
+  assert.deepEqual(tabObserve.inputSchema.required, ['tabId']);
+  assert.ok(tabReadPage);
+  assert.deepEqual(tabReadPage.inputSchema.required, ['tabId']);
+  assert.ok(tabLocator);
+  assert.deepEqual(tabLocator.inputSchema.required, ['tabId']);
+  assert.deepEqual(tabLocator.inputSchema.properties.action.enum, ['resolve', 'click', 'type', 'fill', 'focus', 'clear']);
+  assert.ok(recentTabs);
+  assert.deepEqual(recentTabs.inputSchema.required, []);
+  assert.ok(historySearch);
+  assert.deepEqual(historySearch.inputSchema.required, ['query']);
+  assert.ok(bookmarkSearch);
+  assert.deepEqual(bookmarkSearch.inputSchema.required, ['query']);
+  assert.ok(reopenClosedTab);
+  assert.deepEqual(reopenClosedTab.inputSchema.required, []);
+  assert.ok(downloadWait);
+  assert.deepEqual(downloadWait.inputSchema.required, []);
+  assert.ok(downloadShow);
+  assert.deepEqual(downloadShow.inputSchema.required, ['downloadId']);
+  assert.ok(tabFocus);
+  assert.deepEqual(tabFocus.inputSchema.required, ['tabId']);
+  assert.ok(tabPin);
+  assert.deepEqual(tabPin.inputSchema.required, ['tabId', 'pinned']);
+  assert.ok(tabMove);
+  assert.deepEqual(tabMove.inputSchema.required, ['tabId', 'index']);
+  assert.ok(tabGroupRename);
+  assert.deepEqual(tabGroupRename.inputSchema.required, ['groupId', 'title']);
+  assert.ok(policyStatus);
+  assert.deepEqual(policyStatus.inputSchema.required, []);
+  assert.ok(policyUpdate);
+  assert.deepEqual(policyUpdate.inputSchema.required, []);
+  assert.ok(tabShowTarget);
+  assert.deepEqual(tabShowTarget.inputSchema.required, ['tabId']);
+  assert.equal(tabShowTarget.inputSchema.properties.durationMs.minimum, 100);
   assert.match(toolDefinitionsHash(), /^[a-f0-9]{64}$/);
   assert.equal(toolDefinitionsHash(), toolDefinitionsHash());
 });
@@ -219,6 +272,57 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   assert.equal(validateToolInput('codex_chrome_tab_screenshot', {
     tabId: 7,
     format: 'gif'
+  }).error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(validateToolInput('codex_chrome_tab_goto', {
+    tabId: 7,
+    url: 'https://example.com/app'
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_observe', {
+    tabId: 7,
+    mode: 'tiny'
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_read_page', {
+    tabId: 7,
+    filter: 'interactive'
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_locator', {
+    tabId: 7,
+    selector: 'button[data-testid="save"]',
+    action: 'click',
+    postActionSnapshot: 'delta'
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_locator', {
+    tabId: 7,
+    action: 'hover'
+  }).error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(validateToolInput('codex_chrome_recent_tabs', { limit: 5 }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_history_search', { query: 'play console', maxResults: 5 }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_bookmark_search', { query: 'cloudflare', maxResults: 5 }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_reopen_closed_tab', { claim: true }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_download_wait', {
+    filenameContains: 'report',
+    state: 'complete',
+    timeoutMs: 5000,
+    pollIntervalMs: 100
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_download_show', { downloadId: 4 }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_focus', { tabId: 7 }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_pin', { tabId: 7, pinned: true }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_move', { tabId: 7, index: 1, windowId: 2 }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_group_rename', { groupId: 3, title: 'Work' }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_policy_status', {}).ok, true);
+  assert.equal(validateToolInput('codex_chrome_policy_update', {
+    guardedActionsEnabled: false,
+    purchaseApprovalsEnabled: true
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_show_target', {
+    tabId: 7,
+    selector: 'button.save',
+    durationMs: 1000
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_show_target', {
+    tabId: 7,
+    durationMs: 50
   }).error.code, 'INVALID_TOOL_INPUT');
   assert.equal(
     validateToolInput('codex_chrome_upload_file', {
@@ -684,6 +788,61 @@ test('CodexChromeToolAdapter routes tab screenshot helper through guarded CDP', 
   assert.equal(response.result.screenshot.rawDataRedacted, true);
 });
 
+test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          method: request.method,
+          params: request.params
+        }
+      };
+    }
+  });
+
+  await adapter.executeTool({
+    toolName: 'codex_chrome_tab_goto',
+    input: { tabId: 7, url: 'https://example.com/app' }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_tab_observe',
+    input: { tabId: 7, mode: 'tiny' }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_tab_read_page',
+    input: { tabId: 7, filter: 'interactive', maxChars: 500 }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_tab_locator',
+    input: {
+      tabId: 7,
+      selector: 'button[data-testid="save"]',
+      action: 'click',
+      postActionSnapshot: 'delta'
+    }
+  });
+
+  assert.deepEqual(calls.map((call) => [call.method, call.params]), [
+    ['operator.runtime.tab.goto', { tabId: 7, url: 'https://example.com/app' }],
+    ['operator.runtime.tab.observe', { tabId: 7, mode: 'tiny' }],
+    ['operator.runtime.tab.readPage', { tabId: 7, filter: 'interactive', maxChars: 500 }],
+    ['operator.runtime.tab.locator', {
+      tabId: 7,
+      selector: 'button[data-testid="save"]',
+      action: 'click',
+      postActionSnapshot: 'delta'
+    }]
+  ]);
+});
+
 test('CodexChromeToolAdapter routes compact read page and batch actions with normalized origins', async () => {
   const calls = [];
   const adapter = new CodexChromeToolAdapter({
@@ -1121,6 +1280,56 @@ test('CodexChromeToolAdapter routes visual observe with normalized origin and sc
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, 'page.visualObserve');
+});
+
+test('CodexChromeToolAdapter routes browser context, download, recovery, and target cue tools', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return { ok: true, result: { method: request.method, params: request.params } };
+    }
+  });
+
+  await adapter.executeTool({ toolName: 'codex_chrome_recent_tabs', input: { limit: 4 } });
+  await adapter.executeTool({ toolName: 'codex_chrome_history_search', input: { query: 'play', maxResults: 2 } });
+  await adapter.executeTool({ toolName: 'codex_chrome_bookmark_search', input: { query: 'docs', maxResults: 2 } });
+  await adapter.executeTool({ toolName: 'codex_chrome_reopen_closed_tab', input: { claim: true } });
+  await adapter.executeTool({ toolName: 'codex_chrome_download_wait', input: { filenameContains: 'report', timeoutMs: 500 } });
+  await adapter.executeTool({ toolName: 'codex_chrome_download_show', input: { downloadId: 4 } });
+  await adapter.executeTool({ toolName: 'codex_chrome_tab_focus', input: { tabId: 7 } });
+  await adapter.executeTool({ toolName: 'codex_chrome_tab_pin', input: { tabId: 7, pinned: true } });
+  await adapter.executeTool({ toolName: 'codex_chrome_tab_move', input: { tabId: 7, index: 1, windowId: 2 } });
+  await adapter.executeTool({ toolName: 'codex_chrome_tab_group_rename', input: { groupId: 3, title: 'Work' } });
+  await adapter.executeTool({ toolName: 'codex_chrome_policy_status', input: {} });
+  await adapter.executeTool({ toolName: 'codex_chrome_policy_update', input: { guardedActionsEnabled: false } });
+  await adapter.executeTool({ toolName: 'codex_chrome_tab_show_target', input: { tabId: 7, text: 'Save', durationMs: 1000 } });
+
+  assert.deepEqual(calls.map((call) => call.method), [
+    'operator.context.recentTabs',
+    'operator.context.historySearch',
+    'operator.context.bookmarkSearch',
+    'operator.sessions.reopenClosedTab',
+    'operator.downloads.wait',
+    'operator.downloads.show',
+    'operator.tabs.focus',
+    'operator.tabs.pin',
+    'operator.tabs.move',
+    'operator.tabs.groupRename',
+    'operator.policy.status',
+    'operator.policy.update',
+    'operator.runtime.tab.showTarget'
+  ]);
+  assert.deepEqual(calls[12].params, {
+    tabId: 7,
+    text: 'Save',
+    durationMs: 1000
+  });
 });
 
 test('CodexChromeToolAdapter forwards observe options with normalized origins', async () => {

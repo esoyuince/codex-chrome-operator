@@ -406,6 +406,38 @@ class CodexChromeToolAdapter {
       case 'codex_chrome_user_tabs':
         response = await this.sendRpc('operator.tabs.listUser', {});
         break;
+      case 'codex_chrome_recent_tabs':
+        response = await this.sendRpc('operator.context.recentTabs', pickDefined(input, ['limit']));
+        break;
+      case 'codex_chrome_history_search':
+        response = await this.sendRpc('operator.context.historySearch', {
+          query: input.query,
+          ...pickDefined(input, ['maxResults'])
+        });
+        break;
+      case 'codex_chrome_bookmark_search':
+        response = await this.sendRpc('operator.context.bookmarkSearch', {
+          query: input.query,
+          ...pickDefined(input, ['maxResults'])
+        });
+        break;
+      case 'codex_chrome_reopen_closed_tab':
+        response = await this.sendRpc('operator.sessions.reopenClosedTab', pickDefined(input, ['sessionId', 'claim']));
+        break;
+      case 'codex_chrome_download_wait':
+        response = await this.sendRpc('operator.downloads.wait', pickDefined(input, [
+          'filenameContains',
+          'urlContains',
+          'state',
+          'timeoutMs',
+          'pollIntervalMs'
+        ]));
+        break;
+      case 'codex_chrome_download_show':
+        response = await this.sendRpc('operator.downloads.show', {
+          downloadId: input.downloadId
+        });
+        break;
       case 'codex_chrome_claim_tab':
         response = await this.sendRpc('operator.tabs.claim', {
           tabId: input.tabId
@@ -413,6 +445,28 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_session_tabs':
         response = await this.sendRpc('operator.tabs.listSession', {});
+        break;
+      case 'codex_chrome_tab_focus':
+        response = await this.sendRpc('operator.tabs.focus', { tabId: input.tabId });
+        break;
+      case 'codex_chrome_tab_pin':
+        response = await this.sendRpc('operator.tabs.pin', {
+          tabId: input.tabId,
+          pinned: input.pinned
+        });
+        break;
+      case 'codex_chrome_tab_move':
+        response = await this.sendRpc('operator.tabs.move', {
+          tabId: input.tabId,
+          index: input.index,
+          ...pickDefined(input, ['windowId'])
+        });
+        break;
+      case 'codex_chrome_tab_group_rename':
+        response = await this.sendRpc('operator.tabs.groupRename', {
+          groupId: input.groupId,
+          title: input.title
+        });
         break;
       case 'codex_chrome_new_tab':
         response = await this.sendRpc('operator.tabs.create', {});
@@ -427,11 +481,71 @@ class CodexChromeToolAdapter {
           keep: input.keep.map((entry) => ({ ...entry }))
         });
         break;
+      case 'codex_chrome_policy_status':
+        response = await this.sendRpc('operator.policy.status', {});
+        break;
+      case 'codex_chrome_policy_update':
+        response = await this.sendRpc('operator.policy.update', pickDefined(input, [
+          'guardedActionsEnabled',
+          'purchaseApprovalsEnabled'
+        ]));
+        break;
       case 'codex_chrome_tab_screenshot':
         response = await this.sendRpc('operator.cdp.execute', {
           tabId: input.tabId,
           method: 'Page.captureScreenshot',
           params: pickDefined(input, ['format', 'quality'])
+        });
+        break;
+      case 'codex_chrome_tab_goto':
+        response = await this.sendRpc('operator.runtime.tab.goto', {
+          tabId: input.tabId,
+          url: input.url
+        });
+        break;
+      case 'codex_chrome_tab_observe':
+        response = await this.sendRpc('operator.runtime.tab.observe', {
+          tabId: input.tabId,
+          ...observeOptions(input)
+        });
+        break;
+      case 'codex_chrome_tab_read_page':
+        response = await this.sendRpc('operator.runtime.tab.readPage', {
+          tabId: input.tabId,
+          ...pickDefined(input, [
+            'filter',
+            'depth',
+            'maxChars',
+            'refId',
+            'includeFormValues',
+            'maxFieldValueChars'
+          ])
+        });
+        break;
+      case 'codex_chrome_tab_locator':
+        response = await this.sendRpc('operator.runtime.tab.locator', {
+          tabId: input.tabId,
+          ...pickDefined(input, [
+            'selector',
+            'text',
+            'action',
+            'textValue',
+            'includeFormValues',
+            'maxFieldValueChars',
+            'postActionSnapshot',
+            'sincePageStateId',
+            'mode',
+            'maxActionableHandles',
+            'summaryMaxChars',
+            'requireVerified',
+            'verify'
+          ])
+        });
+        break;
+      case 'codex_chrome_tab_show_target':
+        response = await this.sendRpc('operator.runtime.tab.showTarget', {
+          tabId: input.tabId,
+          ...pickDefined(input, ['handle', 'selector', 'text', 'durationMs'])
         });
         break;
       case 'codex_chrome_open_observe':

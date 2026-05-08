@@ -266,12 +266,29 @@ The adapter exposes strict `codex_chrome_*` tools, including:
 - `codex_chrome_profile_doctor`
 - `codex_chrome_profile_onboard`
 - `codex_chrome_user_tabs`
+- `codex_chrome_recent_tabs`
+- `codex_chrome_history_search`
+- `codex_chrome_bookmark_search`
+- `codex_chrome_reopen_closed_tab`
+- `codex_chrome_download_wait`
+- `codex_chrome_download_show`
 - `codex_chrome_claim_tab`
 - `codex_chrome_session_tabs`
+- `codex_chrome_tab_focus`
+- `codex_chrome_tab_pin`
+- `codex_chrome_tab_move`
+- `codex_chrome_tab_group_rename`
 - `codex_chrome_new_tab`
 - `codex_chrome_name_session`
 - `codex_chrome_finalize_tabs`
+- `codex_chrome_policy_status`
+- `codex_chrome_policy_update`
 - `codex_chrome_tab_screenshot`
+- `codex_chrome_tab_goto`
+- `codex_chrome_tab_observe`
+- `codex_chrome_tab_read_page`
+- `codex_chrome_tab_locator`
+- `codex_chrome_tab_show_target`
 - `codex_chrome_open_observe`
 - `codex_chrome_observe`
 - `codex_chrome_read_page`
@@ -319,7 +336,11 @@ The extension uses:
 - no host permission request page
 
 The side panel is the user-facing control surface for connection/readiness state
-and blocked-site settings.
+and blocked-site settings. Chrome permissions are intentionally tied to visible
+operator features: `history`, `bookmarks`, and `sessions` power browser-context
+lookups and tab recovery; `downloads` and `downloads.ui` support download
+evidence and reveal helpers; `tabGroups`, `tabs`, and `favicon` enrich the tab
+inventory and session grouping.
 
 ## Site Profiles
 

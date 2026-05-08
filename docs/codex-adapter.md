@@ -74,7 +74,7 @@ When the daemon created an approval request, the hint includes the `approvalId`,
 - `approval-reject <approvalId>`
 - `approval-run <approvalId>`
 
-The adapter currently exposes 41 strict tools:
+The adapter currently exposes 58 strict tools:
 
 - `codex_chrome_status`
 - `codex_chrome_prepare_origin`
@@ -82,12 +82,29 @@ The adapter currently exposes 41 strict tools:
 - `codex_chrome_profile_doctor`
 - `codex_chrome_profile_onboard`
 - `codex_chrome_user_tabs`
+- `codex_chrome_recent_tabs`
+- `codex_chrome_history_search`
+- `codex_chrome_bookmark_search`
+- `codex_chrome_reopen_closed_tab`
+- `codex_chrome_download_wait`
+- `codex_chrome_download_show`
 - `codex_chrome_claim_tab`
 - `codex_chrome_session_tabs`
+- `codex_chrome_tab_focus`
+- `codex_chrome_tab_pin`
+- `codex_chrome_tab_move`
+- `codex_chrome_tab_group_rename`
 - `codex_chrome_new_tab`
 - `codex_chrome_name_session`
 - `codex_chrome_finalize_tabs`
+- `codex_chrome_policy_status`
+- `codex_chrome_policy_update`
 - `codex_chrome_tab_screenshot`
+- `codex_chrome_tab_goto`
+- `codex_chrome_tab_observe`
+- `codex_chrome_tab_read_page`
+- `codex_chrome_tab_locator`
+- `codex_chrome_tab_show_target`
 - `codex_chrome_open_observe`
 - `codex_chrome_observe`
 - `codex_chrome_read_page`
@@ -128,15 +145,33 @@ point to these tools when the caller can recover through the adapter surface.
 
 Session tab tools provide an explicit hybrid workflow for real Chrome tabs.
 `codex_chrome_user_tabs` lists claimable user tabs without taking ownership,
+`codex_chrome_recent_tabs` returns the enriched recent-tab inventory,
+`codex_chrome_history_search` and `codex_chrome_bookmark_search` search local
+Chrome context, `codex_chrome_download_wait` waits for compact download
+evidence, `codex_chrome_download_show` reveals a known download,
+`codex_chrome_reopen_closed_tab` restores a recently closed tab,
 `codex_chrome_claim_tab` claims a listed tab by `tabId`,
 `codex_chrome_session_tabs` lists the tabs owned by the current operator
-session, `codex_chrome_new_tab` opens a blank agent-owned session tab,
-`codex_chrome_name_session` labels the session, and
+session, `codex_chrome_tab_focus`, `codex_chrome_tab_pin`,
+`codex_chrome_tab_move`, and `codex_chrome_tab_group_rename` expose focused
+native tab/window management, `codex_chrome_new_tab` opens a blank agent-owned
+session tab, `codex_chrome_name_session` labels the session, and
 `codex_chrome_finalize_tabs` keeps only explicitly selected tabs as `handoff` or
 `deliverable` while releasing or closing the rest.
+`codex_chrome_policy_status` and `codex_chrome_policy_update` expose the side
+panel policy toggles for guarded actions and purchase approvals.
 `codex_chrome_tab_screenshot` captures an artifact-backed screenshot for a
 session-owned tab through the guarded CDP path. It returns screenshot metadata
 only; raw image bytes and `dataUrl` fields are redacted before reaching Codex.
+`codex_chrome_tab_goto`, `codex_chrome_tab_observe`, and
+`codex_chrome_tab_read_page` are the safe browser runtime wrappers for
+session-owned tabs, so an agent can navigate, observe, and read a selected tab
+without depending on whichever tab is currently focused. `codex_chrome_tab_locator`
+resolves a limited selector/text locator against visible actionable elements and
+fails closed when it matches zero or multiple targets; optional `click`, `type`,
+`fill`, `focus`, and `clear` actions still pass through the same action policy
+and post-action verification path. `codex_chrome_tab_show_target` draws a
+temporary cue around a resolved session-tab target before an action.
 
 Approval and rejection tools require an explicit `userDecision` argument:
 `"approve"` for `codex_chrome_approval_approve` and `"reject"` for

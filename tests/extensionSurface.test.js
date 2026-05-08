@@ -30,6 +30,12 @@ test('manifest exposes the operator as a Chrome side panel with debugger actions
   assert.ok(manifest.permissions.includes('debugger'));
   assert.ok(manifest.permissions.includes('alarms'));
   assert.ok(manifest.permissions.includes('tabGroups'));
+  assert.ok(manifest.permissions.includes('downloads'));
+  assert.ok(manifest.permissions.includes('downloads.ui'));
+  assert.ok(manifest.permissions.includes('history'));
+  assert.ok(manifest.permissions.includes('bookmarks'));
+  assert.ok(manifest.permissions.includes('sessions'));
+  assert.ok(manifest.permissions.includes('favicon'));
   assert.deepEqual(manifest.host_permissions, ['<all_urls>']);
 });
 
@@ -75,9 +81,17 @@ test('side panel exposes action permissions, purchase approval, and blocked-site
   assert.match(html, /Blocked sites/);
   assert.match(html, /Action permissions/);
   assert.match(html, /Place order \/ purchase/);
+  assert.match(html, /guarded-actions-toggle/);
+  assert.match(html, /purchase-approvals-toggle/);
+  assert.match(html, /Operational status/);
+  assert.match(html, /session-tabs-count/);
+  assert.match(html, /last-command/);
+  assert.match(html, /download-watch-status/);
   assert.match(html, /pending-approvals/);
   assert.match(js, /operator\.blockedOriginsStatus/);
   assert.match(js, /operator\.daemonStatus/);
+  assert.match(js, /operator\.policy\.status/);
+  assert.match(js, /operator\.policy\.update/);
   assert.match(js, /operator\.approvals\.approve/);
   assert.match(js, /operator\.approvals\.reject/);
   assert.match(js, /operator\.approvals\.run/);
@@ -267,6 +281,35 @@ test('background exposes guarded session tab commands for hybrid operator mode',
   assert.match(background, /chrome\.tabs\.group/);
   assert.match(background, /Codex Deliverables/);
   assert.match(background, /TAB_NOT_CLAIMABLE/);
+  assert.match(background, /favIconUrl/);
+  assert.match(background, /lastAccessed/);
+});
+
+test('background exposes browser context, download wait, session recovery, and target cue handlers', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const contentScript = fs.readFileSync(path.join(EXTENSION_DIR, 'contentScript.js'), 'utf8');
+
+  assert.match(background, /operator\.context\.recentTabs/);
+  assert.match(background, /operator\.context\.historySearch/);
+  assert.match(background, /operator\.context\.bookmarkSearch/);
+  assert.match(background, /operator\.downloads\.wait/);
+  assert.match(background, /operator\.downloads\.show/);
+  assert.match(background, /operator\.sessions\.reopenClosedTab/);
+  assert.match(background, /operator\.tabs\.focus/);
+  assert.match(background, /operator\.tabs\.pin/);
+  assert.match(background, /operator\.tabs\.move/);
+  assert.match(background, /operator\.tabs\.groupRename/);
+  assert.match(background, /operator\.runtime\.tab\.showTarget/);
+  assert.match(background, /chrome\.downloads\.search/);
+  assert.match(background, /chrome\.downloads\.show/);
+  assert.match(background, /chrome\.sessions\.restore/);
+  assert.match(background, /chrome\.history\.search/);
+  assert.match(background, /chrome\.bookmarks\.search/);
+  assert.match(background, /chrome\.tabs\.move/);
+  assert.match(background, /chrome\.tabs\.update/);
+  assert.match(background, /chrome\.tabGroups\.update/);
+  assert.match(contentScript, /content\.showTarget/);
+  assert.match(contentScript, /codex-operator-target-cue/);
 });
 
 test('background exposes guarded CDP commands without arbitrary runtime evaluation', () => {

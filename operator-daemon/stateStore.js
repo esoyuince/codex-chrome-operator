@@ -18,6 +18,10 @@ function emptyState() {
     domainApprovals: {},
     hostPermissions: {},
     blockedOrigins: [],
+    policyControls: {
+      guardedActionsEnabled: true,
+      purchaseApprovalsEnabled: false
+    },
     configuredProfile: null
   };
 }
@@ -51,6 +55,14 @@ function normalizeHostPermissions(hostPermissions) {
       })
       .filter(Boolean)
   );
+}
+
+function normalizePolicyControls(policyControls) {
+  const input = policyControls && typeof policyControls === 'object' ? policyControls : {};
+  return {
+    guardedActionsEnabled: input.guardedActionsEnabled !== false,
+    purchaseApprovalsEnabled: input.purchaseApprovalsEnabled === true
+  };
 }
 
 function normalizeBlockedPattern(pattern) {
@@ -146,6 +158,7 @@ class OperatorStateStore {
       domainApprovals: parsed.domainApprovals || {},
       hostPermissions: normalizeHostPermissions(parsed.hostPermissions),
       blockedOrigins: Array.isArray(parsed.blockedOrigins) ? parsed.blockedOrigins : [],
+      policyControls: normalizePolicyControls(parsed.policyControls),
       configuredProfile: normalizeConfiguredProfile(parsed.configuredProfile)
     };
   }
@@ -266,6 +279,25 @@ class OperatorStateStore {
 
   isOriginBlocked(origin) {
     return Boolean(this.blockedOriginMatch(origin));
+  }
+
+  getPolicyControls() {
+    return normalizePolicyControls(this.state.policyControls);
+  }
+
+  updatePolicyControls(update = {}) {
+    const current = this.getPolicyControls();
+    this.state.policyControls = {
+      ...current,
+      ...(typeof update.guardedActionsEnabled === 'boolean'
+        ? { guardedActionsEnabled: update.guardedActionsEnabled }
+        : {}),
+      ...(typeof update.purchaseApprovalsEnabled === 'boolean'
+        ? { purchaseApprovalsEnabled: update.purchaseApprovalsEnabled }
+        : {})
+    };
+    this.save();
+    return this.getPolicyControls();
   }
 
   setConfiguredProfile(profile) {

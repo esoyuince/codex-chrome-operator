@@ -36,6 +36,9 @@ const {
   attachUiGraph
 } = globalThis.CodexUiGraph;
 const {
+  attachCdpSession,
+  detachAllCdpSessions,
+  detachCdpSession,
   runCdpCommand,
   runDebuggerAction
 } = globalThis.CodexDebuggerActions;
@@ -86,7 +89,11 @@ async function buildHello() {
       'cartPreparation.v1',
       'guarded.v1',
       'gateHandoff.v1',
-      'actions.cdp.v1'
+      'actions.cdp.v1',
+      'browserContext.v1',
+      'downloads.v1',
+      'sessionRecovery.v1',
+      'targetCue.v1'
     ]
   };
 }
@@ -153,6 +160,23 @@ function postNativeRpcNoThrow(method, params = {}) {
     postNativeRpc(method, params);
   } catch {
     // The native port may already be gone during disconnect handling.
+  }
+}
+
+function updateActionBadge() {
+  if (!chrome.action || typeof chrome.action.setBadgeText !== 'function') {
+    return;
+  }
+  const text = nativePort && connectionState === 'CONNECTED' ? 'ON' : '';
+  chrome.action.setBadgeText({ text }).catch(() => {});
+  if (typeof chrome.action.setBadgeBackgroundColor === 'function') {
+    chrome.action.setBadgeBackgroundColor({ color: text ? '#1a73e8' : '#5f6368' }).catch(() => {});
+  }
+  if (typeof chrome.action.setTitle === 'function') {
+    const title = text
+      ? 'Codex Operator - connected'
+      : `Codex Operator - ${lastNativeError || connectionState.toLowerCase()}`;
+    chrome.action.setTitle({ title }).catch(() => {});
   }
 }
 
@@ -322,6 +346,7 @@ async function closeNativeAfterFatalResponse(message) {
   const error = message.error || {};
   lastNativeError = error.message || error.code || 'Native handshake rejected.';
   connectionState = 'ERROR';
+  updateActionBadge();
   await chrome.storage.local.set({
     connectionState,
     lastNativeError,
@@ -373,6 +398,7 @@ async function connectNative({ refreshHello = false, retryOnFailure = false } = 
   try {
     nativePort = chrome.runtime.connectNative(NATIVE_HOST);
     connectionState = 'CONNECTING';
+    updateActionBadge();
     nativePort.onMessage.addListener((message) => {
       handleNativeMessage(message);
     });
@@ -380,12 +406,14 @@ async function connectNative({ refreshHello = false, retryOnFailure = false } = 
       lastNativeError = chrome.runtime.lastError ? chrome.runtime.lastError.message : null;
       const shouldReconnect = !suppressNextNativeReconnect;
       suppressNextNativeReconnect = false;
+      detachAllCdpSessions({ chromeApi: chrome }).catch(() => {});
       postNativeRpcNoThrow('extension.disconnected', {
         source: 'native-port',
         reason: lastNativeError || 'Native port disconnected.'
       });
       connectionState = 'DISCONNECTED';
       nativePort = null;
+      updateActionBadge();
       settlePendingNativeRpcs({
         code: 'EXTENSION_DISCONNECTED',
         message: lastNativeError || 'Native port disconnected.'
@@ -403,6 +431,7 @@ async function connectNative({ refreshHello = false, retryOnFailure = false } = 
     await syncGrantedHostPermissions();
     await syncBlockedOrigins();
     connectionState = 'CONNECTED';
+    updateActionBadge();
     await clearNativeReconnect();
     await scheduleWarmSession();
     warmActiveSession({ reason: 'native-connected' }).catch(() => {});
@@ -411,6 +440,7 @@ async function connectNative({ refreshHello = false, retryOnFailure = false } = 
     lastNativeError = error.message;
     connectionState = 'ERROR';
     nativePort = null;
+    updateActionBadge();
     settlePendingNativeRpcs({
       code: 'NATIVE_BRIDGE_FAILED',
       message: error.message
@@ -576,6 +606,15 @@ function tabInfo(tab) {
     url: tab.url || null,
     origin,
     title: tab.title || null,
+    favIconUrl: tab.favIconUrl || null,
+    groupId: Number.isInteger(tab.groupId) ? tab.groupId : null,
+    active: tab.active === true,
+    pinned: tab.pinned === true,
+    audible: tab.audible === true,
+    muted: Boolean(tab.mutedInfo && tab.mutedInfo.muted),
+    lastAccessed: typeof tab.lastAccessed === 'number' && Number.isFinite(tab.lastAccessed)
+      ? new Date(tab.lastAccessed).toISOString()
+      : null,
     status: tab.status || null,
     loadingState: tab.status === 'loading' ? 'loading' : 'complete'
   };
@@ -661,8 +700,17 @@ function userTabInfo(tab, groupTitles = new Map()) {
     : null;
   return {
     id: tab.id,
+    windowId: tab.windowId,
     title: tab.title || null,
     url: tab.url || null,
+    favIconUrl: tab.favIconUrl || null,
+    groupId: Number.isInteger(tab.groupId) ? tab.groupId : null,
+    active: tab.active === true,
+    pinned: tab.pinned === true,
+    audible: tab.audible === true,
+    muted: Boolean(tab.mutedInfo && tab.mutedInfo.muted),
+    claimable: true,
+    ...(lastAccessed ? { lastAccessed } : {}),
     ...(lastAccessed ? { lastOpened: lastAccessed } : {}),
     ...(groupTitles.has(tab.groupId) ? { tabGroup: groupTitles.get(tab.groupId) } : {})
   };
@@ -712,6 +760,15 @@ async function refreshSessionTabsFromChrome() {
   }
   await saveSessionTabState();
   return refreshed;
+}
+
+async function detachSessionCdpBestEffort(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    await detachCdpSession({ chromeApi: chrome, tab });
+  } catch {
+    // Tab finalization should continue when a tab is already gone or detached.
+  }
 }
 
 async function handleSessionTabCommand(method, params = {}) {
@@ -770,6 +827,7 @@ async function handleSessionTabCommand(method, params = {}) {
     const closed = [];
     const released = [];
     for (const [tabId, record] of [...operatorSessionTabs.entries()]) {
+      await detachSessionCdpBestEffort(tabId);
       const status = keepById.get(tabId);
       if (status === 'handoff' || status === 'deliverable') {
         const next = { ...record, finalizedStatus: status };
@@ -808,23 +866,420 @@ async function handleSessionTabCommand(method, params = {}) {
     return { ok: true, result: { name } };
   }
 
+  if (method === 'operator.tabs.focus') {
+    if (!Number.isInteger(params.tabId) || params.tabId < 0) {
+      return { ok: false, error: { code: 'INVALID_SCHEMA', message: 'tabId must be a non-negative integer.' } };
+    }
+    const tab = await chrome.tabs.get(params.tabId);
+    await chrome.windows.update(tab.windowId, { focused: true });
+    const updated = await chrome.tabs.update(params.tabId, { active: true });
+    return { ok: true, result: { tab: tabInfo(updated) } };
+  }
+
+  if (method === 'operator.tabs.pin') {
+    if (!Number.isInteger(params.tabId) || params.tabId < 0 || typeof params.pinned !== 'boolean') {
+      return { ok: false, error: { code: 'INVALID_SCHEMA', message: 'tabId and pinned are required.' } };
+    }
+    const updated = await chrome.tabs.update(params.tabId, { pinned: params.pinned });
+    return { ok: true, result: { tab: tabInfo(updated) } };
+  }
+
+  if (method === 'operator.tabs.move') {
+    if (!Number.isInteger(params.tabId) || params.tabId < 0 || !Number.isInteger(params.index) || params.index < 0) {
+      return { ok: false, error: { code: 'INVALID_SCHEMA', message: 'tabId and index must be non-negative integers.' } };
+    }
+    const moved = await chrome.tabs.move(params.tabId, {
+      index: params.index,
+      ...(Number.isInteger(params.windowId) ? { windowId: params.windowId } : {})
+    });
+    const tab = Array.isArray(moved) ? moved[0] : moved;
+    return { ok: true, result: { tab: tabInfo(tab) } };
+  }
+
+  if (method === 'operator.tabs.groupRename') {
+    if (!Number.isInteger(params.groupId) || params.groupId < 0 || typeof params.title !== 'string' || !params.title.trim()) {
+      return { ok: false, error: { code: 'INVALID_SCHEMA', message: 'groupId and title are required.' } };
+    }
+    const group = await chrome.tabGroups.update(params.groupId, { title: params.title.trim().slice(0, 80) });
+    return { ok: true, result: { groupId: group.id, title: group.title || null } };
+  }
+
   return { ok: false, error: { code: 'UNKNOWN_METHOD', message: `Unknown method: ${method}` } };
 }
 
+function boundedInteger(value, fallback, min, max) {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+function basenameFromPath(filePath) {
+  if (typeof filePath !== 'string' || !filePath) {
+    return null;
+  }
+  const normalized = filePath.replace(/\\/g, '/');
+  return normalized.slice(normalized.lastIndexOf('/') + 1) || null;
+}
+
+function normalizeHistoryEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+  return {
+    id: entry.id || null,
+    url: entry.url || null,
+    title: entry.title || null,
+    lastVisitTime: typeof entry.lastVisitTime === 'number'
+      ? new Date(entry.lastVisitTime).toISOString()
+      : null,
+    visitCount: typeof entry.visitCount === 'number' ? entry.visitCount : null,
+    typedCount: typeof entry.typedCount === 'number' ? entry.typedCount : null
+  };
+}
+
+function normalizeBookmarkEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+  return {
+    id: entry.id || null,
+    parentId: entry.parentId || null,
+    index: typeof entry.index === 'number' ? entry.index : null,
+    title: entry.title || null,
+    url: entry.url || null,
+    dateAdded: typeof entry.dateAdded === 'number'
+      ? new Date(entry.dateAdded).toISOString()
+      : null
+  };
+}
+
+function normalizeDownloadItem(item) {
+  if (!item || typeof item !== 'object') {
+    return null;
+  }
+  return {
+    id: item.id,
+    url: item.url || null,
+    finalUrl: item.finalUrl || null,
+    filename: item.filename || null,
+    basename: basenameFromPath(item.filename),
+    state: item.state || null,
+    danger: item.danger || null,
+    exists: item.exists === true,
+    fileSize: typeof item.fileSize === 'number' ? item.fileSize : null,
+    mime: item.mime || null,
+    startTime: item.startTime || null,
+    endTime: item.endTime || null,
+    error: item.error || null
+  };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function downloadMatches(item, params = {}) {
+  if (!item) {
+    return false;
+  }
+  const filenameNeedle = typeof params.filenameContains === 'string'
+    ? params.filenameContains.trim().toLowerCase()
+    : '';
+  const urlNeedle = typeof params.urlContains === 'string'
+    ? params.urlContains.trim().toLowerCase()
+    : '';
+  const state = typeof params.state === 'string' ? params.state.trim() : '';
+  const filename = String(item.filename || '').toLowerCase();
+  const url = String(item.finalUrl || item.url || '').toLowerCase();
+  if (filenameNeedle && !filename.includes(filenameNeedle)) {
+    return false;
+  }
+  if (urlNeedle && !url.includes(urlNeedle)) {
+    return false;
+  }
+  if (state && item.state !== state) {
+    return false;
+  }
+  return true;
+}
+
+async function handleBrowserContextCommand(method, params = {}) {
+  if (method === 'operator.context.recentTabs') {
+    const limit = boundedInteger(params.limit, 20, 1, 100);
+    const tabs = (await chrome.tabs.query({})).filter(isClaimableUserTab);
+    tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+    const groupTitles = await tabGroupTitlesById(tabs);
+    return {
+      ok: true,
+      result: {
+        tabs: tabs.slice(0, limit).map((tab) => userTabInfo(tab, groupTitles))
+      }
+    };
+  }
+
+  if (method === 'operator.context.historySearch') {
+    const query = typeof params.query === 'string' ? params.query.trim() : '';
+    if (!query) {
+      return { ok: false, error: { code: 'INVALID_SCHEMA', message: 'query must be a non-empty string.' } };
+    }
+    const maxResults = boundedInteger(params.maxResults, 10, 1, 50);
+    const entries = await chrome.history.search({
+      text: query,
+      maxResults,
+      startTime: 0
+    });
+    return { ok: true, result: { entries: entries.map(normalizeHistoryEntry).filter(Boolean) } };
+  }
+
+  if (method === 'operator.context.bookmarkSearch') {
+    const query = typeof params.query === 'string' ? params.query.trim() : '';
+    if (!query) {
+      return { ok: false, error: { code: 'INVALID_SCHEMA', message: 'query must be a non-empty string.' } };
+    }
+    const maxResults = boundedInteger(params.maxResults, 10, 1, 50);
+    const entries = await chrome.bookmarks.search(query);
+    return { ok: true, result: { entries: entries.slice(0, maxResults).map(normalizeBookmarkEntry).filter(Boolean) } };
+  }
+
+  return { ok: false, error: { code: 'UNKNOWN_METHOD', message: `Unknown method: ${method}` } };
+}
+
+async function handleDownloadCommand(method, params = {}) {
+  if (method === 'operator.downloads.show') {
+    if (!Number.isInteger(params.downloadId) || params.downloadId < 0) {
+      return { ok: false, error: { code: 'INVALID_SCHEMA', message: 'downloadId must be a non-negative integer.' } };
+    }
+    await chrome.downloads.show(params.downloadId);
+    return { ok: true, result: { shown: true, downloadId: params.downloadId } };
+  }
+  if (method !== 'operator.downloads.wait') {
+    return { ok: false, error: { code: 'UNKNOWN_METHOD', message: `Unknown method: ${method}` } };
+  }
+  const timeoutMs = boundedInteger(params.timeoutMs, 30000, 0, 300000);
+  const pollIntervalMs = boundedInteger(params.pollIntervalMs, 500, 50, 5000);
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const items = await chrome.downloads.search({
+      orderBy: ['-startTime'],
+      limit: 50
+    });
+    const match = items.find((item) => downloadMatches(item, params));
+    if (match) {
+      return { ok: true, result: { download: normalizeDownloadItem(match) } };
+    }
+    if (timeoutMs === 0 || Date.now() >= deadline) {
+      break;
+    }
+    await sleep(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())));
+  } while (Date.now() <= deadline);
+
+  return {
+    ok: false,
+    error: {
+      code: 'DOWNLOAD_NOT_FOUND',
+      message: 'No download matched before timeout.',
+      filenameContains: params.filenameContains || null,
+      urlContains: params.urlContains || null,
+      state: params.state || null
+    }
+  };
+}
+
+async function handleSessionRecoveryCommand(method, params = {}) {
+  if (method !== 'operator.sessions.reopenClosedTab') {
+    return { ok: false, error: { code: 'UNKNOWN_METHOD', message: `Unknown method: ${method}` } };
+  }
+  const restored = await chrome.sessions.restore(params.sessionId || undefined);
+  const tab = restored && restored.tab;
+  if (!tab || !Number.isInteger(tab.id)) {
+    return {
+      ok: false,
+      error: {
+        code: 'NO_RESTORABLE_TAB',
+        message: 'Chrome did not restore a tab for the latest closed session.'
+      }
+    };
+  }
+  const record = params.claim === true
+    ? sessionTabInfo(tab, 'user')
+    : userTabInfo(tab, await tabGroupTitlesById([tab]));
+  if (params.claim === true) {
+    await loadSessionTabState();
+    operatorSessionTabs.set(record.id, record);
+    await groupTabsBestEffort([...operatorSessionTabs.keys()], operatorSessionName || DEFAULT_SESSION_GROUP_TITLE);
+    await saveSessionTabState();
+  }
+  return { ok: true, result: { tab: record } };
+}
+
 async function handleCdpCommand(method, params = {}) {
-  if (method !== 'operator.cdp.execute') {
+  if (!['operator.cdp.attach', 'operator.cdp.detach', 'operator.cdp.execute'].includes(method)) {
     return { ok: false, error: { code: 'UNKNOWN_METHOD', message: `Unknown method: ${method}` } };
   }
   if (!Number.isInteger(params.tabId) || params.tabId < 0) {
     return { ok: false, error: { code: 'INVALID_SCHEMA', message: 'tabId must be a non-negative integer.' } };
   }
   const tab = await chrome.tabs.get(params.tabId);
+  if (method === 'operator.cdp.attach') {
+    return attachCdpSession({
+      chromeApi: chrome,
+      tab
+    });
+  }
+  if (method === 'operator.cdp.detach') {
+    return detachCdpSession({
+      chromeApi: chrome,
+      tab
+    });
+  }
   return runCdpCommand({
     chromeApi: chrome,
     tab,
     method: params.method,
     params: params.params || {}
   });
+}
+
+async function tabForRuntimeCommand(tabId) {
+  if (!Number.isInteger(tabId) || tabId < 0) {
+    return { ok: false, error: { code: 'INVALID_SCHEMA', message: 'tabId must be a non-negative integer.' } };
+  }
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab || !tab.id) {
+      return { ok: false, error: { code: 'NO_ACTIVE_TAB' } };
+    }
+    return { ok: true, tab: tabInfo(tab) };
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        code: 'TAB_NOT_FOUND',
+        message: error.message || String(error),
+        tabId
+      }
+    };
+  }
+}
+
+async function handleRuntimeCommand(method, params = {}) {
+  const readyTab = await tabForRuntimeCommand(params.tabId);
+  if (!readyTab.ok) {
+    return readyTab;
+  }
+  const tab = readyTab.tab;
+
+  if (method === 'operator.runtime.tab.goto') {
+    const targetTab = await chrome.tabs.update(tab.id, {
+      active: true,
+      url: params.url
+    });
+    const nextTab = {
+      ...tabInfo(targetTab),
+      url: params.url
+    };
+    if (operatorSessionTabs.has(tab.id)) {
+      const previous = operatorSessionTabs.get(tab.id);
+      operatorSessionTabs.set(tab.id, {
+        ...previous,
+        ...nextTab,
+        ownership: previous.ownership,
+        finalizedStatus: previous.finalizedStatus || null,
+        updatedAt: new Date().toISOString()
+      });
+      await saveSessionTabState();
+    }
+    return {
+      ok: true,
+      result: {
+        action: 'navigate',
+        tab: nextTab
+      }
+    };
+  }
+
+  await ensureContentScript(tab.id);
+
+  if (method === 'operator.runtime.tab.observe') {
+    const observation = await observePage(tab.id, params);
+    return { ok: true, result: observation };
+  }
+
+  if (method === 'operator.runtime.tab.readPage') {
+    return chrome.tabs.sendMessage(tab.id, {
+      type: 'content.readPage',
+      filter: params.filter,
+      depth: params.depth,
+      maxChars: params.maxChars,
+      refId: params.refId,
+      includeFormValues: params.includeFormValues,
+      maxFieldValueChars: params.maxFieldValueChars
+    });
+  }
+
+  if (method === 'operator.runtime.tab.showTarget') {
+    return chrome.tabs.sendMessage(tab.id, {
+      type: 'content.showTarget',
+      handle: params.handle,
+      selector: params.selector,
+      text: params.text,
+      durationMs: params.durationMs
+    });
+  }
+
+  if (method === 'operator.runtime.tab.locator') {
+    const locator = await chrome.tabs.sendMessage(tab.id, {
+      type: 'content.resolveLocator',
+      selector: params.selector,
+      text: params.text,
+      includeFormValues: params.includeFormValues,
+      maxFieldValueChars: params.maxFieldValueChars
+    });
+    if (!locator || !locator.ok) {
+      return locator || {
+        ok: false,
+        error: {
+          code: 'LOCATOR_FAILED',
+          message: 'Locator failed without a structured response.'
+        }
+      };
+    }
+    const action = params.action || 'resolve';
+    if (action === 'resolve') {
+      return locator;
+    }
+    const target = locator.result && locator.result.target;
+    const preflight = await preflightDebuggerAction({ tab }, action, {
+      handle: target && target.handle,
+      target
+    });
+    if (!preflight.ok) {
+      return preflight;
+    }
+    const actionResponse = await runDebuggerAction({
+      chromeApi: chrome,
+      tab,
+      action,
+      params: {
+        handle: target.handle,
+        target,
+        text: params.textValue,
+        value: params.textValue
+      }
+    });
+    return attachPostActionSnapshot(tab.id, actionResponse, {
+      ...params,
+      action,
+      handle: target.handle,
+      target,
+      text: params.textValue,
+      value: params.textValue,
+      preActionUrl: tab.url
+    });
+  }
+
+  return { ok: false, error: { code: 'UNKNOWN_METHOD', message: `Unknown method: ${method}` } };
 }
 
 async function activeTabInfo() {
@@ -1275,8 +1730,24 @@ async function handleOperatorCommand(command) {
       return handleCdpCommand(command.method, params);
     }
 
+    if (command.method && command.method.startsWith('operator.runtime.')) {
+      return handleRuntimeCommand(command.method, params);
+    }
+
     if (command.method && (command.method.startsWith('operator.tabs.') || command.method === 'operator.session.name')) {
       return handleSessionTabCommand(command.method, params);
+    }
+
+    if (command.method && command.method.startsWith('operator.context.')) {
+      return handleBrowserContextCommand(command.method, params);
+    }
+
+    if (command.method && command.method.startsWith('operator.downloads.')) {
+      return handleDownloadCommand(command.method, params);
+    }
+
+    if (command.method && command.method.startsWith('operator.sessions.')) {
+      return handleSessionRecoveryCommand(command.method, params);
     }
 
     if (command.method === 'page.navigate') {
@@ -1622,6 +2093,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message && message.type === 'operator.policy.status') {
+      await connectNative();
+      sendResponse(await requestNativeRpc('operator.policy.status'));
+      return;
+    }
+
+    if (message && message.type === 'operator.policy.update') {
+      await connectNative();
+      sendResponse(await requestNativeRpc('operator.policy.update', {
+        ...(typeof message.guardedActionsEnabled === 'boolean'
+          ? { guardedActionsEnabled: message.guardedActionsEnabled }
+          : {}),
+        ...(typeof message.purchaseApprovalsEnabled === 'boolean'
+          ? { purchaseApprovalsEnabled: message.purchaseApprovalsEnabled }
+          : {})
+      }));
+      return;
+    }
+
     if (message && message.type === 'operator.approvals.approve') {
       await connectNative();
       sendResponse(await requestNativeRpc('operator.approvals.approve', {
@@ -1715,12 +2205,14 @@ function wakeNativeBridge() {
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ connectionState: 'DISCONNECTED' });
+  updateActionBadge();
   configureSidePanelBehavior();
   scheduleWarmSession().catch(() => {});
   wakeNativeBridge();
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  updateActionBadge();
   configureSidePanelBehavior();
   scheduleWarmSession().catch(() => {});
   wakeNativeBridge();

@@ -7,10 +7,15 @@
   const DEBUGGER_TEXT_PROVIDER = 'chrome.debugger.Input.insertText';
   const DEBUGGER_TIMEOUT_MS = 5000;
   const CDP_ALLOWED_METHODS = new Set([
+    'DOM.scrollIntoViewIfNeeded',
+    'Input.dispatchKeyEvent',
+    'Input.dispatchMouseEvent',
+    'Input.insertText',
     'Page.captureScreenshot',
     'Page.getLayoutMetrics',
     'Target.getTargets'
   ]);
+  const managedCdpAttachments = new Set();
 
   function isDebuggerSupportedUrl(url) {
     try {
@@ -773,6 +778,121 @@
     return value;
   }
 
+  async function attachCdpSession({
+    chromeApi,
+    tab,
+    timeoutMs = DEBUGGER_TIMEOUT_MS
+  }) {
+    if (!tab || !tab.id) {
+      return { ok: false, error: { code: 'NO_ACTIVE_TAB' } };
+    }
+    if (!isDebuggerSupportedUrl(tab.url)) {
+      return { ok: false, error: unsupportedDebuggerPageError(tab) };
+    }
+    if (managedCdpAttachments.has(tab.id)) {
+      return {
+        ok: true,
+        result: {
+          provider: 'chrome.debugger.attach',
+          action: 'attached',
+          tabId: tab.id,
+          alreadyAttached: true
+        }
+      };
+    }
+
+    try {
+      await attachDebugger(chromeApi, { tabId: tab.id }, timeoutMs);
+      managedCdpAttachments.add(tab.id);
+      return {
+        ok: true,
+        result: {
+          provider: 'chrome.debugger.attach',
+          action: 'attached',
+          tabId: tab.id,
+          alreadyAttached: false
+        }
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: 'CDP_ATTACH_FAILED',
+          message: error.message || String(error),
+          tabId: tab.id
+        }
+      };
+    }
+  }
+
+  async function detachCdpSession({
+    chromeApi,
+    tab,
+    timeoutMs = DEBUGGER_TIMEOUT_MS
+  }) {
+    if (!tab || !tab.id) {
+      return { ok: false, error: { code: 'NO_ACTIVE_TAB' } };
+    }
+    if (!managedCdpAttachments.has(tab.id)) {
+      return {
+        ok: true,
+        result: {
+          provider: 'chrome.debugger.detach',
+          action: 'detached',
+          tabId: tab.id,
+          alreadyDetached: true
+        }
+      };
+    }
+
+    try {
+      await detachDebugger(chromeApi, { tabId: tab.id }, timeoutMs);
+      managedCdpAttachments.delete(tab.id);
+      return {
+        ok: true,
+        result: {
+          provider: 'chrome.debugger.detach',
+          action: 'detached',
+          tabId: tab.id,
+          alreadyDetached: false
+        }
+      };
+    } catch (error) {
+      managedCdpAttachments.delete(tab.id);
+      return {
+        ok: false,
+        error: {
+          code: 'CDP_DETACH_FAILED',
+          message: error.message || String(error),
+          tabId: tab.id
+        }
+      };
+    }
+  }
+
+  async function detachAllCdpSessions({
+    chromeApi,
+    timeoutMs = DEBUGGER_TIMEOUT_MS
+  }) {
+    const detached = [];
+    for (const tabId of [...managedCdpAttachments]) {
+      try {
+        await detachDebugger(chromeApi, { tabId }, timeoutMs);
+      } catch {
+        // The tab may already be gone; either way it is no longer owned here.
+      }
+      managedCdpAttachments.delete(tabId);
+      detached.push(tabId);
+    }
+    return {
+      ok: true,
+      result: {
+        action: 'detached-all',
+        detached
+      }
+    };
+  }
+
   function isPlainObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
   }
@@ -826,10 +946,13 @@
     }
 
     const target = { tabId: tab.id };
+    const managedAttachment = managedCdpAttachments.has(tab.id);
     let attached = false;
     try {
-      await attachDebugger(chromeApi, target, timeoutMs);
-      attached = true;
+      if (!managedAttachment) {
+        await attachDebugger(chromeApi, target, timeoutMs);
+        attached = true;
+      }
       const response = await sendCommand(chromeApi, target, method, params, timeoutMs);
       if (method === 'Page.captureScreenshot') {
         const data = response && typeof response.data === 'string' ? response.data : '';
@@ -849,6 +972,7 @@
           result: {
             provider: `chrome.debugger.${method}`,
             method,
+            managedSession: managedAttachment,
             response: {},
             screenshot: {
               mimeType,
@@ -863,6 +987,7 @@
         result: {
           provider: `chrome.debugger.${method}`,
           method,
+          managedSession: managedAttachment,
           response: response || {}
         }
       };
@@ -876,7 +1001,7 @@
         }
       };
     } finally {
-      if (attached) {
+      if (attached && !managedAttachment) {
         try {
           await detachDebugger(chromeApi, target, timeoutMs);
         } catch {
@@ -1018,7 +1143,10 @@
   const api = {
     CDP_ALLOWED_METHODS,
     DEBUGGER_ACTION_PROVIDER,
+    attachCdpSession,
     buildRuntimeActionExpression,
+    detachAllCdpSessions,
+    detachCdpSession,
     isDebuggerSupportedUrl,
     runCdpCommand,
     runDebuggerAction

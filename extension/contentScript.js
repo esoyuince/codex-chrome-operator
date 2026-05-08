@@ -1780,6 +1780,224 @@ async function resolveActionTarget(message) {
   };
 }
 
+function normalizeLocatorText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function elementLocatorText(element) {
+  return normalizeLocatorText([
+    element.getAttribute('aria-label') || '',
+    element.getAttribute('title') || '',
+    element.innerText || '',
+    element.getAttribute('placeholder') || '',
+    element.getAttribute('name') || ''
+  ].join(' '));
+}
+
+function resolveLocator(message = {}) {
+  const selector = typeof message.selector === 'string' ? message.selector.trim() : '';
+  const text = normalizeLocatorText(message.text);
+  if (!selector && !text) {
+    return {
+      ok: false,
+      error: {
+        code: 'INVALID_SCHEMA',
+        message: 'Locator requires selector or text.'
+      }
+    };
+  }
+  if (selector.length > 300) {
+    return {
+      ok: false,
+      error: {
+        code: 'INVALID_SCHEMA',
+        message: 'Locator selector is too long.'
+      }
+    };
+  }
+
+  let selectorMatches = null;
+  if (selector) {
+    try {
+      selectorMatches = new Set([...document.querySelectorAll(selector)]);
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: 'INVALID_SCHEMA',
+          message: `Invalid locator selector: ${error.message || String(error)}`
+        }
+      };
+    }
+  }
+
+  const candidates = collectObservedElements();
+  const described = globalThis.CodexPageHandles.describeElements(candidates, {
+    location,
+    document,
+    window
+  });
+  const matches = [];
+  for (let index = 0; index < candidates.length; index += 1) {
+    const element = candidates[index];
+    if (selectorMatches && !selectorMatches.has(element)) {
+      continue;
+    }
+    if (text && !elementLocatorText(element).includes(text)) {
+      continue;
+    }
+    matches.push({
+      element,
+      handle: described.items[index].handle
+    });
+  }
+
+  if (matches.length === 0) {
+    return {
+      ok: false,
+      error: {
+        code: 'LOCATOR_NOT_FOUND',
+        message: 'Locator matched no visible actionable element.',
+        selector: selector || null,
+        text: message.text || null
+      }
+    };
+  }
+  if (matches.length > 1) {
+    return {
+      ok: false,
+      error: {
+        code: 'LOCATOR_NOT_UNIQUE',
+        message: 'Locator matched more than one visible actionable element.',
+        matchCount: matches.length,
+        matches: matches.slice(0, 10).map((match) => elementSummary(match.element, match.handle, message))
+      }
+    };
+  }
+
+  return {
+    ok: true,
+    result: {
+      action: 'resolved',
+      selector: selector || null,
+      text: message.text || null,
+      target: elementSummary(matches[0].element, matches[0].handle, message),
+      pageStateId: described.pageStateId
+    }
+  };
+}
+
+globalThis.__codexTargetCueId = globalThis.__codexTargetCueId || 'codex-operator-target-cue';
+
+function removeTargetCue() {
+  const existing = document.getElementById(globalThis.__codexTargetCueId);
+  if (existing && existing.parentNode) {
+    existing.parentNode.removeChild(existing);
+  }
+}
+
+function resolveTargetCueElement(message = {}) {
+  const handle = typeof message.handle === 'string' ? message.handle.trim() : '';
+  if (handle) {
+    const resolved = resolveHandle(handle);
+    if (!resolved || !resolved.ok || !resolved.element) {
+      return {
+        ok: false,
+        error: resolved && resolved.error ? resolved.error : {
+          code: 'HANDLE_NOT_FOUND',
+          message: 'Target handle could not be resolved.'
+        }
+      };
+    }
+    return { ok: true, element: resolved.element, handle };
+  }
+
+  const locator = resolveLocator(message);
+  if (!locator || !locator.ok) {
+    return locator;
+  }
+  const targetHandle = locator.result && locator.result.target && locator.result.target.handle;
+  const resolved = targetHandle ? resolveHandle(targetHandle) : null;
+  if (!resolved || !resolved.ok || !resolved.element) {
+    return {
+      ok: false,
+      error: {
+        code: 'LOCATOR_TARGET_STALE',
+        message: 'Locator resolved, but the target element was not available for highlighting.'
+      }
+    };
+  }
+  return { ok: true, element: resolved.element, handle: targetHandle, pageStateId: locator.result.pageStateId };
+}
+
+function showTargetCue(message = {}) {
+  const resolved = resolveTargetCueElement(message);
+  if (!resolved || !resolved.ok) {
+    return resolved;
+  }
+  const rect = resolved.element.getBoundingClientRect();
+  if (!rect || rect.width <= 0 || rect.height <= 0) {
+    return {
+      ok: false,
+      error: {
+        code: 'TARGET_NOT_VISIBLE',
+        message: 'Target element is not visible enough to highlight.'
+      }
+    };
+  }
+
+  removeTargetCue();
+  const cue = document.createElement('div');
+  cue.id = globalThis.__codexTargetCueId;
+  cue.setAttribute('aria-hidden', 'true');
+  Object.assign(cue.style, {
+    position: 'fixed',
+    left: `${Math.max(0, rect.left - 3)}px`,
+    top: `${Math.max(0, rect.top - 3)}px`,
+    width: `${Math.max(1, rect.width + 6)}px`,
+    height: `${Math.max(1, rect.height + 6)}px`,
+    zIndex: '2147483647',
+    pointerEvents: 'none',
+    border: '3px solid #1a73e8',
+    borderRadius: '6px',
+    boxSizing: 'border-box',
+    boxShadow: '0 0 0 4px rgba(26, 115, 232, 0.22), 0 0 0 9999px rgba(26, 115, 232, 0.08)',
+    background: 'rgba(26, 115, 232, 0.06)'
+  });
+  const label = document.createElement('div');
+  label.textContent = 'Codex target';
+  Object.assign(label.style, {
+    position: 'absolute',
+    left: '0',
+    top: '-28px',
+    maxWidth: '220px',
+    padding: '3px 7px',
+    borderRadius: '4px',
+    background: '#1a73e8',
+    color: '#fff',
+    font: '12px/18px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis'
+  });
+  cue.appendChild(label);
+  document.documentElement.appendChild(cue);
+
+  const durationMs = Number.isFinite(Number(message.durationMs))
+    ? Math.max(100, Math.min(10000, Math.trunc(Number(message.durationMs))))
+    : 1500;
+  window.setTimeout(removeTargetCue, durationMs);
+  return {
+    ok: true,
+    result: {
+      highlighted: true,
+      durationMs,
+      pageStateId: resolved.pageStateId || null,
+      target: elementSummary(resolved.element, resolved.handle, message)
+    }
+  };
+}
+
 function handleContentMessage(message, sender, sendResponse) {
   (async () => {
     if (message && message.type === 'content.readPage') {
@@ -1855,6 +2073,16 @@ function handleContentMessage(message, sender, sendResponse) {
 
     if (message && message.type === 'content.resolveActionTarget') {
       sendResponse(await resolveActionTarget(message));
+      return;
+    }
+
+    if (message && message.type === 'content.resolveLocator') {
+      sendResponse(resolveLocator(message));
+      return;
+    }
+
+    if (message && message.type === 'content.showTarget') {
+      sendResponse(showTargetCue(message));
       return;
     }
 

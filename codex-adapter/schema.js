@@ -242,6 +242,109 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'codex_chrome_recent_tabs',
+    description: 'List enriched recent Chrome tabs without taking control of them.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        limit: { type: 'number', minimum: 1 }
+      },
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_history_search',
+    description: 'Search local Chrome history for context when the user asks to use real browser state.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        query: { type: 'string' },
+        maxResults: { type: 'number', minimum: 1 }
+      },
+      required: ['query']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_bookmark_search',
+    description: 'Search local Chrome bookmarks for user-selected browser context.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        query: { type: 'string' },
+        maxResults: { type: 'number', minimum: 1 }
+      },
+      required: ['query']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_reopen_closed_tab',
+    description: 'Restore the most recent closed Chrome tab or a provided session id, optionally claiming it into the operator session.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        sessionId: { type: 'string' },
+        claim: { type: 'boolean' }
+      },
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_download_wait',
+    description: 'Wait for a Chrome download matching filename, URL, or state and return compact download evidence.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        filenameContains: { type: 'string' },
+        urlContains: { type: 'string' },
+        state: { type: 'string', enum: ['complete', 'in_progress', 'interrupted'] },
+        timeoutMs: { type: 'number', minimum: 0 },
+        pollIntervalMs: { type: 'number', minimum: 50 }
+      },
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_download_show',
+    description: 'Show a Chrome download item in the browser download shelf or file manager when Chrome supports it.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        downloadId: { type: 'number', minimum: 0 }
+      },
+      required: ['downloadId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
     name: 'codex_chrome_claim_tab',
     description: 'Claim a Chrome tab from the latest user tab inventory into this operator session.',
     inputSchema: {
@@ -265,6 +368,74 @@ const TOOL_DEFINITIONS = [
       additionalProperties: false,
       properties: {},
       required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_focus',
+    description: 'Focus the Chrome window for a tab and make that tab active.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabId: { type: 'number', minimum: 0 }
+      },
+      required: ['tabId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_pin',
+    description: 'Pin or unpin a Chrome tab.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabId: { type: 'number', minimum: 0 },
+        pinned: { type: 'boolean' }
+      },
+      required: ['tabId', 'pinned']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_move',
+    description: 'Move a Chrome tab to a new index and optionally another window.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabId: { type: 'number', minimum: 0 },
+        index: { type: 'number', minimum: 0 },
+        windowId: { type: 'number', minimum: 0 }
+      },
+      required: ['tabId', 'index']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_group_rename',
+    description: 'Rename an existing Chrome tab group.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        groupId: { type: 'number', minimum: 0 },
+        title: { type: 'string' }
+      },
+      required: ['groupId', 'title']
     },
     outputContract: {
       untrusted: true,
@@ -321,6 +492,37 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'codex_chrome_policy_status',
+    description: 'Read operator policy toggles for guarded actions and purchase approvals.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {},
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_policy_update',
+    description: 'Update operator policy toggles for guarded actions and purchase approvals.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        guardedActionsEnabled: { type: 'boolean' },
+        purchaseApprovalsEnabled: { type: 'boolean' }
+      },
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
     name: 'codex_chrome_tab_screenshot',
     description: 'Capture an artifact-backed screenshot of a session-owned Chrome tab through the guarded CDP path.',
     inputSchema: {
@@ -330,6 +532,108 @@ const TOOL_DEFINITIONS = [
         tabId: { type: 'number', minimum: 0 },
         format: { type: 'string', enum: ['png', 'jpeg', 'webp'] },
         quality: { type: 'number', minimum: 1 }
+      },
+      required: ['tabId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_goto',
+    description: 'Navigate a session-owned Chrome tab to an approved URL.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabId: { type: 'number', minimum: 0 },
+        url: { type: 'string', format: 'uri' }
+      },
+      required: ['tabId', 'url']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_observe',
+    description: 'Observe a session-owned Chrome tab without relying on the active tab.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabId: { type: 'number', minimum: 0 },
+        ...OBSERVE_OPTION_PROPERTIES
+      },
+      required: ['tabId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_read_page',
+    description: 'Read compact page text from a session-owned Chrome tab without relying on the active tab.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabId: { type: 'number', minimum: 0 },
+        filter: READ_PAGE_PROPERTIES.filter,
+        depth: READ_PAGE_PROPERTIES.depth,
+        maxChars: READ_PAGE_PROPERTIES.maxChars,
+        refId: READ_PAGE_PROPERTIES.refId,
+        includeFormValues: READ_PAGE_PROPERTIES.includeFormValues,
+        maxFieldValueChars: READ_PAGE_PROPERTIES.maxFieldValueChars
+      },
+      required: ['tabId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_locator',
+    description: 'Resolve or run a narrow guarded action against one visible actionable element in a session-owned tab. Fails closed on zero or multiple matches.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabId: { type: 'number', minimum: 0 },
+        selector: { type: 'string' },
+        text: { type: 'string' },
+        action: {
+          type: 'string',
+          enum: ['resolve', 'click', 'type', 'fill', 'focus', 'clear']
+        },
+        textValue: { type: 'string' },
+        includeFormValues: OBSERVE_OPTION_PROPERTIES.includeFormValues,
+        maxFieldValueChars: OBSERVE_OPTION_PROPERTIES.maxFieldValueChars,
+        ...POST_ACTION_SNAPSHOT_PROPERTIES
+      },
+      required: ['tabId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_show_target',
+    description: 'Show a temporary visual cue around a target in a session-owned tab before acting.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabId: { type: 'number', minimum: 0 },
+        handle: { type: 'string' },
+        selector: { type: 'string' },
+        text: { type: 'string' },
+        durationMs: { type: 'number', minimum: 100 }
       },
       required: ['tabId']
     },

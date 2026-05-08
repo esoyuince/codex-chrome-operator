@@ -43,6 +43,18 @@ test('buildMcpSmokeReport summarizes required adapter tool availability', () => 
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_name_session'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_finalize_tabs'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_screenshot'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_goto'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_observe'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_read_page'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_locator'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_download_wait'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_download_show'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_focus'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_pin'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_move'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_group_rename'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_policy_status'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_policy_update'));
 
   const toolSchemaVersion = '2026-05-01.m1';
   const responses = [
@@ -188,4 +200,5 @@ test('package exposes the MCP smoke script', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 
   assert.equal(packageJson.scripts['smoke:mcp'], 'node scripts/mcp-smoke.js');
+  assert.equal(packageJson.scripts['smoke:live'], 'node scripts/live-smoke.js');
 });

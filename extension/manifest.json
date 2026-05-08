@@ -13,7 +13,13 @@
     "debugger",
     "offscreen",
     "alarms",
-    "tabGroups"
+    "tabGroups",
+    "downloads",
+    "downloads.ui",
+    "history",
+    "bookmarks",
+    "sessions",
+    "favicon"
   ],
   "host_permissions": [
     "<all_urls>"

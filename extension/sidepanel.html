@@ -51,16 +51,34 @@
             <div class="permission-name">Guarded actions</div>
             <div class="detail">Navigate, click, fill, upload, and prepare cart.</div>
           </div>
-          <span id="permission-action" class="mini-badge">Checking</span>
+          <label class="switch-control">
+            <input id="guarded-actions-toggle" type="checkbox" checked>
+            <span id="permission-action" class="mini-badge">Checking</span>
+          </label>
         </article>
         <article class="permission-row critical">
           <div>
             <div class="permission-name">Place order / purchase</div>
-            <div class="detail">Checkout, payment, and final order placement require one-time approval.</div>
+            <div class="detail">Checkout, payment, and final order placement stay off unless explicitly enabled.</div>
           </div>
-          <span id="permission-critical" class="mini-badge">Approval</span>
+          <label class="switch-control">
+            <input id="purchase-approvals-toggle" type="checkbox">
+            <span id="permission-critical" class="mini-badge">Off</span>
+          </label>
         </article>
       </div>
+    </section>
+
+    <section class="operational-status" aria-label="Operational status">
+      <div class="label">Operational status</div>
+      <dl class="compact-list">
+        <dt>Session tabs</dt>
+        <dd id="session-tabs-count">...</dd>
+        <dt>Last command</dt>
+        <dd id="last-command">...</dd>
+        <dt>Downloads</dt>
+        <dd id="download-watch-status">Not watching</dd>
+      </dl>
     </section>
 
     <section class="pending-approvals" aria-label="Pending approval requests">

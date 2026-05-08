@@ -1,8 +1,8 @@
 {
   "adapterProtocolVersion": "1.0",
   "toolSchemaVersion": "2026-05-01.m1",
-  "toolDefinitionsHash": "7111dd5e60eb3e15ce58a334613c4128f360c9b1c178730a171913acfddc9987",
-  "toolCount": 41,
+  "toolDefinitionsHash": "cc7608649d036b4d6f953bd4e50e599ad5029ba0214a4424215885dff6db0cfd",
+  "toolCount": 58,
   "toolNames": [
     "codex_chrome_status",
     "codex_chrome_prepare_origin",
@@ -10,12 +10,29 @@
     "codex_chrome_profile_doctor",
     "codex_chrome_profile_onboard",
     "codex_chrome_user_tabs",
+    "codex_chrome_recent_tabs",
+    "codex_chrome_history_search",
+    "codex_chrome_bookmark_search",
+    "codex_chrome_reopen_closed_tab",
+    "codex_chrome_download_wait",
+    "codex_chrome_download_show",
     "codex_chrome_claim_tab",
     "codex_chrome_session_tabs",
+    "codex_chrome_tab_focus",
+    "codex_chrome_tab_pin",
+    "codex_chrome_tab_move",
+    "codex_chrome_tab_group_rename",
     "codex_chrome_new_tab",
     "codex_chrome_name_session",
     "codex_chrome_finalize_tabs",
+    "codex_chrome_policy_status",
+    "codex_chrome_policy_update",
     "codex_chrome_tab_screenshot",
+    "codex_chrome_tab_goto",
+    "codex_chrome_tab_observe",
+    "codex_chrome_tab_read_page",
+    "codex_chrome_tab_locator",
+    "codex_chrome_tab_show_target",
     "codex_chrome_open_observe",
     "codex_chrome_observe",
     "codex_chrome_read_page",
@@ -166,6 +183,146 @@
       }
     },
     {
+      "name": "codex_chrome_recent_tabs",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_history_search",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "maxResults": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_bookmark_search",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "maxResults": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_reopen_closed_tab",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "claim": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_download_wait",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "filenameContains": {
+            "type": "string"
+          },
+          "urlContains": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "complete",
+              "in_progress",
+              "interrupted"
+            ]
+          },
+          "timeoutMs": {
+            "type": "number",
+            "minimum": 0
+          },
+          "pollIntervalMs": {
+            "type": "number",
+            "minimum": 50
+          }
+        },
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_download_show",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "downloadId": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "downloadId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
       "name": "codex_chrome_claim_tab",
       "inputSchema": {
         "type": "object",
@@ -192,6 +349,103 @@
         "additionalProperties": false,
         "properties": {},
         "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_focus",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tabId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_pin",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "pinned": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tabId",
+          "pinned"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_move",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "index": {
+            "type": "number",
+            "minimum": 0
+          },
+          "windowId": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tabId",
+          "index"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_group_rename",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "groupId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "groupId",
+          "title"
+        ]
       },
       "outputContract": {
         "untrusted": true,
@@ -271,6 +525,39 @@
       }
     },
     {
+      "name": "codex_chrome_policy_status",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_policy_update",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "guardedActionsEnabled": {
+            "type": "boolean"
+          },
+          "purchaseApprovalsEnabled": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
       "name": "codex_chrome_tab_screenshot",
       "inputSchema": {
         "type": "object",
@@ -291,6 +578,269 @@
           "quality": {
             "type": "number",
             "minimum": 1
+          }
+        },
+        "required": [
+          "tabId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_goto",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "required": [
+          "tabId",
+          "url"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_observe",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "includeAx": {
+            "type": "boolean"
+          },
+          "includeFormValues": {
+            "type": "boolean"
+          },
+          "maxFieldValueChars": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tabId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_read_page",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "filter": {
+            "type": "string"
+          },
+          "depth": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxChars": {
+            "type": "number",
+            "minimum": 1
+          },
+          "refId": {
+            "type": "string"
+          },
+          "includeFormValues": {
+            "type": "boolean"
+          },
+          "maxFieldValueChars": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tabId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_locator",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "selector": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "resolve",
+              "click",
+              "type",
+              "fill",
+              "focus",
+              "clear"
+            ]
+          },
+          "textValue": {
+            "type": "string"
+          },
+          "includeFormValues": {
+            "type": "boolean"
+          },
+          "maxFieldValueChars": {
+            "type": "number",
+            "minimum": 0
+          },
+          "postActionSnapshot": {
+            "type": "string",
+            "enum": [
+              "delta"
+            ]
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
+          },
+          "requireVerified": {
+            "type": "boolean"
+          },
+          "verify": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "oneOf": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "textAppears",
+                        "elementGone",
+                        "elementEnabled",
+                        "valueEquals"
+                      ]
+                    },
+                    "text": {
+                      "type": "string"
+                    },
+                    "handle": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "oneOf"
+            ]
+          }
+        },
+        "required": [
+          "tabId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_show_target",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "handle": {
+            "type": "string"
+          },
+          "selector": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "durationMs": {
+            "type": "number",
+            "minimum": 100
           }
         },
         "required": [

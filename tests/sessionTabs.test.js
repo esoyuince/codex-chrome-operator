@@ -69,6 +69,260 @@ test('session tabs claim user tab from latest inventory and expose compact statu
   assert.equal(status.sessionTabs[0].ownership, 'user');
 });
 
+test('browser context tools expose enriched tabs, history, bookmarks, downloads, and session recovery', async () => {
+  const session = makeSession();
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    if (method === 'operator.context.recentTabs') {
+      return {
+        ok: true,
+        result: {
+          tabs: [{
+            id: 7,
+            windowId: 2,
+            title: 'Play Console',
+            url: 'https://play.google.com/console',
+            favIconUrl: 'https://play.google.com/favicon.ico',
+            lastAccessed: '2026-05-08T10:00:00.000Z',
+            tabGroup: 'Codex Operator',
+            claimable: true
+          }]
+        }
+      };
+    }
+    if (method === 'operator.context.historySearch') {
+      return { ok: true, result: { entries: [{ url: 'https://example.com', title: 'Example' }] } };
+    }
+    if (method === 'operator.context.bookmarkSearch') {
+      return { ok: true, result: { entries: [{ id: 'b1', url: 'https://example.com', title: 'Example' }] } };
+    }
+    if (method === 'operator.downloads.wait') {
+      return {
+        ok: true,
+        result: {
+          download: {
+            id: 4,
+            state: 'complete',
+            basename: 'report.csv',
+            path: 'C:/Users/example/Downloads/report.csv',
+            exists: true,
+            fileSize: 42
+          }
+        }
+      };
+    }
+    if (method === 'operator.sessions.reopenClosedTab') {
+      return {
+        ok: true,
+        result: {
+          tab: { id: 9, title: 'Restored', url: 'https://example.com', ownership: 'user', active: true }
+        }
+      };
+    }
+    throw new Error(`Unexpected method ${method}`);
+  };
+
+  const recent = await session.handleRpc({ id: 'recent', method: 'operator.context.recentTabs', params: { limit: 5 } });
+  assert.equal(recent.ok, true);
+  assert.equal(recent.result.tabs[0].favIconUrl, 'https://play.google.com/favicon.ico');
+  assert.equal(recent.result.tabs[0].claimable, true);
+
+  const history = await session.handleRpc({ id: 'history', method: 'operator.context.historySearch', params: { query: 'example', maxResults: 3 } });
+  assert.equal(history.ok, true);
+  const bookmarks = await session.handleRpc({ id: 'bookmarks', method: 'operator.context.bookmarkSearch', params: { query: 'example', maxResults: 3 } });
+  assert.equal(bookmarks.ok, true);
+  const download = await session.handleRpc({ id: 'download', method: 'operator.downloads.wait', params: { filenameContains: 'report', timeoutMs: 10 } });
+  assert.equal(download.ok, true);
+  assert.equal(download.result.download.basename, 'report.csv');
+  const reopened = await session.handleRpc({ id: 'reopen', method: 'operator.sessions.reopenClosedTab', params: { claim: true } });
+  assert.equal(reopened.ok, true);
+  assert.equal(session.status({ detail: 'compact' }).sessionTabs[0].id, 9);
+
+  assert.deepEqual(calls.map((call) => call.method), [
+    'operator.context.recentTabs',
+    'operator.context.historySearch',
+    'operator.context.bookmarkSearch',
+    'operator.downloads.wait',
+    'operator.sessions.reopenClosedTab'
+  ]);
+});
+
+test('runtime show target requires a session tab and routes a compact visual cue command', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Example',
+    url: 'https://example.com/app',
+    ownership: 'agent',
+    active: true,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    return {
+      ok: true,
+      result: {
+        highlighted: true,
+        target: { handle: 'el_state_0', label: 'Save', bbox: { x: 10, y: 20, width: 80, height: 30 } }
+      }
+    };
+  };
+
+  const response = await session.handleRpc({
+    id: 'show-target',
+    method: 'operator.runtime.tab.showTarget',
+    params: {
+      tabId: 7,
+      selector: 'button.save',
+      durationMs: 1200
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.highlighted, true);
+  assert.deepEqual(calls, [{
+    method: 'operator.runtime.tab.showTarget',
+    params: {
+      tabId: 7,
+      selector: 'button.save',
+      durationMs: 1200
+    }
+  }]);
+});
+
+test('policy toggles block guarded actions and gate purchase approvals', async () => {
+  const session = makeSession();
+  await session.handleRpc({
+    id: 'approve-local',
+    method: 'operator.approveDomain',
+    params: { origin: 'http://127.0.0.1:18888' }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    if (method === 'page.observe') {
+      return { ok: true, result: { title: 'Fixture', elements: [] } };
+    }
+    return {
+      ok: false,
+      error: {
+        code: ERROR_CODES.HIGH_RISK_BLOCKED,
+        approvalKind: 'payment',
+        targetSummary: 'button: Pay'
+      }
+    };
+  };
+
+  const disabled = await session.handleRpc({
+    id: 'guarded-off',
+    method: 'operator.policy.update',
+    params: { guardedActionsEnabled: false }
+  });
+  assert.equal(disabled.ok, true);
+  assert.equal(disabled.result.policy.guardedActionsEnabled, false);
+
+  const blockedAction = await session.handleRpc({
+    id: 'blocked-click',
+    method: 'page.click',
+    params: { origin: 'http://127.0.0.1:18888', handle: 'pay_button' }
+  });
+  assert.equal(blockedAction.ok, false);
+  assert.equal(blockedAction.error.code, ERROR_CODES.METHOD_NOT_ALLOWED);
+  assert.equal(calls.length, 0);
+
+  const observe = await session.handleRpc({
+    id: 'observe',
+    method: 'page.observe',
+    params: { origin: 'http://127.0.0.1:18888' }
+  });
+  assert.equal(observe.ok, true);
+  assert.deepEqual(calls.map((call) => call.method), ['page.observe']);
+
+  await session.handleRpc({
+    id: 'guarded-on',
+    method: 'operator.policy.update',
+    params: { guardedActionsEnabled: true, purchaseApprovalsEnabled: false }
+  });
+  const purchaseBlocked = await session.handleRpc({
+    id: 'purchase-blocked',
+    method: 'page.click',
+    params: { origin: 'http://127.0.0.1:18888', handle: 'pay_button' }
+  });
+  assert.equal(purchaseBlocked.ok, false);
+  assert.equal(purchaseBlocked.error.code, ERROR_CODES.HIGH_RISK_BLOCKED);
+  assert.equal(purchaseBlocked.error.approvalStatus, 'disabled');
+  assert.equal(purchaseBlocked.error.approvalId, undefined);
+
+  await session.handleRpc({
+    id: 'purchase-on',
+    method: 'operator.policy.update',
+    params: { purchaseApprovalsEnabled: true }
+  });
+  const approvalPrompt = await session.handleRpc({
+    id: 'purchase-approval',
+    method: 'page.click',
+    params: { origin: 'http://127.0.0.1:18888', handle: 'pay_button' }
+  });
+  assert.equal(approvalPrompt.ok, false);
+  assert.equal(approvalPrompt.error.code, ERROR_CODES.HIGH_RISK_BLOCKED);
+  assert.match(approvalPrompt.error.approvalId, /^approval_/);
+  assert.equal(session.status({ detail: 'compact' }).policy.guardedActionsEnabled, true);
+  assert.equal(session.status({ detail: 'compact' }).policy.purchaseApprovalsEnabled, true);
+});
+
+test('download and window tab management commands route through extension bridge', async () => {
+  const session = makeSession();
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    if (method === 'operator.downloads.show') {
+      return { ok: true, result: { shown: true, downloadId: params.downloadId } };
+    }
+    if (method === 'operator.tabs.focus') {
+      return { ok: true, result: { tab: { id: params.tabId, title: 'Focused', url: 'https://example.com', ownership: 'user', active: true } } };
+    }
+    if (method === 'operator.tabs.pin') {
+      return { ok: true, result: { tab: { id: params.tabId, title: 'Pinned', url: 'https://example.com', pinned: params.pinned } } };
+    }
+    if (method === 'operator.tabs.move') {
+      return { ok: true, result: { tab: { id: params.tabId, index: params.index, windowId: params.windowId || 1 } } };
+    }
+    if (method === 'operator.tabs.groupRename') {
+      return { ok: true, result: { groupId: params.groupId, title: params.title } };
+    }
+    throw new Error(`Unexpected method ${method}`);
+  };
+
+  const shown = await session.handleRpc({ id: 'show-download', method: 'operator.downloads.show', params: { downloadId: 4 } });
+  assert.equal(shown.ok, true);
+  assert.equal(shown.result.shown, true);
+  const focused = await session.handleRpc({ id: 'focus-tab', method: 'operator.tabs.focus', params: { tabId: 7 } });
+  assert.equal(focused.ok, true);
+  const pinned = await session.handleRpc({ id: 'pin-tab', method: 'operator.tabs.pin', params: { tabId: 7, pinned: true } });
+  assert.equal(pinned.ok, true);
+  const moved = await session.handleRpc({ id: 'move-tab', method: 'operator.tabs.move', params: { tabId: 7, index: 1, windowId: 2 } });
+  assert.equal(moved.ok, true);
+  const renamed = await session.handleRpc({ id: 'rename-group', method: 'operator.tabs.groupRename', params: { groupId: 3, title: 'Work' } });
+  assert.equal(renamed.ok, true);
+
+  assert.deepEqual(calls, [
+    { method: 'operator.downloads.show', params: { downloadId: 4 } },
+    { method: 'operator.tabs.focus', params: { tabId: 7 } },
+    { method: 'operator.tabs.pin', params: { tabId: 7, pinned: true } },
+    { method: 'operator.tabs.move', params: { tabId: 7, index: 1, windowId: 2 } },
+    { method: 'operator.tabs.groupRename', params: { groupId: 3, title: 'Work' } }
+  ]);
+});
+
 test('session tabs reject guessed claims outside current inventory', async () => {
   const session = makeSession();
   session.enqueueExtensionCommand = async (method) => {
@@ -254,6 +508,27 @@ test('guarded CDP commands require session-owned tabs and origin readiness', asy
     method: 'operator.approveDomain',
     params: { origin: 'https://example.com' }
   });
+  const attached = await session.handleRpc({
+    id: 'cdp-attach',
+    method: 'operator.cdp.attach',
+    params: {
+      tabId: 7
+    }
+  });
+  assert.equal(attached.ok, true);
+
+  const invalidInput = await session.handleRpc({
+    id: 'cdp-invalid-input',
+    method: 'operator.cdp.execute',
+    params: {
+      tabId: 7,
+      method: 'Input.dispatchMouseEvent',
+      params: { type: 'mousePressed', x: '1', y: 2 }
+    }
+  });
+  assert.equal(invalidInput.ok, false);
+  assert.equal(invalidInput.error.code, ERROR_CODES.INVALID_SCHEMA);
+
   const layout = await session.handleRpc({
     id: 'cdp-layout',
     method: 'operator.cdp.execute',
@@ -264,11 +539,32 @@ test('guarded CDP commands require session-owned tabs and origin readiness', asy
     }
   });
   assert.equal(layout.ok, true);
+  const typed = await session.handleRpc({
+    id: 'cdp-insert-text',
+    method: 'operator.cdp.execute',
+    params: {
+      tabId: 7,
+      method: 'Input.insertText',
+      params: { text: 'hello' }
+    }
+  });
+  assert.equal(typed.ok, true);
+  const detached = await session.handleRpc({
+    id: 'cdp-detach',
+    method: 'operator.cdp.detach',
+    params: {
+      tabId: 7
+    }
+  });
+  assert.equal(detached.ok, true);
   assert.deepEqual(calls.map((call) => call.method), [
     'operator.cdp.execute',
-    'operator.cdp.execute'
+    'operator.cdp.attach',
+    'operator.cdp.execute',
+    'operator.cdp.execute',
+    'operator.cdp.detach'
   ]);
-  assert.deepEqual(calls[1].params, {
+  assert.deepEqual(calls[2].params, {
     tabId: 7,
     method: 'Page.getLayoutMetrics',
     params: {}
@@ -327,4 +623,99 @@ test('guarded CDP screenshot stores artifact without returning raw image data', 
   const auditEntry = session.audit.tail({ limit: 1 })[0];
   assert.equal(auditEntry.params.method, 'Page.captureScreenshot');
   assert.deepEqual(auditEntry.params.paramKeys, ['format']);
+});
+
+test('runtime tab commands route through session-owned tabs and fail closed for ambiguous locators', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Example',
+    url: 'https://example.com/app',
+    ownership: 'agent',
+    active: true,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+  await session.handleRpc({
+    id: 'approve-docs',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://docs.example.com' }
+  });
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    if (method === 'operator.runtime.tab.goto') {
+      return {
+        ok: true,
+        result: {
+          action: 'navigate',
+          tab: { id: 7, title: 'Docs', url: params.url, ownership: 'agent', active: true }
+        }
+      };
+    }
+    if (method === 'operator.runtime.tab.observe') {
+      return {
+        ok: true,
+        result: {
+          title: 'Docs',
+          elements: []
+        }
+      };
+    }
+    if (method === 'operator.runtime.tab.locator') {
+      return {
+        ok: false,
+        error: {
+          code: 'LOCATOR_NOT_UNIQUE',
+          message: 'Locator matched more than one visible actionable element.',
+          matchCount: 2
+        }
+      };
+    }
+    throw new Error(`Unexpected method ${method}`);
+  };
+
+  const navigated = await session.handleRpc({
+    id: 'runtime-goto',
+    method: 'operator.runtime.tab.goto',
+    params: {
+      tabId: 7,
+      url: 'https://docs.example.com/page'
+    }
+  });
+  assert.equal(navigated.ok, true);
+  assert.equal(session.sessionTabs.get(7).url, 'https://docs.example.com/page');
+
+  const observed = await session.handleRpc({
+    id: 'runtime-observe',
+    method: 'operator.runtime.tab.observe',
+    params: {
+      tabId: 7,
+      mode: 'tiny'
+    }
+  });
+  assert.equal(observed.ok, true);
+  assert.equal(observed.result.origin, 'https://docs.example.com');
+
+  const locator = await session.handleRpc({
+    id: 'runtime-locator',
+    method: 'operator.runtime.tab.locator',
+    params: {
+      tabId: 7,
+      selector: 'button',
+      action: 'click'
+    }
+  });
+  assert.equal(locator.ok, false);
+  assert.equal(locator.error.code, 'LOCATOR_NOT_UNIQUE');
+  assert.deepEqual(calls.map((call) => call.method), [
+    'operator.runtime.tab.goto',
+    'operator.runtime.tab.observe',
+    'operator.runtime.tab.locator'
+  ]);
 });

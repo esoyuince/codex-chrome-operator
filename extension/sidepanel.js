@@ -12,6 +12,11 @@ const els = {
   permissionSafe: document.getElementById('permission-safe'),
   permissionAction: document.getElementById('permission-action'),
   permissionCritical: document.getElementById('permission-critical'),
+  guardedActionsToggle: document.getElementById('guarded-actions-toggle'),
+  purchaseApprovalsToggle: document.getElementById('purchase-approvals-toggle'),
+  sessionTabsCount: document.getElementById('session-tabs-count'),
+  lastCommand: document.getElementById('last-command'),
+  downloadWatchStatus: document.getElementById('download-watch-status'),
   pendingApprovals: document.getElementById('pending-approvals'),
   blockedSites: document.getElementById('blocked-sites'),
   blockedSitesDetail: document.getElementById('blocked-sites-detail'),
@@ -89,6 +94,17 @@ async function readDaemonStatus() {
 async function readApprovals() {
   try {
     return await chrome.runtime.sendMessage({ type: 'operator.approvals.list' });
+  } catch (error) {
+    return {
+      ok: false,
+      statusError: formatError(error)
+    };
+  }
+}
+
+async function readPolicyStatus() {
+  try {
+    return await chrome.runtime.sendMessage({ type: 'operator.policy.status' });
   } catch (error) {
     return {
       ok: false,
@@ -193,11 +209,16 @@ function setMiniBadge(element, state, text) {
   element.textContent = text;
 }
 
-function renderPermissions({ connectionState, tab, blockedStatus }) {
+function renderPermissions({ connectionState, tab, blockedStatus, policy }) {
   const ready = isConnectedState(connectionState) && tab && tab.origin && !blockedStatus.blocked;
+  const guardedOn = policy.guardedActionsEnabled !== false;
+  const purchaseOn = policy.purchaseApprovalsEnabled === true;
   setMiniBadge(els.permissionSafe, ready ? 'ok' : 'warn', ready ? 'Ready' : 'Blocked');
-  setMiniBadge(els.permissionAction, ready ? 'warn' : 'disabled', ready ? 'Guarded' : 'Unavailable');
-  setMiniBadge(els.permissionCritical, 'danger', 'One-time');
+  setMiniBadge(els.permissionAction, ready && guardedOn ? 'warn' : 'disabled', ready && guardedOn ? 'Guarded' : 'Off');
+  setMiniBadge(els.permissionCritical, purchaseOn ? 'danger' : 'disabled', purchaseOn ? 'Approval' : 'Off');
+  els.guardedActionsToggle.checked = guardedOn;
+  els.purchaseApprovalsToggle.checked = purchaseOn;
+  els.guardedActionsToggle.disabled = !ready;
 }
 
 function approvalTitle(approval) {
@@ -283,6 +304,7 @@ async function refresh() {
   const status = await readStatus();
   const daemonStatus = await readDaemonStatus();
   const approvalsStatus = await readApprovals();
+  const policyStatus = await readPolicyStatus();
   const fallbackTab = status.ok ? null : await readActiveTabFallback();
   const daemonResult = daemonStatus && daemonStatus.ok ? daemonStatus.result : null;
   const tab = (status && status.activeTab) || (daemonResult && daemonResult.activeTab) || fallbackTab;
@@ -300,6 +322,11 @@ async function refresh() {
     : daemonResult && Array.isArray(daemonResult.pendingApprovals)
       ? daemonResult.pendingApprovals
       : [];
+  const policy = policyStatus && policyStatus.ok && policyStatus.result && policyStatus.result.policy
+    ? policyStatus.result.policy
+    : daemonResult && daemonResult.policy
+      ? daemonResult.policy
+      : { guardedActionsEnabled: true, purchaseApprovalsEnabled: false };
   const blockedStatus = await readBlockedOriginsStatus(tab && tab.origin);
 
   currentOrigin = tab && tab.origin && tab.origin !== 'null' ? tab.origin : null;
@@ -314,7 +341,15 @@ async function refresh() {
     els.siteAccess,
     blockedStatus.blocked ? `Blocked by ${blockedStatus.blockedPattern}` : 'Allowed'
   );
-  renderPermissions({ connectionState, tab, blockedStatus });
+  renderPermissions({ connectionState, tab, blockedStatus, policy });
+  setText(els.sessionTabsCount, daemonResult && Array.isArray(daemonResult.sessionTabs)
+    ? String(daemonResult.sessionTabs.length)
+    : '0');
+  const recentEvent = daemonResult && Array.isArray(daemonResult.recentEvents) && daemonResult.recentEvents.length
+    ? daemonResult.recentEvents[daemonResult.recentEvents.length - 1]
+    : null;
+  setText(els.lastCommand, recentEvent && recentEvent.method ? recentEvent.method : 'none');
+  setText(els.downloadWatchStatus, 'Available via codex_chrome_download_wait');
   renderApprovals(approvals, approvalsStatus.statusError || null);
   els.blockedSites.value = blockedStatus.blockedOrigins.join('\n');
   setText(
@@ -355,6 +390,32 @@ els.connect.addEventListener('click', async () => {
 });
 
 els.refresh.addEventListener('click', refresh);
+
+async function updatePolicyToggle(update) {
+  els.guardedActionsToggle.disabled = true;
+  els.purchaseApprovalsToggle.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'operator.policy.update',
+      ...update
+    });
+    if (!response || !response.ok) {
+      els.nextStep.textContent = `Policy update failed: ${formatError(response && response.error) || 'unknown error'}`;
+    }
+  } catch (error) {
+    els.nextStep.textContent = `Policy update failed: ${formatError(error) || 'unknown error'}`;
+  } finally {
+    await refresh();
+  }
+}
+
+els.guardedActionsToggle.addEventListener('change', () => {
+  updatePolicyToggle({ guardedActionsEnabled: els.guardedActionsToggle.checked });
+});
+
+els.purchaseApprovalsToggle.addEventListener('change', () => {
+  updatePolicyToggle({ purchaseApprovalsEnabled: els.purchaseApprovalsToggle.checked });
+});
 
 els.pendingApprovals.addEventListener('click', async (event) => {
   const button = event.target.closest('button[data-approval-action]');

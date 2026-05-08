@@ -96,6 +96,7 @@ button.secondary {
 .blocked-sites,
 .permissions,
 .pending-approvals,
+.operational-status,
 .next-step {
   background: #ffffff;
   border: 1px solid #d8dee4;
@@ -216,6 +217,19 @@ button.secondary {
 .mini-badge.disabled {
   background: #eaeef2;
   color: #566573;
+}
+
+.switch-control {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.switch-control input {
+  accent-color: #1f6feb;
+  height: 16px;
+  margin: 0;
+  width: 16px;
 }
 
 .approval-actions {

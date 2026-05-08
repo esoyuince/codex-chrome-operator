@@ -2,7 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  attachCdpSession,
   buildRuntimeActionExpression,
+  detachCdpSession,
   isDebuggerSupportedUrl,
   runCdpCommand,
   runDebuggerAction
@@ -90,6 +92,34 @@ test('runCdpCommand executes allowlisted CDP method with scoped attach and detac
   assert.deepEqual(calls.map((call) => call.method), [
     'attach',
     'Page.getLayoutMetrics',
+    'detach'
+  ]);
+});
+
+test('managed CDP attach keeps later execute on the same debugger session until detach', async () => {
+  const { chromeApi, calls } = makeChrome({
+    commandResults: {
+      'Input.insertText': {}
+    }
+  });
+  const tab = { id: 17, url: 'https://example.com/app' };
+
+  const attached = await attachCdpSession({ chromeApi, tab });
+  const executed = await runCdpCommand({
+    chromeApi,
+    tab,
+    method: 'Input.insertText',
+    params: { text: 'hello' }
+  });
+  const detached = await detachCdpSession({ chromeApi, tab });
+
+  assert.equal(attached.ok, true);
+  assert.equal(executed.ok, true);
+  assert.equal(executed.result.managedSession, true);
+  assert.equal(detached.ok, true);
+  assert.deepEqual(calls.map((call) => call.method), [
+    'attach',
+    'Input.insertText',
     'detach'
   ]);
 });

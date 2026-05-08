@@ -59,6 +59,10 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   const nameSession = response.result.tools.find((tool) => tool.name === 'codex_chrome_name_session');
   const finalizeTabs = response.result.tools.find((tool) => tool.name === 'codex_chrome_finalize_tabs');
   const tabScreenshot = response.result.tools.find((tool) => tool.name === 'codex_chrome_tab_screenshot');
+  const tabGoto = response.result.tools.find((tool) => tool.name === 'codex_chrome_tab_goto');
+  const tabObserve = response.result.tools.find((tool) => tool.name === 'codex_chrome_tab_observe');
+  const tabReadPage = response.result.tools.find((tool) => tool.name === 'codex_chrome_tab_read_page');
+  const tabLocator = response.result.tools.find((tool) => tool.name === 'codex_chrome_tab_locator');
   assert.ok(status);
   assert.equal(status.inputSchema.additionalProperties, false);
   assert.deepEqual(status.inputSchema.required, []);
@@ -120,6 +124,15 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   assert.equal(tabScreenshot.inputSchema.additionalProperties, false);
   assert.deepEqual(tabScreenshot.inputSchema.required, ['tabId']);
   assert.deepEqual(tabScreenshot.inputSchema.properties.format.enum, ['png', 'jpeg', 'webp']);
+  assert.ok(tabGoto);
+  assert.deepEqual(tabGoto.inputSchema.required, ['tabId', 'url']);
+  assert.ok(tabObserve);
+  assert.deepEqual(tabObserve.inputSchema.required, ['tabId']);
+  assert.ok(tabReadPage);
+  assert.deepEqual(tabReadPage.inputSchema.required, ['tabId']);
+  assert.ok(tabLocator);
+  assert.deepEqual(tabLocator.inputSchema.required, ['tabId']);
+  assert.deepEqual(tabLocator.inputSchema.properties.action.enum, ['resolve', 'click', 'type', 'fill', 'focus', 'clear']);
 });
 
 test('MCP handler calls session tab tools through the adapter', async () => {
@@ -186,13 +199,23 @@ test('MCP handler calls session tab tools through the adapter', async () => {
       arguments: { keep: [{ tabId: 7, status: 'deliverable' }] }
     }
   });
+  await handleMessage({
+    jsonrpc: '2.0',
+    id: 6,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_tab_locator',
+      arguments: { tabId: 7, selector: 'button', action: 'resolve' }
+    }
+  });
 
   assert.deepEqual(calls, [
     { toolName: 'codex_chrome_user_tabs', input: {} },
     { toolName: 'codex_chrome_claim_tab', input: { tabId: 7 } },
     { toolName: 'codex_chrome_new_tab', input: {} },
     { toolName: 'codex_chrome_name_session', input: { name: 'Firebase cleanup' } },
-    { toolName: 'codex_chrome_finalize_tabs', input: { keep: [{ tabId: 7, status: 'deliverable' }] } }
+    { toolName: 'codex_chrome_finalize_tabs', input: { keep: [{ tabId: 7, status: 'deliverable' }] } },
+    { toolName: 'codex_chrome_tab_locator', input: { tabId: 7, selector: 'button', action: 'resolve' } }
   ]);
 });
 

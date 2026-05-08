@@ -111,10 +111,16 @@ function clearsLastErrorOnSuccess(method) {
     'operator.ensureStarted',
     'operator.approvals.approve',
     'operator.approvals.reject',
-    'operator.approvals.run'
+    'operator.approvals.run',
+    'operator.policy.status',
+    'operator.policy.update'
   ].includes(method) ||
     method.startsWith('page.') ||
     method.startsWith('operator.tabs.') ||
+    method.startsWith('operator.runtime.') ||
+    method.startsWith('operator.context.') ||
+    method.startsWith('operator.downloads.') ||
+    method.startsWith('operator.sessions.') ||
     method.startsWith('operator.cdp.') ||
     method === 'operator.session.name';
 }
@@ -162,12 +168,45 @@ const BATCH_ACTION_KINDS = Object.freeze({
 });
 
 const CDP_ALLOWED_METHODS = new Set([
+  'DOM.scrollIntoViewIfNeeded',
+  'Input.dispatchKeyEvent',
+  'Input.dispatchMouseEvent',
+  'Input.insertText',
   'Page.captureScreenshot',
   'Page.getLayoutMetrics',
   'Target.getTargets'
 ]);
 const CDP_METADATA_METHODS = new Set([
   'Target.getTargets'
+]);
+const RUNTIME_LOCATOR_ACTIONS = new Set(['resolve', 'click', 'type', 'fill', 'focus', 'clear']);
+const RUNTIME_LOCATOR_MUTATION_METHODS = Object.freeze({
+  click: 'page.click',
+  type: 'page.type',
+  fill: 'page.fill',
+  focus: 'page.focus',
+  clear: 'page.clear'
+});
+const GUARDED_ACTION_KINDS = new Set([
+  'navigate',
+  'click',
+  'type',
+  'fill',
+  'clear',
+  'focus',
+  'select',
+  'check',
+  'upload',
+  'cart-preparation',
+  'batch',
+  'pressKey'
+]);
+const PURCHASE_APPROVAL_KINDS = new Set([
+  'checkout',
+  'payment',
+  'order-placement',
+  'purchase',
+  'subscription-start'
 ]);
 
 const BATCH_ACTION_FIELDS = new Set([
@@ -343,6 +382,179 @@ function safeCdpAuditParams(params = {}) {
   };
 }
 
+function cdpParamError(message, extra = {}) {
+  return guardError(ERROR_CODES.INVALID_SCHEMA, message, extra);
+}
+
+function requireFiniteCdpNumber(params, key) {
+  if (!Number.isFinite(params[key])) {
+    return cdpParamError(`CDP ${key} must be a finite number.`, { field: `params.${key}` });
+  }
+  return null;
+}
+
+function requireStringLength(params, key, maxLength) {
+  if (params[key] === undefined) {
+    return null;
+  }
+  if (typeof params[key] !== 'string') {
+    return cdpParamError(`CDP ${key} must be a string.`, { field: `params.${key}` });
+  }
+  if (params[key].length > maxLength) {
+    return cdpParamError(`CDP ${key} is too long.`, {
+      field: `params.${key}`,
+      maxLength
+    });
+  }
+  return null;
+}
+
+function rejectUnknownCdpParams(params, allowedKeys) {
+  for (const key of Object.keys(params)) {
+    if (!allowedKeys.has(key)) {
+      return cdpParamError(`CDP params do not accept field: ${key}.`, {
+        field: `params.${key}`
+      });
+    }
+  }
+  return null;
+}
+
+function validateCdpParamsForMethod(method, params) {
+  if (!isPlainObject(params)) {
+    return cdpParamError('CDP params must be an object.');
+  }
+
+  if (method === 'Input.insertText') {
+    const unknown = rejectUnknownCdpParams(params, new Set(['text']));
+    if (unknown) {
+      return unknown;
+    }
+    if (typeof params.text !== 'string' || params.text.length === 0) {
+      return cdpParamError('CDP Input.insertText requires non-empty text.', { field: 'params.text' });
+    }
+    if (params.text.length > 2000) {
+      return cdpParamError('CDP Input.insertText text is too long.', {
+        field: 'params.text',
+        maxLength: 2000
+      });
+    }
+    return guardOk({ params });
+  }
+
+  if (method === 'Input.dispatchMouseEvent') {
+    const allowed = new Set(['type', 'x', 'y', 'button', 'buttons', 'clickCount', 'modifiers', 'deltaX', 'deltaY']);
+    const unknown = rejectUnknownCdpParams(params, allowed);
+    if (unknown) {
+      return unknown;
+    }
+    if (!['mouseMoved', 'mousePressed', 'mouseReleased', 'mouseWheel'].includes(params.type)) {
+      return cdpParamError('CDP mouse event type is not allowed.', { field: 'params.type' });
+    }
+    const xError = requireFiniteCdpNumber(params, 'x');
+    if (xError) {
+      return xError;
+    }
+    const yError = requireFiniteCdpNumber(params, 'y');
+    if (yError) {
+      return yError;
+    }
+    if (params.button !== undefined && !['none', 'left', 'middle', 'right', 'back', 'forward'].includes(params.button)) {
+      return cdpParamError('CDP mouse button is not allowed.', { field: 'params.button' });
+    }
+    for (const key of ['buttons', 'clickCount', 'modifiers', 'deltaX', 'deltaY']) {
+      if (params[key] !== undefined && !Number.isFinite(params[key])) {
+        return cdpParamError(`CDP ${key} must be a finite number.`, { field: `params.${key}` });
+      }
+    }
+    return guardOk({ params });
+  }
+
+  if (method === 'Input.dispatchKeyEvent') {
+    const allowed = new Set([
+      'type',
+      'modifiers',
+      'timestamp',
+      'text',
+      'unmodifiedText',
+      'keyIdentifier',
+      'code',
+      'key',
+      'windowsVirtualKeyCode',
+      'nativeVirtualKeyCode',
+      'autoRepeat',
+      'isKeypad',
+      'isSystemKey',
+      'location',
+      'commands'
+    ]);
+    const unknown = rejectUnknownCdpParams(params, allowed);
+    if (unknown) {
+      return unknown;
+    }
+    if (!['keyDown', 'keyUp', 'rawKeyDown', 'char'].includes(params.type)) {
+      return cdpParamError('CDP key event type is not allowed.', { field: 'params.type' });
+    }
+    for (const key of ['text', 'unmodifiedText', 'keyIdentifier', 'code', 'key']) {
+      const stringError = requireStringLength(params, key, 120);
+      if (stringError) {
+        return stringError;
+      }
+    }
+    for (const key of ['modifiers', 'timestamp', 'windowsVirtualKeyCode', 'nativeVirtualKeyCode', 'location']) {
+      if (params[key] !== undefined && !Number.isFinite(params[key])) {
+        return cdpParamError(`CDP ${key} must be a finite number.`, { field: `params.${key}` });
+      }
+    }
+    for (const key of ['autoRepeat', 'isKeypad', 'isSystemKey']) {
+      if (params[key] !== undefined && typeof params[key] !== 'boolean') {
+        return cdpParamError(`CDP ${key} must be boolean.`, { field: `params.${key}` });
+      }
+    }
+    if (params.commands !== undefined) {
+      if (!Array.isArray(params.commands) || params.commands.some((command) => typeof command !== 'string' || command.length > 80)) {
+        return cdpParamError('CDP commands must be an array of short strings.', { field: 'params.commands' });
+      }
+    }
+    return guardOk({ params });
+  }
+
+  if (method === 'DOM.scrollIntoViewIfNeeded') {
+    const allowed = new Set(['nodeId', 'backendNodeId', 'objectId', 'rect']);
+    const unknown = rejectUnknownCdpParams(params, allowed);
+    if (unknown) {
+      return unknown;
+    }
+    const hasNodeRef = Number.isInteger(params.nodeId) ||
+      Number.isInteger(params.backendNodeId) ||
+      (typeof params.objectId === 'string' && params.objectId.length > 0);
+    if (!hasNodeRef) {
+      return cdpParamError('CDP DOM.scrollIntoViewIfNeeded requires nodeId, backendNodeId, or objectId.', {
+        field: 'params'
+      });
+    }
+    if (params.rect !== undefined) {
+      if (!isPlainObject(params.rect)) {
+        return cdpParamError('CDP rect must be an object.', { field: 'params.rect' });
+      }
+      const rectUnknown = rejectUnknownCdpParams(params.rect, new Set(['x', 'y', 'width', 'height']));
+      if (rectUnknown) {
+        return rectUnknown;
+      }
+      for (const key of ['x', 'y', 'width', 'height']) {
+        if (params.rect[key] !== undefined && !Number.isFinite(params.rect[key])) {
+          return cdpParamError(`CDP rect.${key} must be a finite number.`, {
+            field: `params.rect.${key}`
+          });
+        }
+      }
+    }
+    return guardOk({ params });
+  }
+
+  return guardOk({ params });
+}
+
 function summarizeReadiness({
   origin,
   profileVerified,
@@ -473,6 +685,15 @@ function normalizeSessionTab(tab, fallbackOwnership = null) {
     id: tabId.tabId,
     title: typeof tab.title === 'string' ? tab.title : null,
     url: typeof tab.url === 'string' ? tab.url : null,
+    windowId: typeof tab.windowId === 'number' ? tab.windowId : null,
+    groupId: typeof tab.groupId === 'number' ? tab.groupId : null,
+    favIconUrl: typeof tab.favIconUrl === 'string' ? tab.favIconUrl : null,
+    status: typeof tab.status === 'string' ? tab.status : null,
+    loadingState: typeof tab.loadingState === 'string' ? tab.loadingState : null,
+    pinned: tab.pinned === true,
+    audible: tab.audible === true,
+    muted: tab.muted === true,
+    lastAccessed: typeof tab.lastAccessed === 'string' ? tab.lastAccessed : null,
     ownership: ownership === 'agent' || ownership === 'user' ? ownership : null,
     active: tab.active === true,
     finalizedStatus: tab.finalizedStatus === 'handoff' || tab.finalizedStatus === 'deliverable'
@@ -492,10 +713,21 @@ function normalizeUserTab(tab) {
   }
   return {
     id: normalized.id,
+    windowId: normalized.windowId,
     title: normalized.title,
     url: normalized.url,
+    favIconUrl: normalized.favIconUrl,
+    groupId: normalized.groupId,
+    active: normalized.active,
+    pinned: normalized.pinned,
+    audible: normalized.audible,
+    muted: normalized.muted,
+    status: normalized.status,
+    loadingState: normalized.loadingState,
+    lastAccessed: normalized.lastAccessed || (typeof tab.lastAccessed === 'string' ? tab.lastAccessed : null),
     lastOpened: typeof tab.lastOpened === 'string' ? tab.lastOpened : null,
-    tabGroup: typeof tab.tabGroup === 'string' ? tab.tabGroup : null
+    tabGroup: typeof tab.tabGroup === 'string' ? tab.tabGroup : null,
+    claimable: tab.claimable !== false
   };
 }
 
@@ -536,6 +768,164 @@ function validateFinalizeKeep(keep, sessionTabs) {
     normalized.push({ tabId: tabId.tabId, status: entry.status });
   }
   return guardOk({ keep: normalized });
+}
+
+function validateRuntimeLocatorParams(params = {}) {
+  const action = typeof params.action === 'string' && params.action.trim()
+    ? params.action.trim()
+    : 'resolve';
+  if (!RUNTIME_LOCATOR_ACTIONS.has(action)) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Unsupported locator action.', {
+      action
+    });
+  }
+  const selector = typeof params.selector === 'string' ? params.selector.trim() : '';
+  const text = typeof params.text === 'string' ? params.text.trim() : '';
+  if (!selector && !text) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator requires selector or text.');
+  }
+  if (selector.length > 300) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator selector is too long.', {
+      maxLength: 300
+    });
+  }
+  if (text.length > 200) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator text is too long.', {
+      maxLength: 200
+    });
+  }
+  if ((action === 'type' || action === 'fill') && typeof params.textValue !== 'string') {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator type/fill actions require textValue.');
+  }
+  return guardOk({
+    action,
+    selector: selector || undefined,
+    text: text || undefined,
+    textValue: typeof params.textValue === 'string' ? params.textValue : undefined
+  });
+}
+
+function pickRuntimeObservationParams(params = {}) {
+  return pickDefinedLocal(params, [
+    'mode',
+    'maxActionableHandles',
+    'summaryMaxChars',
+    'sincePageStateId',
+    'includeAx',
+    'includeFormValues',
+    'maxFieldValueChars',
+    'postActionSnapshot',
+    'requireVerified',
+    'verify'
+  ]);
+}
+
+function pickRuntimeReadPageParams(params = {}) {
+  return pickDefinedLocal(params, [
+    'filter',
+    'depth',
+    'maxChars',
+    'refId',
+    'includeFormValues',
+    'maxFieldValueChars'
+  ]);
+}
+
+function pickDefinedLocal(input, fields) {
+  return Object.fromEntries(
+    fields
+      .filter((field) => input[field] !== undefined)
+      .map((field) => [field, input[field]])
+  );
+}
+
+function boundedInteger(value, fallback, min, max) {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+function validateContextSearchParams(params = {}, label = 'query') {
+  const query = typeof params.query === 'string' ? params.query.trim() : '';
+  if (!query) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, `${label} must be a non-empty string.`);
+  }
+  if (query.length > 200) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, `${label} is too long.`, { maxLength: 200 });
+  }
+  return guardOk({
+    query,
+    maxResults: boundedInteger(params.maxResults, 10, 1, 50)
+  });
+}
+
+function normalizeContextEntry(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+  return cloneJson(entry);
+}
+
+function normalizeDownloadEntry(download) {
+  if (!download || typeof download !== 'object') {
+    return null;
+  }
+  return {
+    id: download.id,
+    url: typeof download.url === 'string' ? download.url : null,
+    finalUrl: typeof download.finalUrl === 'string' ? download.finalUrl : null,
+    filename: typeof download.filename === 'string' ? download.filename : null,
+    basename: typeof download.basename === 'string' ? download.basename : null,
+    state: typeof download.state === 'string' ? download.state : null,
+    danger: typeof download.danger === 'string' ? download.danger : null,
+    exists: download.exists === true,
+    fileSize: typeof download.fileSize === 'number' ? download.fileSize : null,
+    mime: typeof download.mime === 'string' ? download.mime : null,
+    startTime: typeof download.startTime === 'string' ? download.startTime : null,
+    endTime: typeof download.endTime === 'string' ? download.endTime : null,
+    error: typeof download.error === 'string' ? download.error : null
+  };
+}
+
+function validateDownloadWaitParams(params = {}) {
+  const filenameContains = typeof params.filenameContains === 'string' ? params.filenameContains.trim() : '';
+  const urlContains = typeof params.urlContains === 'string' ? params.urlContains.trim() : '';
+  const state = typeof params.state === 'string' ? params.state.trim() : '';
+  if (state && !['complete', 'in_progress', 'interrupted'].includes(state)) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'state must be complete, in_progress, or interrupted.', { state });
+  }
+  if (filenameContains.length > 200 || urlContains.length > 500) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Download match filters are too long.');
+  }
+  return guardOk({
+    ...(filenameContains ? { filenameContains } : {}),
+    ...(urlContains ? { urlContains } : {}),
+    ...(state ? { state } : {}),
+    timeoutMs: boundedInteger(params.timeoutMs, 30000, 0, 300000),
+    pollIntervalMs: boundedInteger(params.pollIntervalMs, 500, 50, 5000)
+  });
+}
+
+function validateTargetCueParams(params = {}) {
+  const handle = typeof params.handle === 'string' ? params.handle.trim() : '';
+  const selector = typeof params.selector === 'string' ? params.selector.trim() : '';
+  const text = typeof params.text === 'string' ? params.text.trim() : '';
+  if (!handle && !selector && !text) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'showTarget requires handle, selector, or text.');
+  }
+  if (selector.length > 300 || text.length > 200 || handle.length > 200) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'showTarget target hint is too long.');
+  }
+  return guardOk({
+    ...(handle ? { handle } : {}),
+    ...(selector ? { selector } : {}),
+    ...(text ? { text } : {}),
+    durationMs: boundedInteger(params.durationMs, 1500, 100, 10000)
+  });
 }
 
 class SessionManager {
@@ -612,6 +1002,7 @@ class SessionManager {
       approvedOrigins: this.activeDomainApprovalOrigins(),
       hostPermissionOrigins: [...this.hostPermissions],
       blockedOrigins: this.stateStore.listBlockedOrigins(),
+      policy: this.stateStore.getPolicyControls(),
       domainApprovals: this.stateStore.listDomainApprovals(),
       configuredProfile: this.stateStore.getConfiguredProfile(),
       pendingApprovals: this.listApprovalRecords({ status: 'pending' }),
@@ -656,6 +1047,7 @@ class SessionManager {
       pendingApprovalCount: fullStatus.pendingApprovals.length,
       emergencyStop: { ...fullStatus.emergencyStop },
       boundedFullAuto: this.compactBoundedFullAutoStatus(fullStatus.boundedFullAuto),
+      policy: { ...fullStatus.policy },
       version: { ...fullStatus.version },
       lastError: fullStatus.lastError,
       approvedOriginCount: fullStatus.approvedOrigins.length,
@@ -758,16 +1150,47 @@ class SessionManager {
       case 'operator.approvals.run':
         response = await this.runApproval(id, params);
         break;
+      case 'operator.policy.status':
+        response = this.policyStatus(id);
+        break;
+      case 'operator.policy.update':
+        response = this.updatePolicy(id, params);
+        break;
       case 'operator.tabs.listUser':
       case 'operator.tabs.claim':
       case 'operator.tabs.listSession':
       case 'operator.tabs.create':
       case 'operator.tabs.finalize':
+      case 'operator.tabs.focus':
+      case 'operator.tabs.pin':
+      case 'operator.tabs.move':
+      case 'operator.tabs.groupRename':
       case 'operator.session.name':
         response = await this.routeSessionTabCommand(id, request.method, params);
         break;
+      case 'operator.context.recentTabs':
+      case 'operator.context.historySearch':
+      case 'operator.context.bookmarkSearch':
+        response = await this.routeBrowserContextCommand(id, request.method, params);
+        break;
+      case 'operator.downloads.wait':
+      case 'operator.downloads.show':
+        response = await this.routeDownloadCommand(id, request.method, params);
+        break;
+      case 'operator.sessions.reopenClosedTab':
+        response = await this.routeSessionRecoveryCommand(id, request.method, params);
+        break;
+      case 'operator.cdp.attach':
+      case 'operator.cdp.detach':
       case 'operator.cdp.execute':
         response = await this.routeCdpCommand(id, request.method, params);
+        break;
+      case 'operator.runtime.tab.goto':
+      case 'operator.runtime.tab.observe':
+      case 'operator.runtime.tab.readPage':
+      case 'operator.runtime.tab.locator':
+      case 'operator.runtime.tab.showTarget':
+        response = await this.routeRuntimeCommand(id, request.method, params);
         break;
       case 'operator.screenshots.cleanup':
         response = this.cleanupScreenshots(id, params);
@@ -950,6 +1373,17 @@ class SessionManager {
       return;
     }
 
+    if (method.startsWith('operator.runtime.')) {
+      this.recordRecentEvent({
+        type: 'runtime',
+        method,
+        origin,
+        result,
+        errorCode
+      });
+      return;
+    }
+
     if (method.startsWith('operator.cdp.')) {
       this.recordRecentEvent({
         type: 'cdp',
@@ -1105,6 +1539,25 @@ class SessionManager {
     return normalized;
   }
 
+  async refreshSessionTabForOperation(tabId) {
+    let tab = this.sessionTabs.get(tabId) || null;
+    if (!tab) {
+      return null;
+    }
+    if (tab && originFromUrl(tab.url)) {
+      return tab;
+    }
+    if (this.connectionState !== 'EXTENSION_CONNECTED') {
+      return tab;
+    }
+    const extensionResponse = await this.enqueueExtensionCommand('operator.tabs.listSession', {});
+    if (extensionResponse.ok) {
+      this.updateSessionTabs(extensionResponse.result && extensionResponse.result.tabs);
+      tab = this.sessionTabs.get(tabId) || tab;
+    }
+    return tab;
+  }
+
   ensureExtensionConnected(id) {
     if (this.emergencyStop.active) {
       return rpcError(id, this.emergencyStopError());
@@ -1214,6 +1667,81 @@ class SessionManager {
       return rpcOk(id, { name });
     }
 
+    if (method === 'operator.tabs.focus') {
+      const tabId = normalizeTabId(params.tabId);
+      if (!tabId.ok) {
+        return rpcError(id, tabId.error);
+      }
+      const extensionResponse = await this.enqueueExtensionCommand(method, { tabId: tabId.tabId });
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      const tab = this.updateSessionTab(extensionResponse.result && extensionResponse.result.tab, null) ||
+        normalizeUserTab(extensionResponse.result && extensionResponse.result.tab);
+      return rpcOk(id, { ...(extensionResponse.result || {}), tab });
+    }
+
+    if (method === 'operator.tabs.pin') {
+      const tabId = normalizeTabId(params.tabId);
+      if (!tabId.ok) {
+        return rpcError(id, tabId.error);
+      }
+      if (typeof params.pinned !== 'boolean') {
+        return rpcError(id, { code: ERROR_CODES.INVALID_SCHEMA, message: 'pinned must be a boolean.' });
+      }
+      const extensionResponse = await this.enqueueExtensionCommand(method, {
+        tabId: tabId.tabId,
+        pinned: params.pinned
+      });
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      return rpcOk(id, {
+        ...(extensionResponse.result || {}),
+        tab: normalizeContextEntry(extensionResponse.result && extensionResponse.result.tab)
+      });
+    }
+
+    if (method === 'operator.tabs.move') {
+      const tabId = normalizeTabId(params.tabId);
+      if (!tabId.ok) {
+        return rpcError(id, tabId.error);
+      }
+      const index = boundedInteger(params.index, null, 0, 1000);
+      if (index === null) {
+        return rpcError(id, { code: ERROR_CODES.INVALID_SCHEMA, message: 'index must be a non-negative integer.' });
+      }
+      const windowId = params.windowId === undefined ? undefined : boundedInteger(params.windowId, null, 0, 1000000);
+      if (params.windowId !== undefined && windowId === null) {
+        return rpcError(id, { code: ERROR_CODES.INVALID_SCHEMA, message: 'windowId must be a non-negative integer.' });
+      }
+      const commandParams = { tabId: tabId.tabId, index, ...(windowId === undefined ? {} : { windowId }) };
+      const extensionResponse = await this.enqueueExtensionCommand(method, commandParams);
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      return rpcOk(id, {
+        ...(extensionResponse.result || {}),
+        tab: normalizeContextEntry(extensionResponse.result && extensionResponse.result.tab)
+      });
+    }
+
+    if (method === 'operator.tabs.groupRename') {
+      const groupId = boundedInteger(params.groupId, null, 0, 1000000);
+      const title = typeof params.title === 'string' ? params.title.trim().slice(0, 80) : '';
+      if (groupId === null) {
+        return rpcError(id, { code: ERROR_CODES.INVALID_SCHEMA, message: 'groupId must be a non-negative integer.' });
+      }
+      if (!title) {
+        return rpcError(id, { code: ERROR_CODES.INVALID_SCHEMA, message: 'title must be a non-empty string.' });
+      }
+      const extensionResponse = await this.enqueueExtensionCommand(method, { groupId, title });
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      return rpcOk(id, extensionResponse.result || { groupId, title });
+    }
+
     return rpcError(id, {
       code: ERROR_CODES.UNKNOWN_METHOD,
       message: `Unknown method: ${method}`
@@ -1225,7 +1753,7 @@ class SessionManager {
     if (disconnected) {
       return disconnected;
     }
-    if (method !== 'operator.cdp.execute') {
+    if (!['operator.cdp.attach', 'operator.cdp.detach', 'operator.cdp.execute'].includes(method)) {
       return rpcError(id, {
         code: ERROR_CODES.UNKNOWN_METHOD,
         message: `Unknown method: ${method}`
@@ -1236,12 +1764,38 @@ class SessionManager {
     if (!tabId.ok) {
       return rpcError(id, tabId.error);
     }
-    const tab = this.sessionTabs.get(tabId.tabId);
+    const tab = await this.refreshSessionTabForOperation(tabId.tabId);
     if (!tab) {
       return rpcError(id, {
         code: ERROR_CODES.INVALID_SCHEMA,
         message: 'CDP commands require a session-owned tab.',
         tabId: tabId.tabId
+      });
+    }
+
+    const origin = originFromUrl(tab.url);
+    if (method === 'operator.cdp.attach' || method === 'operator.cdp.detach') {
+      if (!origin) {
+        return rpcError(id, {
+          code: ERROR_CODES.UNSUPPORTED_SCHEME,
+          message: 'CDP sessions require a regular http:// or https:// session tab.',
+          tabId: tabId.tabId
+        });
+      }
+      const readiness = assertReadyForRealSiteAction(this.readinessStateForOrigin(origin));
+      if (!readiness.ok) {
+        return rpcError(id, readiness.error);
+      }
+      const extensionResponse = await this.enqueueExtensionCommand(method, {
+        tabId: tabId.tabId
+      });
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      return rpcOk(id, {
+        tabId: tabId.tabId,
+        origin,
+        ...(extensionResponse.result || {})
       });
     }
 
@@ -1253,14 +1807,11 @@ class SessionManager {
         method: cdpMethod || null
       });
     }
-    if (!isPlainObject(params.params || {})) {
-      return rpcError(id, {
-        code: ERROR_CODES.INVALID_SCHEMA,
-        message: 'CDP params must be an object.'
-      });
+    const cdpParams = validateCdpParamsForMethod(cdpMethod, params.params || {});
+    if (!cdpParams.ok) {
+      return rpcError(id, cdpParams.error);
     }
 
-    const origin = originFromUrl(tab.url);
     if (!CDP_METADATA_METHODS.has(cdpMethod)) {
       if (!origin) {
         return rpcError(id, {
@@ -1275,11 +1826,10 @@ class SessionManager {
       }
     }
 
-    const cdpParams = params.params || {};
     const extensionResponse = await this.enqueueExtensionCommand('operator.cdp.execute', {
       tabId: tabId.tabId,
       method: cdpMethod,
-      params: cdpParams
+      params: cdpParams.params
     });
     if (!extensionResponse.ok) {
       return rpcError(id, extensionResponse.error);
@@ -1313,6 +1863,246 @@ class SessionManager {
       ...(extensionResponse.result || {})
     });
   }
+
+  async routeBrowserContextCommand(id, method, params = {}) {
+    const disconnected = this.ensureExtensionConnected(id);
+    if (disconnected) {
+      return disconnected;
+    }
+
+    if (method === 'operator.context.recentTabs') {
+      const limit = boundedInteger(params.limit, 20, 1, 100);
+      const extensionResponse = await this.enqueueExtensionCommand(method, { limit });
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      const tabs = this.updateUserTabInventory(extensionResponse.result && extensionResponse.result.tabs);
+      return rpcOk(id, { tabs: tabs.slice(0, limit) });
+    }
+
+    if (method === 'operator.context.historySearch' || method === 'operator.context.bookmarkSearch') {
+      const search = validateContextSearchParams(params);
+      if (!search.ok) {
+        return rpcError(id, search.error);
+      }
+      const extensionResponse = await this.enqueueExtensionCommand(method, {
+        query: search.query,
+        maxResults: search.maxResults
+      });
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      const entries = Array.isArray(extensionResponse.result && extensionResponse.result.entries)
+        ? extensionResponse.result.entries.map(normalizeContextEntry).filter(Boolean).slice(0, search.maxResults)
+        : [];
+      return rpcOk(id, { entries });
+    }
+
+    return rpcError(id, {
+      code: ERROR_CODES.UNKNOWN_METHOD,
+      message: `Unknown method: ${method}`
+    });
+  }
+
+  async routeDownloadCommand(id, method, params = {}) {
+    const disconnected = this.ensureExtensionConnected(id);
+    if (disconnected) {
+      return disconnected;
+    }
+    if (method === 'operator.downloads.show') {
+      const downloadId = boundedInteger(params.downloadId, null, 0, 1000000000);
+      if (downloadId === null) {
+        return rpcError(id, { code: ERROR_CODES.INVALID_SCHEMA, message: 'downloadId must be a non-negative integer.' });
+      }
+      const extensionResponse = await this.enqueueExtensionCommand(method, { downloadId });
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      return rpcOk(id, extensionResponse.result || { shown: true, downloadId });
+    }
+
+    if (method !== 'operator.downloads.wait') {
+      return rpcError(id, {
+        code: ERROR_CODES.UNKNOWN_METHOD,
+        message: `Unknown method: ${method}`
+      });
+    }
+    const waitParams = validateDownloadWaitParams(params);
+    if (!waitParams.ok) {
+      return rpcError(id, waitParams.error);
+    }
+    const { ok, ...commandParams } = waitParams;
+    const extensionResponse = await this.enqueueExtensionCommand(method, commandParams);
+    if (!extensionResponse.ok) {
+      return rpcError(id, extensionResponse.error);
+    }
+    return rpcOk(id, {
+      download: normalizeDownloadEntry(extensionResponse.result && extensionResponse.result.download)
+    });
+  }
+
+  async routeSessionRecoveryCommand(id, method, params = {}) {
+    const disconnected = this.ensureExtensionConnected(id);
+    if (disconnected) {
+      return disconnected;
+    }
+    if (method !== 'operator.sessions.reopenClosedTab') {
+      return rpcError(id, {
+        code: ERROR_CODES.UNKNOWN_METHOD,
+        message: `Unknown method: ${method}`
+      });
+    }
+    const sessionId = typeof params.sessionId === 'string' && params.sessionId.trim()
+      ? params.sessionId.trim()
+      : undefined;
+    const claim = params.claim === true;
+    const extensionResponse = await this.enqueueExtensionCommand(method, {
+      ...(sessionId ? { sessionId } : {}),
+      claim
+    });
+    if (!extensionResponse.ok) {
+      return rpcError(id, extensionResponse.error);
+    }
+    const rawTab = extensionResponse.result && extensionResponse.result.tab;
+    const tab = claim
+      ? this.updateSessionTab(rawTab, 'user')
+      : normalizeUserTab(rawTab);
+    if (claim && tab) {
+      this.lastUserTabInventory.set(tab.id, tab);
+    }
+    return rpcOk(id, { tab });
+  }
+
+  async routeRuntimeCommand(id, method, params = {}) {
+    const disconnected = this.ensureExtensionConnected(id);
+    if (disconnected) {
+      return disconnected;
+    }
+    if (![
+      'operator.runtime.tab.goto',
+      'operator.runtime.tab.observe',
+      'operator.runtime.tab.readPage',
+      'operator.runtime.tab.locator',
+      'operator.runtime.tab.showTarget'
+    ].includes(method)) {
+      return rpcError(id, {
+        code: ERROR_CODES.UNKNOWN_METHOD,
+        message: `Unknown method: ${method}`
+      });
+    }
+
+    const tabId = normalizeTabId(params.tabId);
+    if (!tabId.ok) {
+      return rpcError(id, tabId.error);
+    }
+    const tab = await this.refreshSessionTabForOperation(tabId.tabId);
+    if (!tab) {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_SCHEMA,
+        message: 'Runtime tab commands require a session-owned tab.',
+        tabId: tabId.tabId
+      });
+    }
+
+    let origin = originFromUrl(tab.url);
+    let commandParams = { ...params, tabId: tabId.tabId };
+    let policyMethod = 'page.observe';
+
+    if (method === 'operator.runtime.tab.goto') {
+      const target = navigationTarget(params.url);
+      if (!target.ok) {
+        return rpcError(id, target.error);
+      }
+      origin = target.origin;
+      commandParams = { tabId: tabId.tabId, url: target.url };
+      policyMethod = 'page.navigate';
+    } else {
+      if (!origin) {
+        return rpcError(id, {
+          code: ERROR_CODES.UNSUPPORTED_SCHEME,
+          message: 'Runtime tab commands require a regular http:// or https:// session tab.',
+          tabId: tabId.tabId
+        });
+      }
+      if (method === 'operator.runtime.tab.locator') {
+        const locator = validateRuntimeLocatorParams(params);
+        if (!locator.ok) {
+          return rpcError(id, locator.error);
+        }
+        commandParams = {
+          tabId: tabId.tabId,
+          action: locator.action,
+          ...(locator.selector === undefined ? {} : { selector: locator.selector }),
+          ...(locator.text === undefined ? {} : { text: locator.text }),
+          ...(locator.textValue === undefined ? {} : { textValue: locator.textValue }),
+          ...pickRuntimeObservationParams(params)
+        };
+        policyMethod = RUNTIME_LOCATOR_MUTATION_METHODS[locator.action] || 'page.observe';
+      } else if (method === 'operator.runtime.tab.showTarget') {
+        const cue = validateTargetCueParams(params);
+        if (!cue.ok) {
+          return rpcError(id, cue.error);
+        }
+        commandParams = {
+          tabId: tabId.tabId,
+          ...pickDefinedLocal(cue, ['handle', 'selector', 'text', 'durationMs'])
+        };
+        policyMethod = 'page.observe';
+      } else if (method === 'operator.runtime.tab.readPage') {
+        policyMethod = 'page.readPage';
+        commandParams = {
+          tabId: tabId.tabId,
+          ...pickRuntimeReadPageParams(params)
+        };
+      } else {
+        commandParams = {
+          tabId: tabId.tabId,
+          ...pickRuntimeObservationParams(params)
+        };
+      }
+    }
+
+    const readiness = assertReadyForRealSiteAction(this.readinessStateForOrigin(origin));
+    if (!readiness.ok) {
+      return rpcError(id, readiness.error);
+    }
+    const policy = this.stateStore.getPolicyControls();
+    const runtimeActionKind = PAGE_ACTION_KINDS[policyMethod];
+    if (GUARDED_ACTION_KINDS.has(runtimeActionKind) && policy.guardedActionsEnabled === false) {
+      return rpcError(id, {
+        code: ERROR_CODES.METHOD_NOT_ALLOWED,
+        message: 'Guarded browser actions are disabled in the operator side panel.',
+        actionKind: runtimeActionKind,
+        policy
+      });
+    }
+    const boundedFullAuto = this.enforceBoundedFullAuto(policyMethod, origin);
+    if (!boundedFullAuto.ok) {
+      return rpcError(id, boundedFullAuto.error);
+    }
+
+    const extensionResponse = await this.enqueueExtensionCommand(method, commandParams);
+    if (!extensionResponse.ok) {
+      return rpcError(id, extensionResponse.error);
+    }
+    if (method === 'operator.runtime.tab.goto') {
+      const updatedTab = this.updateSessionTab(extensionResponse.result && extensionResponse.result.tab, tab.ownership);
+      return rpcOk(id, {
+        ...(extensionResponse.result || {}),
+        tab: updatedTab || (extensionResponse.result && extensionResponse.result.tab) || null,
+        origin
+      });
+    }
+    if (shouldInvalidateWarmSession(policyMethod)) {
+      this.clearWarmSessionCache(policyMethod);
+    }
+    return rpcOk(id, {
+      tabId: tabId.tabId,
+      origin,
+      ...(extensionResponse.result || {})
+    });
+  }
+
 
   handleHello(id, hello, params = {}) {
     const bridgeInstanceId = typeof params.bridgeInstanceId === 'string' && params.bridgeInstanceId.trim()
@@ -2589,6 +3379,17 @@ class SessionManager {
       return rpcError(id, readiness.error);
     }
 
+    const actionKind = PAGE_ACTION_KINDS[method];
+    const policy = this.stateStore.getPolicyControls();
+    if (GUARDED_ACTION_KINDS.has(actionKind) && policy.guardedActionsEnabled === false) {
+      return rpcError(id, {
+        code: ERROR_CODES.METHOD_NOT_ALLOWED,
+        message: 'Guarded browser actions are disabled in the operator side panel.',
+        actionKind,
+        policy
+      });
+    }
+
     const boundedFullAuto = batch
       ? this.enforceBoundedFullAutoBatch(batch.childActions, origin)
       : this.enforceBoundedFullAuto(method, origin);
@@ -2915,6 +3716,16 @@ class SessionManager {
     }
 
     const approvalKind = error.approvalKind || 'high-risk-action';
+    const policy = this.stateStore.getPolicyControls();
+    if (PURCHASE_APPROVAL_KINDS.has(approvalKind) && policy.purchaseApprovalsEnabled !== true) {
+      return {
+        ...error,
+        approvalKind,
+        approvalStatus: 'disabled',
+        policy,
+        message: error.message || `Purchase approval is disabled for high-risk action: ${approvalKind}`
+      };
+    }
     const profileConfidence = this.profileConfidence();
     if (
       !isLocalMockOrigin(params.origin) &&
@@ -2961,6 +3772,33 @@ class SessionManager {
     return [...this.pendingApprovals.values()]
       .filter((record) => !status || record.status === status)
       .map((record) => ({ ...record }));
+  }
+
+  policyStatus(id) {
+    return rpcOk(id, {
+      policy: this.stateStore.getPolicyControls()
+    });
+  }
+
+  updatePolicy(id, params = {}) {
+    const allowed = ['guardedActionsEnabled', 'purchaseApprovalsEnabled'];
+    for (const [key, value] of Object.entries(params || {})) {
+      if (!allowed.includes(key)) {
+        return rpcError(id, {
+          code: ERROR_CODES.INVALID_SCHEMA,
+          message: `Unsupported policy setting: ${key}.`
+        });
+      }
+      if (typeof value !== 'boolean') {
+        return rpcError(id, {
+          code: ERROR_CODES.INVALID_SCHEMA,
+          message: `${key} must be a boolean.`
+        });
+      }
+    }
+    return rpcOk(id, {
+      policy: this.stateStore.updatePolicyControls(params)
+    });
   }
 
   listApprovals(id, params) {
