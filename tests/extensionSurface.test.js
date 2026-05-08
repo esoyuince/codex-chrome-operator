@@ -269,6 +269,18 @@ test('background exposes guarded session tab commands for hybrid operator mode',
   assert.match(background, /TAB_NOT_CLAIMABLE/);
 });
 
+test('background exposes guarded CDP commands without arbitrary runtime evaluation', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const debuggerActions = fs.readFileSync(path.join(EXTENSION_DIR, 'debuggerActions.js'), 'utf8');
+
+  assert.match(background, /operator\.cdp\.execute/);
+  assert.match(background, /handleCdpCommand/);
+  assert.match(debuggerActions, /runCdpCommand/);
+  assert.match(debuggerActions, /CDP_METHOD_NOT_ALLOWED/);
+  assert.match(debuggerActions, /Page\.getLayoutMetrics/);
+  assert.match(debuggerActions, /Target\.getTargets/);
+});
+
 test('background injects compact page reader and intent extractors before the content script', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 

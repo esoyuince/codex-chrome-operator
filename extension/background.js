@@ -36,6 +36,7 @@ const {
   attachUiGraph
 } = globalThis.CodexUiGraph;
 const {
+  runCdpCommand,
   runDebuggerAction
 } = globalThis.CodexDebuggerActions;
 
@@ -810,6 +811,22 @@ async function handleSessionTabCommand(method, params = {}) {
   return { ok: false, error: { code: 'UNKNOWN_METHOD', message: `Unknown method: ${method}` } };
 }
 
+async function handleCdpCommand(method, params = {}) {
+  if (method !== 'operator.cdp.execute') {
+    return { ok: false, error: { code: 'UNKNOWN_METHOD', message: `Unknown method: ${method}` } };
+  }
+  if (!Number.isInteger(params.tabId) || params.tabId < 0) {
+    return { ok: false, error: { code: 'INVALID_SCHEMA', message: 'tabId must be a non-negative integer.' } };
+  }
+  const tab = await chrome.tabs.get(params.tabId);
+  return runCdpCommand({
+    chromeApi: chrome,
+    tab,
+    method: params.method,
+    params: params.params || {}
+  });
+}
+
 async function activeTabInfo() {
   const [lastFocusedTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (lastFocusedTab) {
@@ -1254,6 +1271,10 @@ async function handleOperatorCommand(command) {
   const params = command.params || {};
 
   try {
+    if (command.method && command.method.startsWith('operator.cdp.')) {
+      return handleCdpCommand(command.method, params);
+    }
+
     if (command.method && (command.method.startsWith('operator.tabs.') || command.method === 'operator.session.name')) {
       return handleSessionTabCommand(command.method, params);
     }

@@ -4,10 +4,11 @@ const assert = require('node:assert/strict');
 const {
   buildRuntimeActionExpression,
   isDebuggerSupportedUrl,
+  runCdpCommand,
   runDebuggerAction
 } = require('../extension/debuggerActions');
 
-function makeChrome({ evaluateValue } = {}) {
+function makeChrome({ evaluateValue, commandResults = {} } = {}) {
   const calls = [];
   const chromeApi = {
     runtime: {},
@@ -22,6 +23,10 @@ function makeChrome({ evaluateValue } = {}) {
       },
       sendCommand(target, method, params, callback) {
         calls.push({ method, target, params });
+        if (Object.hasOwn(commandResults, method)) {
+          callback(commandResults[method]);
+          return;
+        }
         if (method === 'Runtime.evaluate') {
           callback({
             result: {
@@ -46,6 +51,47 @@ test('isDebuggerSupportedUrl allows only regular web pages', () => {
   assert.equal(isDebuggerSupportedUrl('chrome://settings'), false);
   assert.equal(isDebuggerSupportedUrl('chrome-extension://abcdefghijklmnop/page.html'), false);
   assert.equal(isDebuggerSupportedUrl('about:blank'), false);
+});
+
+test('runCdpCommand rejects non-allowlisted CDP methods before attaching', async () => {
+  const { chromeApi, calls } = makeChrome();
+
+  const result = await runCdpCommand({
+    chromeApi,
+    tab: { id: 7, url: 'https://example.com/app' },
+    method: 'Runtime.evaluate',
+    params: { expression: 'document.cookie' }
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'CDP_METHOD_NOT_ALLOWED');
+  assert.deepEqual(calls, []);
+});
+
+test('runCdpCommand executes allowlisted CDP method with scoped attach and detach', async () => {
+  const { chromeApi, calls } = makeChrome({
+    commandResults: {
+      'Page.getLayoutMetrics': {
+        layoutViewport: { pageX: 0, pageY: 0, clientWidth: 1280, clientHeight: 720 }
+      }
+    }
+  });
+
+  const result = await runCdpCommand({
+    chromeApi,
+    tab: { id: 7, url: 'https://example.com/app' },
+    method: 'Page.getLayoutMetrics',
+    params: {}
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.provider, 'chrome.debugger.Page.getLayoutMetrics');
+  assert.deepEqual(result.result.response.layoutViewport.clientWidth, 1280);
+  assert.deepEqual(calls.map((call) => call.method), [
+    'attach',
+    'Page.getLayoutMetrics',
+    'detach'
+  ]);
 });
 
 test('runDebuggerAction refuses restricted browser pages before attaching', async () => {

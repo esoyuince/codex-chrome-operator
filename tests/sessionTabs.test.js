@@ -171,3 +171,106 @@ test('session tabs create, list, name, and finalize with validated keep states',
   assert.deepEqual(finalized.result.kept, [{ tabId: 11, status: 'deliverable' }]);
   assert.equal(session.status({ detail: 'compact' }).sessionTabs[0].finalizedStatus, 'deliverable');
 });
+
+test('guarded CDP commands require session-owned tabs and origin readiness', async () => {
+  const session = makeSession();
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    return {
+      ok: true,
+      result: {
+        provider: `chrome.debugger.${params.method}`,
+        response: { ok: true }
+      }
+    };
+  };
+
+  const unknownTab = await session.handleRpc({
+    id: 'cdp-unknown-tab',
+    method: 'operator.cdp.execute',
+    params: {
+      tabId: 42,
+      method: 'Target.getTargets',
+      params: {}
+    }
+  });
+  assert.equal(unknownTab.ok, false);
+  assert.equal(unknownTab.error.code, 'INVALID_SCHEMA');
+  assert.deepEqual(calls, []);
+
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Example',
+    url: 'https://example.com/app',
+    ownership: 'agent',
+    active: true,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+
+  const disallowed = await session.handleRpc({
+    id: 'cdp-disallowed',
+    method: 'operator.cdp.execute',
+    params: {
+      tabId: 7,
+      method: 'Runtime.evaluate',
+      params: { expression: 'document.cookie' }
+    }
+  });
+  assert.equal(disallowed.ok, false);
+  assert.equal(disallowed.error.code, 'CDP_METHOD_NOT_ALLOWED');
+  assert.deepEqual(calls, []);
+  const auditEntry = session.audit.tail({ limit: 1 })[0];
+  assert.equal(auditEntry.params.method, 'Runtime.evaluate');
+  assert.deepEqual(auditEntry.params.paramKeys, ['expression']);
+  assert.doesNotMatch(JSON.stringify(auditEntry), /document\.cookie/);
+
+  const blocked = await session.handleRpc({
+    id: 'cdp-readiness',
+    method: 'operator.cdp.execute',
+    params: {
+      tabId: 7,
+      method: 'Page.getLayoutMetrics',
+      params: {}
+    }
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error.code, 'DOMAIN_NOT_APPROVED');
+
+  const metadata = await session.handleRpc({
+    id: 'cdp-metadata',
+    method: 'operator.cdp.execute',
+    params: {
+      tabId: 7,
+      method: 'Target.getTargets',
+      params: {}
+    }
+  });
+  assert.equal(metadata.ok, true);
+
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+  const layout = await session.handleRpc({
+    id: 'cdp-layout',
+    method: 'operator.cdp.execute',
+    params: {
+      tabId: 7,
+      method: 'Page.getLayoutMetrics',
+      params: {}
+    }
+  });
+  assert.equal(layout.ok, true);
+  assert.deepEqual(calls.map((call) => call.method), [
+    'operator.cdp.execute',
+    'operator.cdp.execute'
+  ]);
+  assert.deepEqual(calls[1].params, {
+    tabId: 7,
+    method: 'Page.getLayoutMetrics',
+    params: {}
+  });
+});

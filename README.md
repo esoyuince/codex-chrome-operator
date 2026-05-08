@@ -265,6 +265,12 @@ The adapter exposes strict `codex_chrome_*` tools, including:
 - `codex_chrome_readiness`
 - `codex_chrome_profile_doctor`
 - `codex_chrome_profile_onboard`
+- `codex_chrome_user_tabs`
+- `codex_chrome_claim_tab`
+- `codex_chrome_session_tabs`
+- `codex_chrome_new_tab`
+- `codex_chrome_name_session`
+- `codex_chrome_finalize_tabs`
 - `codex_chrome_open_observe`
 - `codex_chrome_observe`
 - `codex_chrome_read_page`

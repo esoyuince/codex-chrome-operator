@@ -36,6 +36,12 @@ test('buildMcpSmokeMessages sends initialize then tools/list over stdio JSON-RPC
 
 test('buildMcpSmokeReport summarizes required adapter tool availability', () => {
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_cart_prepare'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_user_tabs'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_claim_tab'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_session_tabs'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_new_tab'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_name_session'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_finalize_tabs'));
 
   const toolSchemaVersion = '2026-05-01.m1';
   const responses = [

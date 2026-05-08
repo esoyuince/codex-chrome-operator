@@ -6,6 +6,10 @@
   const DEBUGGER_POINTER_PROVIDER = 'chrome.debugger.Input.dispatchMouseEvent';
   const DEBUGGER_TEXT_PROVIDER = 'chrome.debugger.Input.insertText';
   const DEBUGGER_TIMEOUT_MS = 5000;
+  const CDP_ALLOWED_METHODS = new Set([
+    'Page.getLayoutMetrics',
+    'Target.getTargets'
+  ]);
 
   function isDebuggerSupportedUrl(url) {
     try {
@@ -768,6 +772,77 @@
     return value;
   }
 
+  function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  async function runCdpCommand({
+    chromeApi,
+    tab,
+    method,
+    params = {},
+    timeoutMs = DEBUGGER_TIMEOUT_MS
+  }) {
+    if (!CDP_ALLOWED_METHODS.has(method)) {
+      return {
+        ok: false,
+        error: {
+          code: 'CDP_METHOD_NOT_ALLOWED',
+          message: 'CDP method is not allowlisted for guarded operator use.',
+          method
+        }
+      };
+    }
+    if (!isPlainObject(params)) {
+      return {
+        ok: false,
+        error: {
+          code: 'INVALID_SCHEMA',
+          message: 'CDP params must be an object.'
+        }
+      };
+    }
+    if (!tab || !tab.id) {
+      return { ok: false, error: { code: 'NO_ACTIVE_TAB' } };
+    }
+    if (!isDebuggerSupportedUrl(tab.url)) {
+      return { ok: false, error: unsupportedDebuggerPageError(tab) };
+    }
+
+    const target = { tabId: tab.id };
+    let attached = false;
+    try {
+      await attachDebugger(chromeApi, target, timeoutMs);
+      attached = true;
+      const response = await sendCommand(chromeApi, target, method, params, timeoutMs);
+      return {
+        ok: true,
+        result: {
+          provider: `chrome.debugger.${method}`,
+          method,
+          response: response || {}
+        }
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: 'CDP_COMMAND_FAILED',
+          message: error.message || String(error),
+          method
+        }
+      };
+    } finally {
+      if (attached) {
+        try {
+          await detachDebugger(chromeApi, target, timeoutMs);
+        } catch {
+          // Detach failures should not hide the command result.
+        }
+      }
+    }
+  }
+
   async function runDebuggerAction({
     chromeApi,
     tab,
@@ -898,9 +973,11 @@
   }
 
   const api = {
+    CDP_ALLOWED_METHODS,
     DEBUGGER_ACTION_PROVIDER,
     buildRuntimeActionExpression,
     isDebuggerSupportedUrl,
+    runCdpCommand,
     runDebuggerAction
   };
 

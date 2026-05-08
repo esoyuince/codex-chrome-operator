@@ -112,7 +112,11 @@ function clearsLastErrorOnSuccess(method) {
     'operator.approvals.approve',
     'operator.approvals.reject',
     'operator.approvals.run'
-  ].includes(method) || method.startsWith('page.') || method.startsWith('operator.tabs.') || method === 'operator.session.name';
+  ].includes(method) ||
+    method.startsWith('page.') ||
+    method.startsWith('operator.tabs.') ||
+    method.startsWith('operator.cdp.') ||
+    method === 'operator.session.name';
 }
 
 const PAGE_ACTION_KINDS = Object.freeze({
@@ -156,6 +160,14 @@ const BATCH_ACTION_KINDS = Object.freeze({
   pressKey: 'pressKey',
   waitFor: 'wait'
 });
+
+const CDP_ALLOWED_METHODS = new Set([
+  'Page.getLayoutMetrics',
+  'Target.getTargets'
+]);
+const CDP_METADATA_METHODS = new Set([
+  'Target.getTargets'
+]);
 
 const BATCH_ACTION_FIELDS = new Set([
   'action',
@@ -307,6 +319,27 @@ function originFromParams(params = {}) {
     }
   }
   return undefined;
+}
+
+function originFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.origin;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function safeCdpAuditParams(params = {}) {
+  const cdpParams = isPlainObject(params.params) ? params.params : {};
+  return {
+    tabId: Number.isInteger(params.tabId) ? params.tabId : null,
+    method: typeof params.method === 'string' ? params.method : null,
+    paramKeys: Object.keys(cdpParams).sort()
+  };
 }
 
 function summarizeReadiness({
@@ -732,6 +765,9 @@ class SessionManager {
       case 'operator.session.name':
         response = await this.routeSessionTabCommand(id, request.method, params);
         break;
+      case 'operator.cdp.execute':
+        response = await this.routeCdpCommand(id, request.method, params);
+        break;
       case 'operator.screenshots.cleanup':
         response = this.cleanupScreenshots(id, params);
         break;
@@ -913,6 +949,17 @@ class SessionManager {
       return;
     }
 
+    if (method.startsWith('operator.cdp.')) {
+      this.recordRecentEvent({
+        type: 'cdp',
+        method,
+        origin,
+        result,
+        errorCode
+      });
+      return;
+    }
+
     if (method === 'extension.hostPermissionGranted' || method === 'extension.hostPermissionsSynced') {
       this.recordRecentEvent({
         type: 'hostPermission',
@@ -959,7 +1006,7 @@ class SessionManager {
       origin,
       actionKind,
       targetSummary: response.error && response.error.targetSummary,
-      params,
+      params: method.startsWith('operator.cdp.') ? safeCdpAuditParams(params) : params,
       result: response.ok ? 'ok' : 'error',
       errorCode: response.error && response.error.code
     };
@@ -1169,6 +1216,78 @@ class SessionManager {
     return rpcError(id, {
       code: ERROR_CODES.UNKNOWN_METHOD,
       message: `Unknown method: ${method}`
+    });
+  }
+
+  async routeCdpCommand(id, method, params = {}) {
+    const disconnected = this.ensureExtensionConnected(id);
+    if (disconnected) {
+      return disconnected;
+    }
+    if (method !== 'operator.cdp.execute') {
+      return rpcError(id, {
+        code: ERROR_CODES.UNKNOWN_METHOD,
+        message: `Unknown method: ${method}`
+      });
+    }
+
+    const tabId = normalizeTabId(params.tabId);
+    if (!tabId.ok) {
+      return rpcError(id, tabId.error);
+    }
+    const tab = this.sessionTabs.get(tabId.tabId);
+    if (!tab) {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_SCHEMA,
+        message: 'CDP commands require a session-owned tab.',
+        tabId: tabId.tabId
+      });
+    }
+
+    const cdpMethod = typeof params.method === 'string' ? params.method.trim() : '';
+    if (!CDP_ALLOWED_METHODS.has(cdpMethod)) {
+      return rpcError(id, {
+        code: 'CDP_METHOD_NOT_ALLOWED',
+        message: 'CDP method is not allowlisted for guarded operator use.',
+        method: cdpMethod || null
+      });
+    }
+    if (!isPlainObject(params.params || {})) {
+      return rpcError(id, {
+        code: ERROR_CODES.INVALID_SCHEMA,
+        message: 'CDP params must be an object.'
+      });
+    }
+
+    const origin = originFromUrl(tab.url);
+    if (!CDP_METADATA_METHODS.has(cdpMethod)) {
+      if (!origin) {
+        return rpcError(id, {
+          code: ERROR_CODES.UNSUPPORTED_SCHEME,
+          message: 'CDP commands require a regular http:// or https:// session tab.',
+          tabId: tabId.tabId
+        });
+      }
+      const readiness = assertReadyForRealSiteAction(this.readinessStateForOrigin(origin));
+      if (!readiness.ok) {
+        return rpcError(id, readiness.error);
+      }
+    }
+
+    const cdpParams = params.params || {};
+    const extensionResponse = await this.enqueueExtensionCommand('operator.cdp.execute', {
+      tabId: tabId.tabId,
+      method: cdpMethod,
+      params: cdpParams
+    });
+    if (!extensionResponse.ok) {
+      return rpcError(id, extensionResponse.error);
+    }
+    return rpcOk(id, {
+      tabId: tabId.tabId,
+      origin: origin || null,
+      method: cdpMethod,
+      ...(extensionResponse.result || {})
     });
   }
 

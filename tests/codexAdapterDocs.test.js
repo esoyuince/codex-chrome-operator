@@ -14,3 +14,13 @@ test('codex adapter docs mention every exposed adapter tool', () => {
 
   assert.deepEqual(missingTools, []);
 });
+
+test('README mentions every exposed adapter tool', () => {
+  const readmePath = path.join(__dirname, '..', 'README.md');
+  const readme = fs.readFileSync(readmePath, 'utf8');
+  const missingTools = listTools()
+    .map((tool) => tool.name)
+    .filter((toolName) => !readme.includes(`\`${toolName}\``));
+
+  assert.deepEqual(missingTools, []);
+});
