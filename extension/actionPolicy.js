@@ -19,9 +19,7 @@
     return [
       target.dataRisk,
       target.label,
-      target.id,
       target.name,
-      target.type,
       target.role
     ].map(normalize).filter(Boolean).join(' ');
   }

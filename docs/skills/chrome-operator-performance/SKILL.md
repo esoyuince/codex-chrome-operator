@@ -1,11 +1,19 @@
 ---
-name: chrome-operator-performance
-description: Use, diagnose, optimize, and live-test the Codex Chrome Operator browser extension. Use when operating the extension on real browser tasks, working on the codex-chrome-operator repo, Chrome extension reload/profile binding issues, stale handles, gate detection false positives, debugger/click/type reliability, X/Twitter or other React-heavy sites, live smoke tests, performance regressions, or when asked to turn live automation findings into best-practice fixes.
+name: legacy-chrome-operator-performance
+description: Legacy guidance for maintaining the retired Codex Chrome Operator repo only. Superseded by the OpenAI bundled native Chrome plugin for live browser work. Use only when explicitly working on this archived operator repo, its old MCP adapter, installer, daemon, extension code, tests, or historical runbooks.
 ---
 
-# Chrome Operator Performance And Usage
+# Legacy Chrome Operator Performance And Usage
 
-## Core Workflow
+> Legacy status: this repo-owned skill is archived. For ordinary browser automation, use the OpenAI bundled native Chrome plugin (`chrome@openai-bundled`). Do not route new live Chrome tasks through this operator. Use this document only when maintaining or auditing the retired `codex-chrome-operator` repo, reproducing old operator bugs, or preserving historical behavior.
+
+## Native Chrome Default
+
+- Default to `chrome@openai-bundled` for real Chrome browsing, logged-in tabs, Firebase, Cloudflare, Play Console, and similar live web tasks.
+- Do not start, install, or re-enable the old `codex-chrome-operator` MCP for normal browser work.
+- Keep this operator as a reference for guarded approvals, audit logs, site-specific extractor ideas, and old compatibility investigations.
+
+## Legacy Maintenance Workflow
 
 Start from repo truth and installed-extension truth:
 
@@ -24,11 +32,11 @@ Use live browser evidence as a diagnostic, not only as a demo. When a live task 
 - **App-state layer**: React/contenteditable state not updated even though DOM text appears changed.
 - **Policy layer**: high-risk action approval, publish/checkout/payment guard.
 
-Do not turn every live-task failure into code work. First try to complete the user's browser task with the safest available operator workflow. Patch the repo only when the extension behavior itself is the blocker, the failure is reproducible, or the user asked for development work.
+Do not turn every live-task failure into code work. For current browser tasks, use native Chrome first. Patch this repo only when the retired extension behavior itself is the blocker, the failure is reproducible in legacy mode, or the user asked for development work on this archived operator.
 
-## Correct Extension Use
+## Legacy Operator Use
 
-Use the extension as a guarded browser operator, not as a raw click macro:
+Only when intentionally exercising the retired operator, use the extension as a guarded browser operator, not as a raw click macro:
 
 1. Confirm `operator.status` or `codex_chrome_status` before acting: profile, active tab, versions, pending approvals, emergency stop, and target origin readiness.
 2. Prefer read-only observation first: `observe`, `read_page`, or `visual_observe` only when DOM confidence is low.
@@ -39,7 +47,7 @@ Use the extension as a guarded browser operator, not as a raw click macro:
 7. Treat tool success as provisional until the page proves it. Verify final state through a posted status URL, changed UI state, uploaded preview, cart count, or another durable page signal.
 8. Clean up accidental drafts, duplicate composers, and modal leftovers after a live action.
 
-When the task is ordinary browser operation, prefer this use sequence over editing repo code:
+When the task is ordinary browser operation in legacy mode, prefer this use sequence over editing repo code:
 
 ```text
 status/readiness -> open or observe target -> verify target -> draft action -> ask if final/public/high-impact -> execute -> re-observe -> report evidence

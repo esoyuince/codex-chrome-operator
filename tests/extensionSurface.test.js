@@ -244,6 +244,15 @@ test('background fails closed when required click verification is inconclusive',
   assert.match(background, /ACTION_RESULT_UNVERIFIED/);
 });
 
+test('background verifies debugger link clicks with observed navigation targets', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+
+  assert.match(background, /navigationHrefForTarget/);
+  assert.match(background, /preActionUrl:\s*ready\.tab\.url/);
+  assert.match(background, /const observedTarget = params\.target \|\|/);
+  assert.match(background, /target:\s*observedTarget/);
+});
+
 test('background injects compact page reader and intent extractors before the content script', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 

@@ -760,6 +760,33 @@ test('content click reports inconclusive when post-action snapshot is unchanged'
   assert.ok(clicked.result.verification.evidence.includes('action dispatched but no observable post-condition changed'));
 });
 
+test('content click verifies navigable link handoff when snapshot has not changed yet', async () => {
+  const link = element('a', {
+    href: 'https://example.com/product',
+    text: 'Open product'
+  });
+  const root = element('main', { text: 'Product result' }, [link]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    maxActionableHandles: 5
+  });
+  const linkHandle = observed.elements.find((entry) => entry.tag === 'a').handle;
+  const clicked = await content.send({
+    type: 'content.action',
+    action: 'click',
+    handle: linkHandle,
+    postActionSnapshot: 'delta',
+    sincePageStateId: observed.pageStateId,
+    maxActionableHandles: 5
+  });
+
+  assert.equal(clicked.ok, true);
+  assert.equal(clicked.result.verification.status, 'succeeded');
+  assert.ok(clicked.result.verification.evidence.includes('navigation target changed'));
+});
+
 test('content action verifies explicit textAppears post-condition', async () => {
   const status = element('div', { text: '' });
   const button = element('button', {

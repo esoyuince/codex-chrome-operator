@@ -1387,6 +1387,16 @@ function verifyActionResult(message = {}, snapshot, context = {}) {
     };
   }
 
+  const navigationHref = navigationHrefForElement(context.targetElement);
+  if (action === 'click' && navigationHref) {
+    return {
+      status: 'succeeded',
+      expected: ['navigation handoff'],
+      observed: ['click target had a navigable href'],
+      evidence: ['navigation target changed']
+    };
+  }
+
   if (snapshotHasObservableChange(snapshot)) {
     return {
       status: 'succeeded',
@@ -1402,6 +1412,28 @@ function verifyActionResult(message = {}, snapshot, context = {}) {
     observed: ['post-action snapshot unchanged'],
     evidence: ['action dispatched but no observable post-condition changed']
   };
+}
+
+function navigationHrefForElement(element) {
+  if (!element || String(element.tagName || '').toLowerCase() !== 'a') {
+    return null;
+  }
+  const rawHref = typeof element.getAttribute === 'function'
+    ? element.getAttribute('href')
+    : element.href;
+  const href = String(rawHref || '').trim();
+  if (!href || href.startsWith('#') || /^javascript:/i.test(href)) {
+    return null;
+  }
+  if (typeof URL !== 'function') {
+    return /^https?:\/\//i.test(href) ? href : null;
+  }
+  try {
+    const resolved = new URL(href, location.href);
+    return ['http:', 'https:'].includes(resolved.protocol) ? resolved.href : null;
+  } catch (_error) {
+    return null;
+  }
 }
 
 function withPostActionSnapshot(response, message = {}, context = {}) {

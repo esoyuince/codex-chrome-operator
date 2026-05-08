@@ -53,3 +53,17 @@ test('classifyActionRisk allows low-risk draft controls', () => {
 
   assert.equal(risk, null);
 });
+
+test('classifyActionRisk allows ordinary search submit controls', () => {
+  const risk = classifyActionRisk({
+    action: 'click',
+    target: {
+      tag: 'input',
+      type: 'submit',
+      id: 'nav-search-submit-button',
+      label: ''
+    }
+  });
+
+  assert.equal(risk, null);
+});

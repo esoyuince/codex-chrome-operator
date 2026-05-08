@@ -732,6 +732,15 @@ function verifyBackgroundAction(actionResponse, snapshot, params = {}) {
   if (explicit) {
     return explicit;
   }
+  const navigationHref = navigationHrefForTarget(params.target, params.preActionUrl);
+  if (params.action === 'click' && navigationHref) {
+    return {
+      status: 'succeeded',
+      expected: ['navigation handoff'],
+      observed: ['click target had a navigable href'],
+      evidence: ['navigation target changed']
+    };
+  }
   if (snapshotHasObservableChange(snapshot)) {
     return {
       status: 'succeeded',
@@ -746,6 +755,25 @@ function verifyBackgroundAction(actionResponse, snapshot, params = {}) {
     observed: ['post-action snapshot unchanged'],
     evidence: ['action dispatched but no observable post-condition changed']
   };
+}
+
+function navigationHrefForTarget(target, baseUrl) {
+  if (!target) {
+    return null;
+  }
+  const href = String(target.href || '').trim();
+  if (!href || href.startsWith('#') || /^javascript:/i.test(href)) {
+    return null;
+  }
+  if (typeof URL !== 'function') {
+    return /^https?:\/\//i.test(href) ? href : null;
+  }
+  try {
+    const resolved = new URL(href, baseUrl || undefined);
+    return ['http:', 'https:'].includes(resolved.protocol) ? resolved.href : null;
+  } catch (_error) {
+    return null;
+  }
 }
 
 async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
@@ -1227,6 +1255,7 @@ async function handleOperatorCommand(command) {
     if (!preflight.ok) {
       return preflight;
     }
+    const observedTarget = params.target || (preflight.result && preflight.result.target);
 
     const actionResponse = await runDebuggerAction({
       chromeApi: chrome,
@@ -1234,7 +1263,7 @@ async function handleOperatorCommand(command) {
       action,
       params: {
         handle: params.handle,
-        target: params.target || (preflight.result && preflight.result.target),
+        target: observedTarget,
         text: params.text,
         value: params.value,
         checked: params.checked,
@@ -1243,7 +1272,12 @@ async function handleOperatorCommand(command) {
         key: params.key
       }
     });
-    return attachPostActionSnapshot(ready.tab.id, actionResponse, params);
+    return attachPostActionSnapshot(ready.tab.id, actionResponse, {
+      ...params,
+      action,
+      preActionUrl: ready.tab.url,
+      target: observedTarget
+    });
   } catch (error) {
     return {
       ok: false,
