@@ -403,6 +403,30 @@ class CodexChromeToolAdapter {
       case 'codex_chrome_profile_onboard':
         response = await this.profileOnboard(input);
         break;
+      case 'codex_chrome_user_tabs':
+        response = await this.sendRpc('operator.tabs.listUser', {});
+        break;
+      case 'codex_chrome_claim_tab':
+        response = await this.sendRpc('operator.tabs.claim', {
+          tabId: input.tabId
+        });
+        break;
+      case 'codex_chrome_session_tabs':
+        response = await this.sendRpc('operator.tabs.listSession', {});
+        break;
+      case 'codex_chrome_new_tab':
+        response = await this.sendRpc('operator.tabs.create', {});
+        break;
+      case 'codex_chrome_name_session':
+        response = await this.sendRpc('operator.session.name', {
+          name: input.name
+        });
+        break;
+      case 'codex_chrome_finalize_tabs':
+        response = await this.sendRpc('operator.tabs.finalize', {
+          keep: input.keep.map((entry) => ({ ...entry }))
+        });
+        break;
       case 'codex_chrome_open_observe':
         response = await this.openObserve(input);
         break;

@@ -96,6 +96,16 @@ const FORM_STEP_INPUT_SCHEMA = {
   required: ['action', 'handle']
 };
 
+const SESSION_TAB_KEEP_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    tabId: { type: 'number', minimum: 0 },
+    status: { type: 'string', enum: ['handoff', 'deliverable'] }
+  },
+  required: ['tabId', 'status']
+};
+
 const VISUAL_OBSERVE_PROPERTIES = {
   origin: { type: 'string' },
   ...OBSERVE_OPTION_PROPERTIES,
@@ -211,6 +221,99 @@ const TOOL_DEFINITIONS = [
         openBootstrap: { type: 'boolean' }
       },
       required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_user_tabs',
+    description: 'List claimable user Chrome tabs without taking control of them.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {},
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_claim_tab',
+    description: 'Claim a Chrome tab from the latest user tab inventory into this operator session.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabId: { type: 'number', minimum: 0 }
+      },
+      required: ['tabId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_session_tabs',
+    description: 'List tabs owned by this operator session.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {},
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_new_tab',
+    description: 'Create a new Chrome tab owned by this operator session.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {},
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_name_session',
+    description: 'Name the current operator browser session for tab grouping and status.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        name: { type: 'string' }
+      },
+      required: ['name']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_finalize_tabs',
+    description: 'Finalize operator-owned tabs, keeping selected tabs as handoff or deliverable and releasing or closing the rest.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        keep: {
+          type: 'array',
+          items: SESSION_TAB_KEEP_SCHEMA
+        }
+      },
+      required: ['keep']
     },
     outputContract: {
       untrusted: true,

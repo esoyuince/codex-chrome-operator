@@ -112,7 +112,7 @@ function clearsLastErrorOnSuccess(method) {
     'operator.approvals.approve',
     'operator.approvals.reject',
     'operator.approvals.run'
-  ].includes(method) || method.startsWith('page.');
+  ].includes(method) || method.startsWith('page.') || method.startsWith('operator.tabs.') || method === 'operator.session.name';
 }
 
 const PAGE_ACTION_KINDS = Object.freeze({
@@ -417,6 +417,93 @@ function summarizeActiveTabForEvent(tab) {
   };
 }
 
+function normalizeTabId(value, label = 'tabId') {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, `${label} must be a non-negative integer.`);
+  }
+  return guardOk({ tabId: value });
+}
+
+function normalizeSessionTab(tab, fallbackOwnership = null) {
+  if (!tab || typeof tab !== 'object') {
+    return null;
+  }
+  const tabId = normalizeTabId(tab.id, 'tab.id');
+  if (!tabId.ok) {
+    return null;
+  }
+  const ownership = tab.ownership === 'agent' || tab.ownership === 'user'
+    ? tab.ownership
+    : fallbackOwnership;
+  return {
+    id: tabId.tabId,
+    title: typeof tab.title === 'string' ? tab.title : null,
+    url: typeof tab.url === 'string' ? tab.url : null,
+    ownership: ownership === 'agent' || ownership === 'user' ? ownership : null,
+    active: tab.active === true,
+    finalizedStatus: tab.finalizedStatus === 'handoff' || tab.finalizedStatus === 'deliverable'
+      ? tab.finalizedStatus
+      : null,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function normalizeUserTab(tab) {
+  if (!tab || typeof tab !== 'object') {
+    return null;
+  }
+  const normalized = normalizeSessionTab(tab, null);
+  if (!normalized) {
+    return null;
+  }
+  return {
+    id: normalized.id,
+    title: normalized.title,
+    url: normalized.url,
+    lastOpened: typeof tab.lastOpened === 'string' ? tab.lastOpened : null,
+    tabGroup: typeof tab.tabGroup === 'string' ? tab.tabGroup : null
+  };
+}
+
+function validateFinalizeKeep(keep, sessionTabs) {
+  if (keep === undefined) {
+    return guardOk({ keep: [] });
+  }
+  if (!Array.isArray(keep)) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'keep must be an array.');
+  }
+  const seen = new Set();
+  const normalized = [];
+  for (const entry of keep) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'keep entries must be objects.');
+    }
+    const tabId = normalizeTabId(entry.tabId);
+    if (!tabId.ok) {
+      return tabId;
+    }
+    if (!sessionTabs.has(tabId.tabId)) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, `Cannot finalize unknown session tab ${tabId.tabId}.`, {
+        tabId: tabId.tabId
+      });
+    }
+    if (seen.has(tabId.tabId)) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, `Duplicate finalize tab id ${tabId.tabId}.`, {
+        tabId: tabId.tabId
+      });
+    }
+    if (entry.status !== 'handoff' && entry.status !== 'deliverable') {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'keep status must be handoff or deliverable.', {
+        tabId: tabId.tabId,
+        status: entry.status
+      });
+    }
+    seen.add(tabId.tabId);
+    normalized.push({ tabId: tabId.tabId, status: entry.status });
+  }
+  return guardOk({ keep: normalized });
+}
+
 class SessionManager {
   constructor(config = {}) {
     this.stateStore = config.stateStore || new OperatorStateStore({ statePath: config.statePath });
@@ -469,6 +556,9 @@ class SessionManager {
     };
     this.boundedFullAuto = this.defaultBoundedFullAutoState();
     this.warmSessionCache = null;
+    this.sessionName = null;
+    this.sessionTabs = new Map();
+    this.lastUserTabInventory = new Map();
   }
 
   status({ detail = 'full' } = {}) {
@@ -492,6 +582,8 @@ class SessionManager {
       configuredProfile: this.stateStore.getConfiguredProfile(),
       pendingApprovals: this.listApprovalRecords({ status: 'pending' }),
       activeTab: this.activeTab ? { ...this.activeTab } : null,
+      sessionName: this.sessionName,
+      sessionTabs: this.listSessionTabRecords(),
       warmSession: this.warmSessionStatus(),
       recentEvents: this.recentEvents.map((event) => cloneJson(event)),
       recentActionLog: this.recentEvents.map((event) => cloneJson(event)),
@@ -524,6 +616,8 @@ class SessionManager {
       profileConfidence: fullStatus.profileConfidence,
       profileBindingStatus: fullStatus.profileBindingStatus,
       activeTab: fullStatus.activeTab ? { ...fullStatus.activeTab } : null,
+      sessionName: fullStatus.sessionName,
+      sessionTabs: fullStatus.sessionTabs.map((tab) => ({ ...tab })),
       warmSession: { ...fullStatus.warmSession },
       pendingApprovalCount: fullStatus.pendingApprovals.length,
       emergencyStop: { ...fullStatus.emergencyStop },
@@ -629,6 +723,14 @@ class SessionManager {
         break;
       case 'operator.approvals.run':
         response = await this.runApproval(id, params);
+        break;
+      case 'operator.tabs.listUser':
+      case 'operator.tabs.claim':
+      case 'operator.tabs.listSession':
+      case 'operator.tabs.create':
+      case 'operator.tabs.finalize':
+      case 'operator.session.name':
+        response = await this.routeSessionTabCommand(id, request.method, params);
         break;
       case 'operator.screenshots.cleanup':
         response = this.cleanupScreenshots(id, params);
@@ -801,6 +903,16 @@ class SessionManager {
       return;
     }
 
+    if (method.startsWith('operator.tabs.') || method === 'operator.session.name') {
+      this.recordRecentEvent({
+        type: 'sessionTabs',
+        method,
+        result,
+        errorCode
+      });
+      return;
+    }
+
     if (method === 'extension.hostPermissionGranted' || method === 'extension.hostPermissionsSynced') {
       this.recordRecentEvent({
         type: 'hostPermission',
@@ -895,6 +1007,169 @@ class SessionManager {
       stoppedAt: state.stoppedAt,
       stopReason: state.stopReason
     };
+  }
+
+  listSessionTabRecords() {
+    return [...this.sessionTabs.values()]
+      .sort((left, right) => left.id - right.id)
+      .map((tab) => ({ ...tab }));
+  }
+
+  updateSessionTab(tab, fallbackOwnership) {
+    const normalized = normalizeSessionTab(tab, fallbackOwnership);
+    if (!normalized) {
+      return null;
+    }
+    const previous = this.sessionTabs.get(normalized.id) || {};
+    const merged = {
+      ...previous,
+      ...normalized,
+      ownership: normalized.ownership || previous.ownership || fallbackOwnership || null,
+      finalizedStatus: normalized.finalizedStatus || previous.finalizedStatus || null
+    };
+    this.sessionTabs.set(merged.id, merged);
+    return { ...merged };
+  }
+
+  updateSessionTabs(tabs = []) {
+    if (!Array.isArray(tabs)) {
+      return this.listSessionTabRecords();
+    }
+    for (const tab of tabs) {
+      this.updateSessionTab(tab, tab && tab.ownership);
+    }
+    return this.listSessionTabRecords();
+  }
+
+  updateUserTabInventory(tabs = []) {
+    this.lastUserTabInventory.clear();
+    if (!Array.isArray(tabs)) {
+      return [];
+    }
+    const normalized = [];
+    for (const tab of tabs) {
+      const clean = normalizeUserTab(tab);
+      if (clean) {
+        this.lastUserTabInventory.set(clean.id, clean);
+        normalized.push(clean);
+      }
+    }
+    return normalized;
+  }
+
+  ensureExtensionConnected(id) {
+    if (this.emergencyStop.active) {
+      return rpcError(id, this.emergencyStopError());
+    }
+    if (this.connectionState === 'RECONNECTING' || this.connectionState === 'DAEMON_RUNNING_EXTENSION_DISCONNECTED') {
+      return rpcError(id, {
+        code: ERROR_CODES.EXTENSION_DISCONNECTED,
+        message: 'Extension must reconnect with a fresh HELLO before tab session commands can continue.',
+        reconnectRequired: true,
+        lastDisconnect: this.lastDisconnect
+      });
+    }
+    return null;
+  }
+
+  async routeSessionTabCommand(id, method, params = {}) {
+    const disconnected = this.ensureExtensionConnected(id);
+    if (disconnected) {
+      return disconnected;
+    }
+
+    if (method === 'operator.tabs.listUser') {
+      const extensionResponse = await this.enqueueExtensionCommand(method, {});
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      const tabs = this.updateUserTabInventory(extensionResponse.result && extensionResponse.result.tabs);
+      return rpcOk(id, { tabs });
+    }
+
+    if (method === 'operator.tabs.claim') {
+      const tabId = normalizeTabId(params.tabId);
+      if (!tabId.ok) {
+        return rpcError(id, tabId.error);
+      }
+      if (!this.lastUserTabInventory.has(tabId.tabId)) {
+        return rpcError(id, {
+          code: ERROR_CODES.INVALID_SCHEMA,
+          message: 'Tab must come from the latest user tab inventory before it can be claimed.',
+          tabId: tabId.tabId
+        });
+      }
+      const extensionResponse = await this.enqueueExtensionCommand(method, { tabId: tabId.tabId });
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      const tab = this.updateSessionTab(extensionResponse.result && extensionResponse.result.tab, 'user');
+      return rpcOk(id, { tab });
+    }
+
+    if (method === 'operator.tabs.create') {
+      const extensionResponse = await this.enqueueExtensionCommand(method, {});
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      const tab = this.updateSessionTab(extensionResponse.result && extensionResponse.result.tab, 'agent');
+      return rpcOk(id, { tab });
+    }
+
+    if (method === 'operator.tabs.listSession') {
+      const extensionResponse = await this.enqueueExtensionCommand(method, {});
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      const tabs = this.updateSessionTabs(extensionResponse.result && extensionResponse.result.tabs);
+      return rpcOk(id, { tabs });
+    }
+
+    if (method === 'operator.tabs.finalize') {
+      const keep = validateFinalizeKeep(params.keep, this.sessionTabs);
+      if (!keep.ok) {
+        return rpcError(id, keep.error);
+      }
+      const extensionResponse = await this.enqueueExtensionCommand(method, { keep: keep.keep });
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      for (const entry of keep.keep) {
+        const tab = this.sessionTabs.get(entry.tabId);
+        if (tab) {
+          this.sessionTabs.set(entry.tabId, {
+            ...tab,
+            finalizedStatus: entry.status,
+            updatedAt: new Date().toISOString()
+          });
+        }
+      }
+      return rpcOk(id, {
+        ...(extensionResponse.result || {}),
+        keep: keep.keep
+      });
+    }
+
+    if (method === 'operator.session.name') {
+      const name = typeof params.name === 'string' ? params.name.trim().slice(0, 80) : '';
+      if (!name) {
+        return rpcError(id, {
+          code: ERROR_CODES.INVALID_SCHEMA,
+          message: 'name must be a non-empty string.'
+        });
+      }
+      const extensionResponse = await this.enqueueExtensionCommand(method, { name });
+      if (!extensionResponse.ok) {
+        return rpcError(id, extensionResponse.error);
+      }
+      this.sessionName = name;
+      return rpcOk(id, { name });
+    }
+
+    return rpcError(id, {
+      code: ERROR_CODES.UNKNOWN_METHOD,
+      message: `Unknown method: ${method}`
+    });
   }
 
   handleHello(id, hello, params = {}) {

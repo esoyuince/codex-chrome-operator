@@ -1,14 +1,20 @@
 {
   "adapterProtocolVersion": "1.0",
   "toolSchemaVersion": "2026-05-01.m1",
-  "toolDefinitionsHash": "e5b2a26f2b216959cfaa344994cadcc839c1056e4719a248969dadd743475c93",
-  "toolCount": 34,
+  "toolDefinitionsHash": "56f960d6b49df4ab64151c4825feb26852597c5a82e6afe553a4dfcc4b4ba9a4",
+  "toolCount": 40,
   "toolNames": [
     "codex_chrome_status",
     "codex_chrome_prepare_origin",
     "codex_chrome_readiness",
     "codex_chrome_profile_doctor",
     "codex_chrome_profile_onboard",
+    "codex_chrome_user_tabs",
+    "codex_chrome_claim_tab",
+    "codex_chrome_session_tabs",
+    "codex_chrome_new_tab",
+    "codex_chrome_name_session",
+    "codex_chrome_finalize_tabs",
     "codex_chrome_open_observe",
     "codex_chrome_observe",
     "codex_chrome_read_page",
@@ -139,6 +145,124 @@
           }
         },
         "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_user_tabs",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_claim_tab",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "tabId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_session_tabs",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_new_tab",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {},
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_name_session",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_finalize_tabs",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "keep": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "tabId": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "handoff",
+                    "deliverable"
+                  ]
+                }
+              },
+              "required": [
+                "tabId",
+                "status"
+              ]
+            }
+          }
+        },
+        "required": [
+          "keep"
+        ]
       },
       "outputContract": {
         "untrusted": true,

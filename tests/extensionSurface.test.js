@@ -29,6 +29,7 @@ test('manifest exposes the operator as a Chrome side panel with debugger actions
   assert.ok(manifest.permissions.includes('sidePanel'));
   assert.ok(manifest.permissions.includes('debugger'));
   assert.ok(manifest.permissions.includes('alarms'));
+  assert.ok(manifest.permissions.includes('tabGroups'));
   assert.deepEqual(manifest.host_permissions, ['<all_urls>']);
 });
 
@@ -251,6 +252,21 @@ test('background verifies debugger link clicks with observed navigation targets'
   assert.match(background, /preActionUrl:\s*ready\.tab\.url/);
   assert.match(background, /const observedTarget = params\.target \|\|/);
   assert.match(background, /target:\s*observedTarget/);
+});
+
+test('background exposes guarded session tab commands for hybrid operator mode', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+
+  assert.match(background, /operatorSessionTabs/);
+  assert.match(background, /operator\.tabs\.listUser/);
+  assert.match(background, /operator\.tabs\.claim/);
+  assert.match(background, /operator\.tabs\.create/);
+  assert.match(background, /operator\.tabs\.finalize/);
+  assert.match(background, /operator\.session\.name/);
+  assert.match(background, /isClaimableUserTab/);
+  assert.match(background, /chrome\.tabs\.group/);
+  assert.match(background, /Codex Deliverables/);
+  assert.match(background, /TAB_NOT_CLAIMABLE/);
 });
 
 test('background injects compact page reader and intent extractors before the content script', () => {

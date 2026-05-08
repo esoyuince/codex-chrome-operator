@@ -12,7 +12,8 @@
     "sidePanel",
     "debugger",
     "offscreen",
-    "alarms"
+    "alarms",
+    "tabGroups"
   ],
   "host_permissions": [
     "<all_urls>"

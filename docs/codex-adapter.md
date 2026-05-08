@@ -74,13 +74,19 @@ When the daemon created an approval request, the hint includes the `approvalId`,
 - `approval-reject <approvalId>`
 - `approval-run <approvalId>`
 
-The adapter currently exposes 34 strict tools:
+The adapter currently exposes 40 strict tools:
 
 - `codex_chrome_status`
 - `codex_chrome_prepare_origin`
 - `codex_chrome_readiness`
 - `codex_chrome_profile_doctor`
 - `codex_chrome_profile_onboard`
+- `codex_chrome_user_tabs`
+- `codex_chrome_claim_tab`
+- `codex_chrome_session_tabs`
+- `codex_chrome_new_tab`
+- `codex_chrome_name_session`
+- `codex_chrome_finalize_tabs`
 - `codex_chrome_open_observe`
 - `codex_chrome_observe`
 - `codex_chrome_read_page`
@@ -118,6 +124,15 @@ Setup tools keep Codex-first browser work out of implicit Chrome UI gestures.
 state, and `codex_chrome_profile_onboard` runs profile discovery and saves the
 profile used for future bootstrap tabs. Profile and permission `adapterHints`
 point to these tools when the caller can recover through the adapter surface.
+
+Session tab tools provide an explicit hybrid workflow for real Chrome tabs.
+`codex_chrome_user_tabs` lists claimable user tabs without taking ownership,
+`codex_chrome_claim_tab` claims a listed tab by `tabId`,
+`codex_chrome_session_tabs` lists the tabs owned by the current operator
+session, `codex_chrome_new_tab` opens a blank agent-owned session tab,
+`codex_chrome_name_session` labels the session, and
+`codex_chrome_finalize_tabs` keeps only explicitly selected tabs as `handoff` or
+`deliverable` while releasing or closing the rest.
 
 Approval and rejection tools require an explicit `userDecision` argument:
 `"approve"` for `codex_chrome_approval_approve` and `"reject"` for

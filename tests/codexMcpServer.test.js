@@ -52,6 +52,12 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   const cartPrepare = response.result.tools.find((tool) => tool.name === 'codex_chrome_cart_prepare');
   const profileDoctor = response.result.tools.find((tool) => tool.name === 'codex_chrome_profile_doctor');
   const profileOnboard = response.result.tools.find((tool) => tool.name === 'codex_chrome_profile_onboard');
+  const userTabs = response.result.tools.find((tool) => tool.name === 'codex_chrome_user_tabs');
+  const claimTab = response.result.tools.find((tool) => tool.name === 'codex_chrome_claim_tab');
+  const sessionTabs = response.result.tools.find((tool) => tool.name === 'codex_chrome_session_tabs');
+  const newTab = response.result.tools.find((tool) => tool.name === 'codex_chrome_new_tab');
+  const nameSession = response.result.tools.find((tool) => tool.name === 'codex_chrome_name_session');
+  const finalizeTabs = response.result.tools.find((tool) => tool.name === 'codex_chrome_finalize_tabs');
   assert.ok(status);
   assert.equal(status.inputSchema.additionalProperties, false);
   assert.deepEqual(status.inputSchema.required, []);
@@ -91,6 +97,98 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   assert.ok(profileOnboard);
   assert.equal(profileOnboard.inputSchema.additionalProperties, false);
   assert.deepEqual(profileOnboard.inputSchema.required, []);
+  assert.ok(userTabs);
+  assert.equal(userTabs.inputSchema.additionalProperties, false);
+  assert.deepEqual(userTabs.inputSchema.required, []);
+  assert.ok(claimTab);
+  assert.equal(claimTab.inputSchema.additionalProperties, false);
+  assert.deepEqual(claimTab.inputSchema.required, ['tabId']);
+  assert.ok(sessionTabs);
+  assert.deepEqual(sessionTabs.inputSchema.required, []);
+  assert.ok(newTab);
+  assert.deepEqual(newTab.inputSchema.required, []);
+  assert.ok(nameSession);
+  assert.deepEqual(nameSession.inputSchema.required, ['name']);
+  assert.ok(finalizeTabs);
+  assert.equal(finalizeTabs.inputSchema.additionalProperties, false);
+  assert.deepEqual(finalizeTabs.inputSchema.required, ['keep']);
+  assert.equal(finalizeTabs.inputSchema.properties.keep.type, 'array');
+  assert.equal(finalizeTabs.inputSchema.properties.keep.items.additionalProperties, false);
+  assert.deepEqual(finalizeTabs.inputSchema.properties.keep.items.properties.status.enum, ['handoff', 'deliverable']);
+});
+
+test('MCP handler calls session tab tools through the adapter', async () => {
+  const calls = [];
+  const handleMessage = createMcpMessageHandler({
+    adapter: {
+      async executeTool(request) {
+        calls.push(request);
+        return {
+          ok: true,
+          toolName: request.toolName,
+          protocolVersion: '1.0',
+          untrusted: true,
+          result: {
+            accepted: true
+          }
+        };
+      }
+    }
+  });
+
+  await handleMessage({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_user_tabs',
+      arguments: {}
+    }
+  });
+  await handleMessage({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_claim_tab',
+      arguments: { tabId: 7 }
+    }
+  });
+  await handleMessage({
+    jsonrpc: '2.0',
+    id: 3,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_new_tab',
+      arguments: {}
+    }
+  });
+  await handleMessage({
+    jsonrpc: '2.0',
+    id: 4,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_name_session',
+      arguments: { name: 'Firebase cleanup' }
+    }
+  });
+  await handleMessage({
+    jsonrpc: '2.0',
+    id: 5,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_finalize_tabs',
+      arguments: { keep: [{ tabId: 7, status: 'deliverable' }] }
+    }
+  });
+
+  assert.deepEqual(calls, [
+    { toolName: 'codex_chrome_user_tabs', input: {} },
+    { toolName: 'codex_chrome_claim_tab', input: { tabId: 7 } },
+    { toolName: 'codex_chrome_new_tab', input: {} },
+    { toolName: 'codex_chrome_name_session', input: { name: 'Firebase cleanup' } },
+    { toolName: 'codex_chrome_finalize_tabs', input: { keep: [{ tabId: 7, status: 'deliverable' }] } }
+  ]);
 });
 
 test('MCP handler calls cart preparation tool through the adapter and rejects extra fields', async () => {
@@ -499,6 +597,8 @@ test('package exposes MCP adapter script and docs explain local usage', () => {
   assert.match(docs, /redacted file references/);
   assert.match(docs, /codex_chrome_profile_doctor/);
   assert.match(docs, /codex_chrome_profile_onboard/);
+  assert.match(docs, /codex_chrome_user_tabs/);
+  assert.match(docs, /codex_chrome_finalize_tabs/);
   assert.match(docs, /codex_chrome_approval_approve/);
   assert.match(docs, /userDecision/);
   assert.match(docs, /approval-approve/);

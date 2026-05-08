@@ -12,6 +12,10 @@ const WARM_SESSION_MIN_INTERVAL_MS = 1500;
 const WARM_SESSION_READ_MAX_CHARS = 6000;
 const NATIVE_RPC_TIMEOUT_MS = 10000;
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
+const SESSION_TABS_STORAGE_KEY = 'operatorSessionTabs';
+const SESSION_NAME_STORAGE_KEY = 'operatorSessionName';
+const DEFAULT_SESSION_GROUP_TITLE = 'Codex Operator';
+const DELIVERABLE_SESSION_GROUP_TITLE = 'Codex Deliverables';
 const FATAL_NATIVE_ERROR_CODES = new Set([
   'EXTENSION_ID_MISMATCH',
   'PROTOCOL_VERSION_MISMATCH',
@@ -41,6 +45,9 @@ let connectionState = 'DISCONNECTED';
 let suppressNextNativeReconnect = false;
 let warmSessionInFlight = false;
 let lastWarmSessionAt = 0;
+let sessionStateLoaded = false;
+let operatorSessionName = null;
+let operatorSessionTabs = new Map();
 const pendingNativeRpcs = new Map();
 
 function requestId(prefix = 'ext') {
@@ -573,6 +580,236 @@ function tabInfo(tab) {
   };
 }
 
+function sessionStorageArea() {
+  return chrome.storage && chrome.storage.session ? chrome.storage.session : chrome.storage.local;
+}
+
+async function loadSessionTabState() {
+  if (sessionStateLoaded) {
+    return;
+  }
+  sessionStateLoaded = true;
+  try {
+    const stored = await sessionStorageArea().get([
+      SESSION_TABS_STORAGE_KEY,
+      SESSION_NAME_STORAGE_KEY
+    ]);
+    operatorSessionName = typeof stored[SESSION_NAME_STORAGE_KEY] === 'string'
+      ? stored[SESSION_NAME_STORAGE_KEY]
+      : null;
+    operatorSessionTabs = new Map();
+    for (const tab of stored[SESSION_TABS_STORAGE_KEY] || []) {
+      if (tab && Number.isInteger(tab.id)) {
+        operatorSessionTabs.set(tab.id, { ...tab });
+      }
+    }
+  } catch {
+    operatorSessionName = null;
+    operatorSessionTabs = new Map();
+  }
+}
+
+async function saveSessionTabState() {
+  try {
+    await sessionStorageArea().set({
+      [SESSION_TABS_STORAGE_KEY]: [...operatorSessionTabs.values()],
+      [SESSION_NAME_STORAGE_KEY]: operatorSessionName
+    });
+  } catch {
+    // Session tab state is best-effort; Chrome operations remain authoritative.
+  }
+}
+
+function isClaimableUserTab(tab) {
+  if (!tab || !Number.isInteger(tab.id) || typeof tab.url !== 'string' || !tab.url) {
+    return false;
+  }
+  if (isExtensionPageTab(tab)) {
+    return false;
+  }
+  try {
+    const url = new URL(tab.url);
+    return ['http:', 'https:', 'file:'].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
+
+async function tabGroupTitlesById(tabs) {
+  const groupIds = [...new Set(tabs
+    .map((tab) => tab.groupId)
+    .filter((groupId) => Number.isInteger(groupId) && groupId >= 0))];
+  const entries = await Promise.all(groupIds.map(async (groupId) => {
+    if (!chrome.tabGroups || typeof chrome.tabGroups.get !== 'function') {
+      return null;
+    }
+    try {
+      const group = await chrome.tabGroups.get(groupId);
+      const title = typeof group.title === 'string' ? group.title.trim() : '';
+      return title ? [groupId, title] : null;
+    } catch {
+      return null;
+    }
+  }));
+  return new Map(entries.filter(Boolean));
+}
+
+function userTabInfo(tab, groupTitles = new Map()) {
+  const lastAccessed = typeof tab.lastAccessed === 'number' && Number.isFinite(tab.lastAccessed)
+    ? new Date(tab.lastAccessed).toISOString()
+    : null;
+  return {
+    id: tab.id,
+    title: tab.title || null,
+    url: tab.url || null,
+    ...(lastAccessed ? { lastOpened: lastAccessed } : {}),
+    ...(groupTitles.has(tab.groupId) ? { tabGroup: groupTitles.get(tab.groupId) } : {})
+  };
+}
+
+function sessionTabInfo(tab, ownership, finalizedStatus = null) {
+  return {
+    ...tabInfo(tab),
+    ownership,
+    active: tab.active === true,
+    finalizedStatus
+  };
+}
+
+async function groupTabsBestEffort(tabIds, title) {
+  if (!chrome.tabs.group || !chrome.tabGroups || !chrome.tabGroups.update || tabIds.length === 0) {
+    return;
+  }
+  try {
+    const groupId = await chrome.tabs.group({
+      tabIds: tabIds.length === 1 ? tabIds[0] : tabIds
+    });
+    await chrome.tabGroups.update(groupId, {
+      title,
+      color: title === DELIVERABLE_SESSION_GROUP_TITLE ? 'blue' : 'grey'
+    });
+  } catch {
+    // Tabs may span windows or Chrome may reject grouping. Ownership still works.
+  }
+}
+
+async function refreshSessionTabsFromChrome() {
+  await loadSessionTabState();
+  const refreshed = [];
+  for (const [tabId, record] of operatorSessionTabs.entries()) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      const next = {
+        ...record,
+        ...sessionTabInfo(tab, record.ownership, record.finalizedStatus || null)
+      };
+      operatorSessionTabs.set(tabId, next);
+      refreshed.push(next);
+    } catch {
+      operatorSessionTabs.delete(tabId);
+    }
+  }
+  await saveSessionTabState();
+  return refreshed;
+}
+
+async function handleSessionTabCommand(method, params = {}) {
+  await loadSessionTabState();
+
+  if (method === 'operator.tabs.listUser') {
+    const tabs = (await chrome.tabs.query({})).filter(isClaimableUserTab);
+    const groupTitles = await tabGroupTitlesById(tabs);
+    return {
+      ok: true,
+      result: {
+        tabs: tabs.map((tab) => userTabInfo(tab, groupTitles))
+      }
+    };
+  }
+
+  if (method === 'operator.tabs.claim') {
+    if (!Number.isInteger(params.tabId) || params.tabId < 0) {
+      return { ok: false, error: { code: 'INVALID_SCHEMA', message: 'tabId must be a non-negative integer.' } };
+    }
+    const tab = await chrome.tabs.get(params.tabId);
+    if (!isClaimableUserTab(tab)) {
+      return {
+        ok: false,
+        error: {
+          code: 'TAB_NOT_CLAIMABLE',
+          message: 'Tab cannot be claimed by the operator.',
+          tabId: params.tabId
+        }
+      };
+    }
+    const record = sessionTabInfo(tab, 'user');
+    operatorSessionTabs.set(record.id, record);
+    await groupTabsBestEffort([...operatorSessionTabs.keys()], operatorSessionName || DEFAULT_SESSION_GROUP_TITLE);
+    await saveSessionTabState();
+    return { ok: true, result: { tab: record } };
+  }
+
+  if (method === 'operator.tabs.create') {
+    const tab = await chrome.tabs.create({ active: true, url: 'about:blank' });
+    const record = sessionTabInfo(tab, 'agent');
+    operatorSessionTabs.set(record.id, record);
+    await groupTabsBestEffort([...operatorSessionTabs.keys()], operatorSessionName || DEFAULT_SESSION_GROUP_TITLE);
+    await saveSessionTabState();
+    return { ok: true, result: { tab: record } };
+  }
+
+  if (method === 'operator.tabs.listSession') {
+    return { ok: true, result: { tabs: await refreshSessionTabsFromChrome() } };
+  }
+
+  if (method === 'operator.tabs.finalize') {
+    const keep = Array.isArray(params.keep) ? params.keep : [];
+    const keepById = new Map(keep.map((entry) => [entry.tabId, entry.status]));
+    const kept = [];
+    const closed = [];
+    const released = [];
+    for (const [tabId, record] of [...operatorSessionTabs.entries()]) {
+      const status = keepById.get(tabId);
+      if (status === 'handoff' || status === 'deliverable') {
+        const next = { ...record, finalizedStatus: status };
+        operatorSessionTabs.set(tabId, next);
+        kept.push({ tabId, status });
+        continue;
+      }
+      operatorSessionTabs.delete(tabId);
+      if (record.ownership === 'agent') {
+        try {
+          await chrome.tabs.remove(tabId);
+          closed.push(tabId);
+        } catch {
+          closed.push(tabId);
+        }
+      } else {
+        released.push(tabId);
+      }
+    }
+    const deliverableIds = kept
+      .filter((entry) => entry.status === 'deliverable')
+      .map((entry) => entry.tabId);
+    await groupTabsBestEffort(deliverableIds, DELIVERABLE_SESSION_GROUP_TITLE);
+    await saveSessionTabState();
+    return { ok: true, result: { kept, closed, released } };
+  }
+
+  if (method === 'operator.session.name') {
+    const name = typeof params.name === 'string' ? params.name.trim().slice(0, 80) : '';
+    if (!name) {
+      return { ok: false, error: { code: 'INVALID_SCHEMA', message: 'name must be a non-empty string.' } };
+    }
+    operatorSessionName = name;
+    await groupTabsBestEffort([...operatorSessionTabs.keys()], operatorSessionName || DEFAULT_SESSION_GROUP_TITLE);
+    await saveSessionTabState();
+    return { ok: true, result: { name } };
+  }
+
+  return { ok: false, error: { code: 'UNKNOWN_METHOD', message: `Unknown method: ${method}` } };
+}
+
 async function activeTabInfo() {
   const [lastFocusedTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (lastFocusedTab) {
@@ -1017,6 +1254,10 @@ async function handleOperatorCommand(command) {
   const params = command.params || {};
 
   try {
+    if (command.method && (command.method.startsWith('operator.tabs.') || command.method === 'operator.session.name')) {
+      return handleSessionTabCommand(command.method, params);
+    }
+
     if (command.method === 'page.navigate') {
       const tab = await activeTabInfo();
       if (!tab || !tab.id) {
