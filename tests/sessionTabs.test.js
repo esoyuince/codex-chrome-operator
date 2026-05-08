@@ -225,7 +225,7 @@ test('policy toggles block guarded actions and gate purchase approvals', async (
   const disabled = await session.handleRpc({
     id: 'guarded-off',
     method: 'operator.policy.update',
-    params: { guardedActionsEnabled: false }
+    params: { guardedActionsEnabled: false, bridgeInstanceId: 'bridge_sidepanel' }
   });
   assert.equal(disabled.ok, true);
   assert.equal(disabled.result.policy.guardedActionsEnabled, false);

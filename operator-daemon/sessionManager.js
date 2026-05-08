@@ -3782,7 +3782,11 @@ class SessionManager {
 
   updatePolicy(id, params = {}) {
     const allowed = ['guardedActionsEnabled', 'purchaseApprovalsEnabled'];
+    const update = {};
     for (const [key, value] of Object.entries(params || {})) {
+      if (key === 'bridgeInstanceId') {
+        continue;
+      }
       if (!allowed.includes(key)) {
         return rpcError(id, {
           code: ERROR_CODES.INVALID_SCHEMA,
@@ -3795,9 +3799,10 @@ class SessionManager {
           message: `${key} must be a boolean.`
         });
       }
+      update[key] = value;
     }
     return rpcOk(id, {
-      policy: this.stateStore.updatePolicyControls(params)
+      policy: this.stateStore.updatePolicyControls(update)
     });
   }
 

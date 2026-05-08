@@ -27,6 +27,7 @@ const els = {
 };
 
 let currentOrigin = null;
+let transientNextStep = null;
 const APPROVAL_MESSAGE_TYPES = {
   approve: 'operator.approvals.approve',
   reject: 'operator.approvals.reject',
@@ -56,6 +57,10 @@ function formatTabTitle(tab) {
 
 function isConnectedState(connectionState) {
   return connectionState === 'CONNECTED' || connectionState === 'EXTENSION_CONNECTED';
+}
+
+function setTransientNextStep(message) {
+  transientNextStep = message || null;
 }
 
 async function readStorage() {
@@ -162,6 +167,7 @@ function chooseNextStep({
   connectionState,
   nativeError,
   statusError,
+  policyError,
   tab,
   blockedStatus,
   approvals
@@ -174,6 +180,9 @@ function chooseNextStep({
   }
   if (statusError) {
     return 'Background status failed. Reload the extension, then refresh this panel.';
+  }
+  if (policyError) {
+    return `Policy controls unavailable: ${policyError}`;
   }
   if (!tab || !tab.origin || tab.origin === 'null') {
     return 'Open the site you want Codex to operate, then refresh this panel.';
@@ -209,16 +218,19 @@ function setMiniBadge(element, state, text) {
   element.textContent = text;
 }
 
-function renderPermissions({ connectionState, tab, blockedStatus, policy }) {
-  const ready = isConnectedState(connectionState) && tab && tab.origin && !blockedStatus.blocked;
+function renderPermissions({ connectionState, tab, blockedStatus, policy, policyError }) {
+  const connected = isConnectedState(connectionState);
+  const ready = connected && tab && tab.origin && tab.origin !== 'null' && !blockedStatus.blocked;
+  const policyReady = connected && !policyError;
   const guardedOn = policy.guardedActionsEnabled !== false;
   const purchaseOn = policy.purchaseApprovalsEnabled === true;
   setMiniBadge(els.permissionSafe, ready ? 'ok' : 'warn', ready ? 'Ready' : 'Blocked');
-  setMiniBadge(els.permissionAction, ready && guardedOn ? 'warn' : 'disabled', ready && guardedOn ? 'Guarded' : 'Off');
-  setMiniBadge(els.permissionCritical, purchaseOn ? 'danger' : 'disabled', purchaseOn ? 'Approval' : 'Off');
+  setMiniBadge(els.permissionAction, policyReady && guardedOn ? 'warn' : 'disabled', policyReady && guardedOn ? 'Guarded' : 'Off');
+  setMiniBadge(els.permissionCritical, policyReady && purchaseOn ? 'danger' : 'disabled', policyReady && purchaseOn ? 'Approval' : 'Off');
   els.guardedActionsToggle.checked = guardedOn;
   els.purchaseApprovalsToggle.checked = purchaseOn;
-  els.guardedActionsToggle.disabled = !ready;
+  els.guardedActionsToggle.disabled = !policyReady;
+  els.purchaseApprovalsToggle.disabled = !policyReady;
 }
 
 function approvalTitle(approval) {
@@ -327,6 +339,9 @@ async function refresh() {
     : daemonResult && daemonResult.policy
       ? daemonResult.policy
       : { guardedActionsEnabled: true, purchaseApprovalsEnabled: false };
+  const policyError = policyStatus && !policyStatus.ok
+    ? formatError(policyStatus.error) || policyStatus.statusError || 'unknown policy error'
+    : policyStatus.statusError || null;
   const blockedStatus = await readBlockedOriginsStatus(tab && tab.origin);
 
   currentOrigin = tab && tab.origin && tab.origin !== 'null' ? tab.origin : null;
@@ -341,7 +356,7 @@ async function refresh() {
     els.siteAccess,
     blockedStatus.blocked ? `Blocked by ${blockedStatus.blockedPattern}` : 'Allowed'
   );
-  renderPermissions({ connectionState, tab, blockedStatus, policy });
+  renderPermissions({ connectionState, tab, blockedStatus, policy, policyError });
   setText(els.sessionTabsCount, daemonResult && Array.isArray(daemonResult.sessionTabs)
     ? String(daemonResult.sessionTabs.length)
     : '0');
@@ -361,14 +376,16 @@ async function refresh() {
         : `${blockedStatus.blockedOrigins.length} blocked site${blockedStatus.blockedOrigins.length === 1 ? '' : 's'} saved.`
   );
 
-  els.nextStep.textContent = chooseNextStep({
+  els.nextStep.textContent = transientNextStep || chooseNextStep({
     connectionState,
     nativeError,
     statusError,
+    policyError,
     tab,
     blockedStatus,
     approvals
   });
+  transientNextStep = null;
   els.summary.textContent = status.statusError
     ? 'Background status failed; showing storage and tab fallback state.'
     : 'Live status from the extension background service worker.';
@@ -400,10 +417,12 @@ async function updatePolicyToggle(update) {
       ...update
     });
     if (!response || !response.ok) {
-      els.nextStep.textContent = `Policy update failed: ${formatError(response && response.error) || 'unknown error'}`;
+      setTransientNextStep(`Policy update failed: ${formatError(response && response.error) || 'unknown error'}`);
+    } else {
+      setTransientNextStep('Policy updated.');
     }
   } catch (error) {
-    els.nextStep.textContent = `Policy update failed: ${formatError(error) || 'unknown error'}`;
+    setTransientNextStep(`Policy update failed: ${formatError(error) || 'unknown error'}`);
   } finally {
     await refresh();
   }

@@ -212,6 +212,367 @@ test('side panel treats daemon EXTENSION_CONNECTED status as connected', async (
   );
 });
 
+test('side panel keeps policy toggle failures visible', async () => {
+  const vm = require('node:vm');
+  const js = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.js'), 'utf8');
+  const elements = new Map();
+  const listeners = new Map();
+
+  function makeElement(id) {
+    return {
+      id,
+      children: [],
+      className: '',
+      dataset: {},
+      disabled: false,
+      checked: true,
+      innerHTML: '',
+      textContent: '',
+      value: '',
+      append(...children) {
+        this.children.push(...children);
+      },
+      addEventListener(type, handler) {
+        listeners.set(`${id}:${type}`, handler);
+      },
+      closest() {
+        return null;
+      },
+      classList: {
+        add: (...classes) => {
+          const current = new Set(String(elements.get(id).className || '').split(/\s+/).filter(Boolean));
+          for (const className of classes) {
+            current.add(className);
+          }
+          elements.get(id).className = Array.from(current).join(' ');
+        }
+      }
+    };
+  }
+
+  const document = {
+    getElementById(id) {
+      if (!elements.has(id)) {
+        elements.set(id, makeElement(id));
+      }
+      return elements.get(id);
+    },
+    createElement(tagName) {
+      return makeElement(tagName);
+    }
+  };
+
+  const activeTab = {
+    id: 1,
+    title: 'Example Domain',
+    url: 'https://example.com/',
+    origin: 'https://example.com',
+    loadingState: 'complete'
+  };
+  const chrome = {
+    runtime: {
+      async sendMessage(message) {
+        if (message.type === 'operator.status') {
+          return { ok: true, activeTab, connectionState: 'CONNECTED' };
+        }
+        if (message.type === 'operator.daemonStatus') {
+          return {
+            ok: true,
+            result: {
+              activeTab,
+              connectionState: 'EXTENSION_CONNECTED',
+              lastError: null,
+              pendingApprovals: [],
+              policy: { guardedActionsEnabled: true, purchaseApprovalsEnabled: false }
+            }
+          };
+        }
+        if (message.type === 'operator.approvals.list') {
+          return { ok: true, result: { approvals: [] } };
+        }
+        if (message.type === 'operator.policy.status') {
+          return {
+            ok: true,
+            result: { policy: { guardedActionsEnabled: true, purchaseApprovalsEnabled: false } }
+          };
+        }
+        if (message.type === 'operator.policy.update') {
+          return {
+            ok: false,
+            error: { code: 'UNKNOWN_METHOD', message: 'Unknown method: operator.policy.update' }
+          };
+        }
+        if (message.type === 'operator.blockedOriginsStatus') {
+          return { blockedOrigins: [], blocked: false, blockedPattern: null };
+        }
+        return { ok: true };
+      }
+    },
+    storage: {
+      local: {
+        async get() {
+          return {};
+        }
+      }
+    },
+    tabs: {
+      async query() {
+        return [];
+      }
+    }
+  };
+
+  vm.runInNewContext(js, {
+    chrome,
+    document,
+    URL,
+    setTimeout,
+    clearTimeout
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  elements.get('guarded-actions-toggle').checked = false;
+  listeners.get('guarded-actions-toggle:change')();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.match(elements.get('next-step').textContent, /Policy update failed: Unknown method/);
+});
+
+test('side panel disables policy toggles when policy status is unavailable', async () => {
+  const vm = require('node:vm');
+  const js = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.js'), 'utf8');
+  const elements = new Map();
+
+  function makeElement(id) {
+    return {
+      id,
+      children: [],
+      className: '',
+      dataset: {},
+      disabled: false,
+      checked: true,
+      innerHTML: '',
+      textContent: '',
+      value: '',
+      append(...children) {
+        this.children.push(...children);
+      },
+      addEventListener() {},
+      closest() {
+        return null;
+      },
+      classList: {
+        add: (...classes) => {
+          const current = new Set(String(elements.get(id).className || '').split(/\s+/).filter(Boolean));
+          for (const className of classes) {
+            current.add(className);
+          }
+          elements.get(id).className = Array.from(current).join(' ');
+        }
+      }
+    };
+  }
+
+  const document = {
+    getElementById(id) {
+      if (!elements.has(id)) {
+        elements.set(id, makeElement(id));
+      }
+      return elements.get(id);
+    },
+    createElement(tagName) {
+      return makeElement(tagName);
+    }
+  };
+
+  const activeTab = {
+    id: 1,
+    title: 'Example Domain',
+    url: 'https://example.com/',
+    origin: 'https://example.com',
+    loadingState: 'complete'
+  };
+  const chrome = {
+    runtime: {
+      async sendMessage(message) {
+        if (message.type === 'operator.status') {
+          return { ok: true, activeTab, connectionState: 'CONNECTED' };
+        }
+        if (message.type === 'operator.daemonStatus') {
+          return {
+            ok: true,
+            result: {
+              activeTab,
+              connectionState: 'EXTENSION_CONNECTED',
+              lastError: null,
+              pendingApprovals: [],
+              policy: { guardedActionsEnabled: true, purchaseApprovalsEnabled: false }
+            }
+          };
+        }
+        if (message.type === 'operator.approvals.list') {
+          return { ok: true, result: { approvals: [] } };
+        }
+        if (message.type === 'operator.policy.status') {
+          return {
+            ok: false,
+            error: { code: 'UNKNOWN_METHOD', message: 'Unknown method: operator.policy.status' }
+          };
+        }
+        if (message.type === 'operator.blockedOriginsStatus') {
+          return { blockedOrigins: [], blocked: false, blockedPattern: null };
+        }
+        return { ok: true };
+      }
+    },
+    storage: {
+      local: {
+        async get() {
+          return {};
+        }
+      }
+    },
+    tabs: {
+      async query() {
+        return [];
+      }
+    }
+  };
+
+  vm.runInNewContext(js, {
+    chrome,
+    document,
+    URL,
+    setTimeout,
+    clearTimeout
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(elements.get('guarded-actions-toggle').disabled, true);
+  assert.equal(elements.get('purchase-approvals-toggle').disabled, true);
+  assert.match(elements.get('next-step').textContent, /Policy controls unavailable: Unknown method/);
+});
+
+test('side panel keeps global policy toggles enabled on non-web active tabs', async () => {
+  const vm = require('node:vm');
+  const js = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.js'), 'utf8');
+  const elements = new Map();
+
+  function makeElement(id) {
+    return {
+      id,
+      children: [],
+      className: '',
+      dataset: {},
+      disabled: false,
+      checked: false,
+      innerHTML: '',
+      textContent: '',
+      value: '',
+      append(...children) {
+        this.children.push(...children);
+      },
+      addEventListener() {},
+      closest() {
+        return null;
+      },
+      classList: {
+        add: (...classes) => {
+          const current = new Set(String(elements.get(id).className || '').split(/\s+/).filter(Boolean));
+          for (const className of classes) {
+            current.add(className);
+          }
+          elements.get(id).className = Array.from(current).join(' ');
+        }
+      }
+    };
+  }
+
+  const document = {
+    getElementById(id) {
+      if (!elements.has(id)) {
+        elements.set(id, makeElement(id));
+      }
+      return elements.get(id);
+    },
+    createElement(tagName) {
+      return makeElement(tagName);
+    }
+  };
+
+  const activeTab = {
+    id: 1,
+    title: 'New Tab',
+    url: 'chrome://newtab/',
+    origin: 'null',
+    loadingState: 'complete'
+  };
+  const chrome = {
+    runtime: {
+      async sendMessage(message) {
+        if (message.type === 'operator.status') {
+          return { ok: true, activeTab, connectionState: 'CONNECTED' };
+        }
+        if (message.type === 'operator.daemonStatus') {
+          return {
+            ok: true,
+            result: {
+              activeTab,
+              connectionState: 'EXTENSION_CONNECTED',
+              lastError: null,
+              pendingApprovals: [],
+              policy: { guardedActionsEnabled: false, purchaseApprovalsEnabled: true }
+            }
+          };
+        }
+        if (message.type === 'operator.approvals.list') {
+          return { ok: true, result: { approvals: [] } };
+        }
+        if (message.type === 'operator.policy.status') {
+          return {
+            ok: true,
+            result: { policy: { guardedActionsEnabled: false, purchaseApprovalsEnabled: true } }
+          };
+        }
+        if (message.type === 'operator.blockedOriginsStatus') {
+          return { blockedOrigins: [], blocked: false, blockedPattern: null };
+        }
+        return { ok: true };
+      }
+    },
+    storage: {
+      local: {
+        async get() {
+          return {};
+        }
+      }
+    },
+    tabs: {
+      async query() {
+        return [];
+      }
+    }
+  };
+
+  vm.runInNewContext(js, {
+    chrome,
+    document,
+    URL,
+    setTimeout,
+    clearTimeout
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(elements.get('guarded-actions-toggle').disabled, false);
+  assert.equal(elements.get('purchase-approvals-toggle').disabled, false);
+  assert.equal(elements.get('guarded-actions-toggle').checked, false);
+  assert.equal(elements.get('purchase-approvals-toggle').checked, true);
+  assert.equal(elements.get('permission-safe').textContent, 'Blocked');
+  assert.equal(elements.get('permission-action').textContent, 'Off');
+  assert.equal(elements.get('permission-critical').textContent, 'Approval');
+});
+
 test('background reconnects native bridge after Chrome startup without popup interaction', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 
