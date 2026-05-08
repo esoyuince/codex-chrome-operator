@@ -32,6 +32,7 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   const newTab = tools.find((tool) => tool.name === 'codex_chrome_new_tab');
   const nameSession = tools.find((tool) => tool.name === 'codex_chrome_name_session');
   const finalizeTabs = tools.find((tool) => tool.name === 'codex_chrome_finalize_tabs');
+  const tabScreenshot = tools.find((tool) => tool.name === 'codex_chrome_tab_screenshot');
 
   assert.equal(ADAPTER_PROTOCOL_VERSION, '1.0');
   assert.ok(status);
@@ -132,6 +133,12 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.deepEqual(finalizeTabs.inputSchema.required, ['keep']);
   assert.equal(finalizeTabs.inputSchema.properties.keep.items.additionalProperties, false);
   assert.deepEqual(finalizeTabs.inputSchema.properties.keep.items.properties.status.enum, ['handoff', 'deliverable']);
+  assert.ok(tabScreenshot);
+  assert.deepEqual(tabScreenshot.inputSchema.required, ['tabId']);
+  assert.equal(tabScreenshot.inputSchema.properties.tabId.minimum, 0);
+  assert.deepEqual(tabScreenshot.inputSchema.properties.format.enum, ['png', 'jpeg', 'webp']);
+  assert.equal(tabScreenshot.inputSchema.properties.quality.minimum, 1);
+  assert.equal(tabScreenshot.outputContract.rawScreenshotBytes, false);
   assert.match(toolDefinitionsHash(), /^[a-f0-9]{64}$/);
   assert.equal(toolDefinitionsHash(), toolDefinitionsHash());
 });
@@ -202,6 +209,16 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   }).ok, true);
   assert.equal(validateToolInput('codex_chrome_finalize_tabs', {
     keep: [{ tabId: 7, status: 'pin' }]
+  }).error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(validateToolInput('codex_chrome_tab_screenshot', { tabId: 7 }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_screenshot', {
+    tabId: 7,
+    format: 'jpeg',
+    quality: 80
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_screenshot', {
+    tabId: 7,
+    format: 'gif'
   }).error.code, 'INVALID_TOOL_INPUT');
   assert.equal(
     validateToolInput('codex_chrome_upload_file', {
@@ -618,6 +635,53 @@ test('CodexChromeToolAdapter routes session tab tools to operator tab RPC method
     ['operator.session.name', { name: 'Firebase cleanup' }],
     ['operator.tabs.finalize', { keep: [{ tabId: 7, status: 'deliverable' }] }]
   ]);
+});
+
+test('CodexChromeToolAdapter routes tab screenshot helper through guarded CDP', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          screenshot: {
+            artifactId: 'shot_1',
+            dataUrl: 'data:image/png;base64,rawbytes'
+          }
+        }
+      };
+    }
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_tab_screenshot',
+    input: { tabId: 7, format: 'jpeg', quality: 80 }
+  });
+
+  assert.deepEqual(calls.map((call) => ({
+    method: call.method,
+    params: call.params
+  })), [{
+    method: 'operator.cdp.execute',
+    params: {
+      tabId: 7,
+      method: 'Page.captureScreenshot',
+      params: {
+        format: 'jpeg',
+        quality: 80
+      }
+    }
+  }]);
+  assert.equal(response.ok, true);
+  assert.equal(response.result.screenshot.artifactId, 'shot_1');
+  assert.equal(response.result.screenshot.dataUrl, undefined);
+  assert.equal(response.result.screenshot.rawDataRedacted, true);
 });
 
 test('CodexChromeToolAdapter routes compact read page and batch actions with normalized origins', async () => {

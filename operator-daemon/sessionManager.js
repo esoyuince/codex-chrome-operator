@@ -162,6 +162,7 @@ const BATCH_ACTION_KINDS = Object.freeze({
 });
 
 const CDP_ALLOWED_METHODS = new Set([
+  'Page.captureScreenshot',
   'Page.getLayoutMetrics',
   'Target.getTargets'
 ]);
@@ -1282,6 +1283,28 @@ class SessionManager {
     });
     if (!extensionResponse.ok) {
       return rpcError(id, extensionResponse.error);
+    }
+    if (cdpMethod === 'Page.captureScreenshot') {
+      const result = extensionResponse.result || {};
+      const materialized = this.materializeVisualObservation({
+        ...result,
+        visual: {
+          ...(result.visual || {}),
+          provider: result.provider || 'chrome.debugger.Page.captureScreenshot',
+          artifactBacked: false
+        }
+      }, origin, {
+        reason: 'cdp.captureScreenshot'
+      });
+      if (!materialized.ok) {
+        return rpcError(id, materialized.error);
+      }
+      return rpcOk(id, {
+        tabId: tabId.tabId,
+        origin: origin || null,
+        method: cdpMethod,
+        ...materialized.result
+      });
     }
     return rpcOk(id, {
       tabId: tabId.tabId,

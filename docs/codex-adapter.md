@@ -74,7 +74,7 @@ When the daemon created an approval request, the hint includes the `approvalId`,
 - `approval-reject <approvalId>`
 - `approval-run <approvalId>`
 
-The adapter currently exposes 40 strict tools:
+The adapter currently exposes 41 strict tools:
 
 - `codex_chrome_status`
 - `codex_chrome_prepare_origin`
@@ -87,6 +87,7 @@ The adapter currently exposes 40 strict tools:
 - `codex_chrome_new_tab`
 - `codex_chrome_name_session`
 - `codex_chrome_finalize_tabs`
+- `codex_chrome_tab_screenshot`
 - `codex_chrome_open_observe`
 - `codex_chrome_observe`
 - `codex_chrome_read_page`
@@ -133,6 +134,9 @@ session, `codex_chrome_new_tab` opens a blank agent-owned session tab,
 `codex_chrome_name_session` labels the session, and
 `codex_chrome_finalize_tabs` keeps only explicitly selected tabs as `handoff` or
 `deliverable` while releasing or closing the rest.
+`codex_chrome_tab_screenshot` captures an artifact-backed screenshot for a
+session-owned tab through the guarded CDP path. It returns screenshot metadata
+only; raw image bytes and `dataUrl` fields are redacted before reaching Codex.
 
 Approval and rejection tools require an explicit `userDecision` argument:
 `"approve"` for `codex_chrome_approval_approve` and `"reject"` for

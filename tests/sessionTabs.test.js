@@ -274,3 +274,57 @@ test('guarded CDP commands require session-owned tabs and origin readiness', asy
     params: {}
   });
 });
+
+test('guarded CDP screenshot stores artifact without returning raw image data', async () => {
+  const session = makeSession();
+  session.screenshotStore.idGenerator = () => 'shot_cdp_test';
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Example',
+    url: 'https://example.com/app',
+    ownership: 'agent',
+    active: true,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+  session.enqueueExtensionCommand = async (method, params) => ({
+    ok: true,
+    result: {
+      provider: `chrome.debugger.${params.method}`,
+      method: params.method,
+      response: {},
+      screenshot: {
+        mimeType: 'image/png',
+        dataUrl: 'data:image/png;base64,aGVsbG8=',
+        bytesApprox: 5
+      }
+    }
+  });
+
+  const captured = await session.handleRpc({
+    id: 'cdp-screenshot',
+    method: 'operator.cdp.execute',
+    params: {
+      tabId: 7,
+      method: 'Page.captureScreenshot',
+      params: { format: 'png' }
+    }
+  });
+
+  assert.equal(captured.ok, true);
+  assert.equal(captured.result.method, 'Page.captureScreenshot');
+  assert.equal(captured.result.screenshot.artifactId, 'shot_cdp_test');
+  assert.equal(captured.result.screenshot.dataUrl, undefined);
+  assert.equal(captured.result.screenshot.rawDataRedacted, undefined);
+  assert.equal(captured.result.visual.provider, 'chrome.debugger.Page.captureScreenshot');
+  assert.equal(captured.result.visual.artifactBacked, true);
+  assert.doesNotMatch(JSON.stringify(captured.result), /aGVsbG8=/);
+  const auditEntry = session.audit.tail({ limit: 1 })[0];
+  assert.equal(auditEntry.params.method, 'Page.captureScreenshot');
+  assert.deepEqual(auditEntry.params.paramKeys, ['format']);
+});

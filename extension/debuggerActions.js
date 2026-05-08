@@ -7,6 +7,7 @@
   const DEBUGGER_TEXT_PROVIDER = 'chrome.debugger.Input.insertText';
   const DEBUGGER_TIMEOUT_MS = 5000;
   const CDP_ALLOWED_METHODS = new Set([
+    'Page.captureScreenshot',
     'Page.getLayoutMetrics',
     'Target.getTargets'
   ]);
@@ -776,6 +777,21 @@
     return value !== null && typeof value === 'object' && !Array.isArray(value);
   }
 
+  function mimeTypeForCaptureFormat(format) {
+    if (format === 'jpeg') {
+      return 'image/jpeg';
+    }
+    if (format === 'webp') {
+      return 'image/webp';
+    }
+    return 'image/png';
+  }
+
+  function estimateBase64Bytes(base64) {
+    const clean = String(base64 || '').replace(/=+$/, '');
+    return Math.ceil(clean.length * 3 / 4);
+  }
+
   async function runCdpCommand({
     chromeApi,
     tab,
@@ -815,6 +831,33 @@
       await attachDebugger(chromeApi, target, timeoutMs);
       attached = true;
       const response = await sendCommand(chromeApi, target, method, params, timeoutMs);
+      if (method === 'Page.captureScreenshot') {
+        const data = response && typeof response.data === 'string' ? response.data : '';
+        if (!data) {
+          return {
+            ok: false,
+            error: {
+              code: 'CDP_COMMAND_FAILED',
+              message: 'Page.captureScreenshot returned no image data.',
+              method
+            }
+          };
+        }
+        const mimeType = mimeTypeForCaptureFormat(params.format);
+        return {
+          ok: true,
+          result: {
+            provider: `chrome.debugger.${method}`,
+            method,
+            response: {},
+            screenshot: {
+              mimeType,
+              dataUrl: `data:${mimeType};base64,${data}`,
+              bytesApprox: estimateBase64Bytes(data)
+            }
+          }
+        };
+      }
       return {
         ok: true,
         result: {

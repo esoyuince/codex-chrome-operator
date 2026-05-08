@@ -321,6 +321,24 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'codex_chrome_tab_screenshot',
+    description: 'Capture an artifact-backed screenshot of a session-owned Chrome tab through the guarded CDP path.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabId: { type: 'number', minimum: 0 },
+        format: { type: 'string', enum: ['png', 'jpeg', 'webp'] },
+        quality: { type: 'number', minimum: 1 }
+      },
+      required: ['tabId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
     name: 'codex_chrome_open_observe',
     description: 'Prepare an origin, open a URL in Chrome, wait for the tab, and return a DOM observation.',
     inputSchema: {

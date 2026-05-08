@@ -42,6 +42,7 @@ test('buildMcpSmokeReport summarizes required adapter tool availability', () => 
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_new_tab'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_name_session'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_finalize_tabs'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_screenshot'));
 
   const toolSchemaVersion = '2026-05-01.m1';
   const responses = [

@@ -427,6 +427,13 @@ class CodexChromeToolAdapter {
           keep: input.keep.map((entry) => ({ ...entry }))
         });
         break;
+      case 'codex_chrome_tab_screenshot':
+        response = await this.sendRpc('operator.cdp.execute', {
+          tabId: input.tabId,
+          method: 'Page.captureScreenshot',
+          params: pickDefined(input, ['format', 'quality'])
+        });
+        break;
       case 'codex_chrome_open_observe':
         response = await this.openObserve(input);
         break;

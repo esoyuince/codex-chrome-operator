@@ -277,6 +277,7 @@ test('background exposes guarded CDP commands without arbitrary runtime evaluati
   assert.match(background, /handleCdpCommand/);
   assert.match(debuggerActions, /runCdpCommand/);
   assert.match(debuggerActions, /CDP_METHOD_NOT_ALLOWED/);
+  assert.match(debuggerActions, /Page\.captureScreenshot/);
   assert.match(debuggerActions, /Page\.getLayoutMetrics/);
   assert.match(debuggerActions, /Target\.getTargets/);
 });

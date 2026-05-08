@@ -94,6 +94,34 @@ test('runCdpCommand executes allowlisted CDP method with scoped attach and detac
   ]);
 });
 
+test('runCdpCommand maps Page.captureScreenshot bytes into screenshot data URL', async () => {
+  const { chromeApi, calls } = makeChrome({
+    commandResults: {
+      'Page.captureScreenshot': {
+        data: 'aGVsbG8='
+      }
+    }
+  });
+
+  const result = await runCdpCommand({
+    chromeApi,
+    tab: { id: 7, url: 'https://example.com/app' },
+    method: 'Page.captureScreenshot',
+    params: { format: 'jpeg', quality: 80 }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.provider, 'chrome.debugger.Page.captureScreenshot');
+  assert.equal(result.result.screenshot.mimeType, 'image/jpeg');
+  assert.equal(result.result.screenshot.dataUrl, 'data:image/jpeg;base64,aGVsbG8=');
+  assert.equal(Object.hasOwn(result.result.response, 'data'), false);
+  assert.deepEqual(calls.map((call) => call.method), [
+    'attach',
+    'Page.captureScreenshot',
+    'detach'
+  ]);
+});
+
 test('runDebuggerAction refuses restricted browser pages before attaching', async () => {
   const { chromeApi, calls } = makeChrome();
 

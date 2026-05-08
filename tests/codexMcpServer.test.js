@@ -58,6 +58,7 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   const newTab = response.result.tools.find((tool) => tool.name === 'codex_chrome_new_tab');
   const nameSession = response.result.tools.find((tool) => tool.name === 'codex_chrome_name_session');
   const finalizeTabs = response.result.tools.find((tool) => tool.name === 'codex_chrome_finalize_tabs');
+  const tabScreenshot = response.result.tools.find((tool) => tool.name === 'codex_chrome_tab_screenshot');
   assert.ok(status);
   assert.equal(status.inputSchema.additionalProperties, false);
   assert.deepEqual(status.inputSchema.required, []);
@@ -115,6 +116,10 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   assert.equal(finalizeTabs.inputSchema.properties.keep.type, 'array');
   assert.equal(finalizeTabs.inputSchema.properties.keep.items.additionalProperties, false);
   assert.deepEqual(finalizeTabs.inputSchema.properties.keep.items.properties.status.enum, ['handoff', 'deliverable']);
+  assert.ok(tabScreenshot);
+  assert.equal(tabScreenshot.inputSchema.additionalProperties, false);
+  assert.deepEqual(tabScreenshot.inputSchema.required, ['tabId']);
+  assert.deepEqual(tabScreenshot.inputSchema.properties.format.enum, ['png', 'jpeg', 'webp']);
 });
 
 test('MCP handler calls session tab tools through the adapter', async () => {
@@ -599,6 +604,7 @@ test('package exposes MCP adapter script and docs explain local usage', () => {
   assert.match(docs, /codex_chrome_profile_onboard/);
   assert.match(docs, /codex_chrome_user_tabs/);
   assert.match(docs, /codex_chrome_finalize_tabs/);
+  assert.match(docs, /codex_chrome_tab_screenshot/);
   assert.match(docs, /codex_chrome_approval_approve/);
   assert.match(docs, /userDecision/);
   assert.match(docs, /approval-approve/);

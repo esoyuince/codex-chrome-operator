@@ -1253,6 +1253,60 @@ test('page.visualInspectTarget stores screenshot and returns target region artif
   });
 });
 
+test('operator.cdp.execute stores captureScreenshot output as a redacted artifact', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl);
+
+    const createPromise = postJson(baseUrl, 'operator.tabs.create', {});
+    const createCommand = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: {
+        tab: {
+          id: 7,
+          title: 'Example',
+          url: 'https://example.com/app',
+          ownership: 'agent',
+          active: true
+        }
+      }
+    });
+    assert.equal(createCommand.method, 'operator.tabs.create');
+    assert.equal((await createPromise).body.ok, true);
+
+    await postJson(baseUrl, 'operator.approveDomain', { origin: 'https://example.com' });
+
+    const screenshotPromise = postJson(baseUrl, 'operator.cdp.execute', {
+      tabId: 7,
+      method: 'Page.captureScreenshot',
+      params: { format: 'png' }
+    });
+    const screenshotCommand = await deliverNextCommand(baseUrl, {
+      ok: true,
+      result: {
+        provider: 'chrome.debugger.Page.captureScreenshot',
+        method: 'Page.captureScreenshot',
+        response: {},
+        screenshot: {
+          mimeType: 'image/png',
+          dataUrl: 'data:image/png;base64,aGVsbG8=',
+          bytesApprox: 5
+        }
+      }
+    });
+    assert.equal(screenshotCommand.method, 'operator.cdp.execute');
+    assert.equal(screenshotCommand.params.tabId, 7);
+    assert.equal(screenshotCommand.params.method, 'Page.captureScreenshot');
+
+    const result = await screenshotPromise;
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.result.screenshot.dataUrl, undefined);
+    assert.match(result.body.result.screenshot.artifactId, /^shot_/);
+    assert.equal(result.body.result.visual.provider, 'chrome.debugger.Page.captureScreenshot');
+    assert.equal(result.body.result.visual.artifactBacked, true);
+    assert.doesNotMatch(JSON.stringify(result.body.result), /aGVsbG8=/);
+  });
+});
+
 test('page form extract plan and execute queue guarded form commands', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await connectAndAuthorize(baseUrl);

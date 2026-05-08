@@ -19,6 +19,7 @@ const REQUIRED_MCP_SMOKE_TOOLS = [
   'codex_chrome_new_tab',
   'codex_chrome_name_session',
   'codex_chrome_finalize_tabs',
+  'codex_chrome_tab_screenshot',
   'codex_chrome_open_observe',
   'codex_chrome_observe',
   'codex_chrome_read_page',
