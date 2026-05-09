@@ -14,6 +14,7 @@ const {
   TOOL_DEFINITIONS,
   TOOL_SCHEMA_VERSION
 } = require('./schema');
+const { attachInteractionHints } = require('./interactionHints');
 
 function stableStringify(value) {
   if (Array.isArray(value)) {
@@ -279,7 +280,7 @@ function wrapToolResponse(toolName, response) {
   return attachTelemetry(toolName, {
     ...base,
     ok: true,
-    result: redactRawVisualData(response.result)
+    result: redactRawVisualData(attachInteractionHints(toolName, response.result))
   });
 }
 

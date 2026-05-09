@@ -1661,6 +1661,16 @@ async function openObserve({
     };
   }
 
+  const sessionTab = await sendRpcFn({
+    baseUrl: settings.baseUrl,
+    token: settings.token,
+    request: {
+      id: `${request.id}_session_tab`,
+      method: 'operator.tabs.create',
+      params: {}
+    }
+  });
+
   const navigation = await sendRpcFn({
     baseUrl: settings.baseUrl,
     token: settings.token,
@@ -1702,6 +1712,16 @@ async function openObserve({
     };
   }
 
+  const sessionTabs = await sendRpcFn({
+    baseUrl: settings.baseUrl,
+    token: settings.token,
+    request: {
+      id: `${request.id}_session_tabs`,
+      method: 'operator.tabs.listSession',
+      params: {}
+    }
+  });
+
   const observation = await sendRpcFn({
     baseUrl: settings.baseUrl,
     token: settings.token,
@@ -1735,6 +1755,10 @@ async function openObserve({
       url,
       prepared: prepared.result,
       readiness: waitResponse.result,
+      ...(sessionTab && sessionTab.ok ? { sessionTab: sessionTab.result } : {}),
+      ...(sessionTab && !sessionTab.ok ? { sessionTabWarning: sessionTab.error } : {}),
+      ...(sessionTabs && sessionTabs.ok ? { sessionTabs: sessionTabs.result.tabs } : {}),
+      ...(sessionTabs && !sessionTabs.ok ? { sessionTabsWarning: sessionTabs.error } : {}),
       navigation: navigation.result,
       navigationSettled: navigationSettled.result,
       observation: observation.result

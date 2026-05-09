@@ -1451,6 +1451,72 @@ test('CodexChromeToolAdapter telemetry gates compact observe result size', async
   assert.ok(response.telemetry.approxResultTokens < 2000, 'tiny observe should stay under the compact token budget');
 });
 
+test('CodexChromeToolAdapter adds interaction hints from observed page structure', async () => {
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async () => ({
+      ok: true,
+      result: {
+        origin: 'https://example.com',
+        url: 'https://example.com/react-form',
+        title: 'React Form',
+        elements: [
+          {
+            handle: 'el_state_link',
+            tag: 'a',
+            href: 'https://example.com/docs',
+            label: 'Docs'
+          },
+          {
+            handle: 'el_state_0',
+            tag: 'input',
+            type: 'text',
+            placeholder: 'Email'
+          },
+          {
+            handle: 'el_state_1',
+            tag: 'input',
+            type: 'checkbox',
+            label: 'Accept'
+          },
+          {
+            handle: 'el_state_2',
+            tag: 'button',
+            label: 'Save'
+          }
+        ]
+      }
+    })
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_observe',
+    input: {
+      origin: 'https://example.com'
+    }
+  });
+
+  assert.equal(response.ok, true);
+  const hints = response.result.interactionHints;
+  assert.equal(hints.version, 1);
+  assert.equal(hints.suggestedTargets[0].handle, 'el_state_0');
+  assert.equal(
+    hints.suggestedTargets.find((target) => target.handle === 'el_state_0').preferredTool,
+    'codex_chrome_type'
+  );
+  const checkboxHint = hints.suggestedTargets.find((target) => target.handle === 'el_state_1');
+  assert.equal(checkboxHint.preferredTool, 'codex_chrome_check');
+  assert.deepEqual(checkboxHint.avoidTools, ['codex_chrome_click']);
+  assert.equal(
+    hints.suggestedTargets.find((target) => target.handle === 'el_state_2').verification,
+    'explicit-post-condition-or-delta'
+  );
+});
+
 test('CodexChromeToolAdapter executes open observe through the orchestration path', async () => {
   const calls = [];
   const adapter = new CodexChromeToolAdapter({

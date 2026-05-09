@@ -1662,6 +1662,110 @@ test('page.waitFor queues extension command and resolves condition result', asyn
   });
 });
 
+test('page.observe reports navigation settling when extension sees the previous active origin', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl, 'https://example.com');
+    await postJson(baseUrl, 'extension.activeTabUpdated', {
+      activeTab: {
+        id: 9,
+        windowId: 2,
+        url: 'https://example.com/start',
+        title: 'Start',
+        status: 'complete'
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://next.example'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://next.example'
+    });
+
+    const navigatePromise = postJson(baseUrl, 'page.navigate', {
+      url: 'https://next.example/path'
+    });
+    const navigateCommand = await postJson(baseUrl, 'bridge.poll');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: navigateCommand.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: {
+          action: 'navigate',
+          url: 'https://next.example/path'
+        }
+      }
+    });
+    assert.equal((await navigatePromise).body.ok, true);
+
+    const observePromise = postJson(baseUrl, 'page.observe', {
+      origin: 'https://next.example'
+    });
+    const observeCommand = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(observeCommand.body.result.command.method, 'page.observe');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: observeCommand.body.result.command.commandId,
+      activeTab: {
+        id: 9,
+        windowId: 2,
+        url: 'https://example.com/start',
+        title: 'Start',
+        status: 'complete'
+      },
+      response: {
+        ok: false,
+        error: {
+          code: ERROR_CODES.DOMAIN_NOT_APPROVED,
+          message: 'Domain is not approved.'
+        }
+      }
+    });
+
+    const result = await observePromise;
+    assert.equal(result.body.ok, false);
+    assert.equal(result.body.error.code, ERROR_CODES.NAVIGATION_NOT_SETTLED);
+    assert.equal(result.body.error.origin, 'https://next.example');
+    assert.equal(result.body.error.activeTabOrigin, 'https://example.com');
+    assert.equal(result.body.error.retryable, true);
+  });
+});
+
+test('page.observe reports navigation settling while active tab is still loading without a URL', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await connectAndAuthorize(baseUrl, 'https://example.com');
+
+    const observePromise = postJson(baseUrl, 'page.observe', {
+      origin: 'https://example.com'
+    });
+    const observeCommand = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(observeCommand.body.result.command.method, 'page.observe');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: observeCommand.body.result.command.commandId,
+      activeTab: {
+        id: 9,
+        windowId: 2,
+        url: null,
+        title: null,
+        status: 'loading'
+      },
+      response: {
+        ok: false,
+        error: {
+          code: ERROR_CODES.NO_ACTIVE_TAB,
+          message: 'No active tab is available.'
+        }
+      }
+    });
+
+    const result = await observePromise;
+    assert.equal(result.body.ok, false);
+    assert.equal(result.body.error.code, ERROR_CODES.NAVIGATION_NOT_SETTLED);
+    assert.equal(result.body.error.origin, 'https://example.com');
+    assert.equal(result.body.error.activeTabOrigin, null);
+    assert.equal(result.body.error.activeTabLoadingState, 'loading');
+    assert.equal(result.body.error.retryable, true);
+  });
+});
+
 test('page.navigate rejects unsupported schemes before queueing browser work', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await connectAndAuthorize(baseUrl);

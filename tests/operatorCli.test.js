@@ -676,6 +676,36 @@ test('openObserve navigates and observes after readiness is confirmed', async ()
           }
         };
       }
+      if (request.method === 'operator.tabs.create') {
+        return {
+          ok: true,
+          result: {
+            tab: {
+              id: 7,
+              url: 'about:blank',
+              ownership: 'agent',
+              groupId: 3,
+              tabGroup: 'Codex Operator'
+            }
+          }
+        };
+      }
+      if (request.method === 'operator.tabs.listSession') {
+        return {
+          ok: true,
+          result: {
+            tabs: [
+              {
+                id: 7,
+                url: 'https://example.com/path',
+                ownership: 'agent',
+                groupId: 3,
+                tabGroup: 'Codex Operator'
+              }
+            ]
+          }
+        };
+      }
       if (request.method === 'operator.status') {
         return {
           ok: true,
@@ -705,8 +735,10 @@ test('openObserve navigates and observes after readiness is confirmed', async ()
   assert.deepEqual(calls, [
     'prepare',
     'wait-ready',
+    'operator.tabs.create:undefined',
     'page.navigate:https://example.com/path',
     'operator.status',
+    'operator.tabs.listSession:undefined',
     'page.observe:https://example.com'
   ]);
   assert.deepEqual(observeParams, [{
@@ -720,6 +752,9 @@ test('openObserve navigates and observes after readiness is confirmed', async ()
   assert.equal(response.result.origin, 'https://example.com');
   assert.equal(response.result.url, 'https://example.com/path');
   assert.equal(response.result.navigation.navigated, true);
+  assert.equal(response.result.sessionTab.tab.id, 7);
+  assert.equal(response.result.sessionTab.tab.groupId, 3);
+  assert.equal(response.result.sessionTabs[0].groupId, 3);
   assert.equal(response.result.observation.title, 'Example');
 });
 
@@ -774,6 +809,35 @@ test('openObserve waits for navigation to settle before observing', async () => 
           }
         };
       }
+      if (request.method === 'operator.tabs.create') {
+        calls.push('operator.tabs.create');
+        return {
+          ok: true,
+          result: {
+            tab: {
+              id: 8,
+              ownership: 'agent',
+              groupId: 3
+            }
+          }
+        };
+      }
+      if (request.method === 'operator.tabs.listSession') {
+        calls.push('operator.tabs.listSession');
+        return {
+          ok: true,
+          result: {
+            tabs: [
+              {
+                id: 8,
+                url: 'https://example.com/path',
+                ownership: 'agent',
+                groupId: 3
+              }
+            ]
+          }
+        };
+      }
       if (request.method === 'operator.status') {
         statusChecks += 1;
         calls.push(`operator.status:${statusChecks}`);
@@ -825,9 +889,11 @@ test('openObserve waits for navigation to settle before observing', async () => 
   assert.deepEqual(calls, [
     'prepare',
     'wait-ready',
+    'operator.tabs.create',
     'page.navigate',
     'operator.status:1',
     'operator.status:2',
+    'operator.tabs.listSession',
     'page.observe:settled'
   ]);
   assert.equal(response.ok, true);

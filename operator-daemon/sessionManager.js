@@ -3493,7 +3493,8 @@ class SessionManager {
       origin
     });
     if (!extensionResponse.ok) {
-      return rpcError(id, this.attachApprovalRequest(method, { ...params, origin }, extensionResponse.error));
+      const error = this.remapNavigationSettlingError(method, origin, extensionResponse.error);
+      return rpcError(id, this.attachApprovalRequest(method, { ...params, origin }, error));
     }
     if (shouldInvalidateWarmSession(method)) {
       this.clearWarmSessionCache(method);
@@ -3554,6 +3555,46 @@ class SessionManager {
       });
     }
     return rpcOk(id, extensionResponse.result);
+  }
+
+  remapNavigationSettlingError(method, origin, error) {
+    if (
+      !error ||
+      ![
+        ERROR_CODES.DOMAIN_NOT_APPROVED,
+        ERROR_CODES.NO_ACTIVE_TAB
+      ].includes(error.code) ||
+      method === 'page.navigate'
+    ) {
+      return error;
+    }
+
+    const activeTab = this.activeTab || null;
+    const activeTabOrigin = activeTab && activeTab.origin ? activeTab.origin : null;
+    const activeTabLoadingState = activeTab && activeTab.loadingState ? activeTab.loadingState : null;
+    const activeTabIsElsewhere = activeTabOrigin && activeTabOrigin !== origin;
+    const activeTabStillLoading = activeTabOrigin === origin && activeTabLoadingState === 'loading';
+    const activeTabIsNavigating = !activeTabOrigin && activeTabLoadingState === 'loading';
+    if (!activeTabIsElsewhere && !activeTabStillLoading && !activeTabIsNavigating) {
+      return error;
+    }
+
+    return {
+      ...error,
+      code: ERROR_CODES.NAVIGATION_NOT_SETTLED,
+      message: 'Active tab has not settled on the requested origin yet. Wait for navigation to complete and retry.',
+      origin,
+      activeTabOrigin,
+      activeTabUrl: activeTab && activeTab.url ? activeTab.url : null,
+      activeTabLoadingState,
+      retryable: true,
+      nextActions: [
+        {
+          kind: 'wait-and-retry',
+          method
+        }
+      ]
+    };
   }
 
   materializeVisualObservation(result, origin, { policy = {}, allowSensitive, reason } = {}) {
