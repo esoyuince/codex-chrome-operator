@@ -341,6 +341,9 @@ function postActionSnapshotOptions(input) {
     'maxActionableHandles',
     'summaryMaxChars',
     'requireVerified',
+    'actionTrace',
+    'actionTraceLabel',
+    'actionTraceDurationMs',
     'verify'
   ]);
 }
@@ -538,6 +541,9 @@ class CodexChromeToolAdapter {
             'maxActionableHandles',
             'summaryMaxChars',
             'requireVerified',
+            'actionTrace',
+            'actionTraceLabel',
+            'actionTraceDurationMs',
             'verify'
           ])
         });
@@ -546,6 +552,12 @@ class CodexChromeToolAdapter {
         response = await this.sendRpc('operator.runtime.tab.showTarget', {
           tabId: input.tabId,
           ...pickDefined(input, ['handle', 'selector', 'text', 'durationMs'])
+        });
+        break;
+      case 'codex_chrome_tab_operator_indicator':
+        response = await this.sendRpc('operator.runtime.tab.indicator', {
+          tabId: input.tabId,
+          ...pickDefined(input, ['active', 'label', 'stopReason'])
         });
         break;
       case 'codex_chrome_open_observe':
@@ -650,7 +662,7 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_fill':
         response = await this.sendRpc('page.fill', {
-          origin: input.origin,
+          origin: normalizeOrigin(input.origin),
           handle: input.handle,
           text: input.text,
           ...postActionSnapshotOptions(input)
@@ -658,7 +670,7 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_type':
         response = await this.sendRpc('page.type', {
-          origin: input.origin,
+          origin: normalizeOrigin(input.origin),
           handle: input.handle,
           text: input.text,
           ...postActionSnapshotOptions(input)
@@ -666,21 +678,21 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_clear':
         response = await this.sendRpc('page.clear', {
-          origin: input.origin,
+          origin: normalizeOrigin(input.origin),
           handle: input.handle,
           ...postActionSnapshotOptions(input)
         });
         break;
       case 'codex_chrome_focus':
         response = await this.sendRpc('page.focus', {
-          origin: input.origin,
+          origin: normalizeOrigin(input.origin),
           handle: input.handle,
           ...postActionSnapshotOptions(input)
         });
         break;
       case 'codex_chrome_select':
         response = await this.sendRpc('page.select', {
-          origin: input.origin,
+          origin: normalizeOrigin(input.origin),
           handle: input.handle,
           value: input.value,
           ...postActionSnapshotOptions(input)
@@ -688,7 +700,7 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_check':
         response = await this.sendRpc('page.check', {
-          origin: input.origin,
+          origin: normalizeOrigin(input.origin),
           handle: input.handle,
           checked: input.checked,
           ...postActionSnapshotOptions(input)
@@ -696,7 +708,7 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_scroll':
         response = await this.sendRpc('page.scroll', {
-          origin: input.origin,
+          origin: normalizeOrigin(input.origin),
           handle: input.handle,
           deltaX: input.deltaX,
           deltaY: input.deltaY,
@@ -705,7 +717,7 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_press_key':
         response = await this.sendRpc('page.pressKey', {
-          origin: input.origin,
+          origin: normalizeOrigin(input.origin),
           handle: input.handle,
           key: input.key,
           ...postActionSnapshotOptions(input)
@@ -713,7 +725,7 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_click':
         response = await this.sendRpc('page.click', {
-          origin: input.origin,
+          origin: normalizeOrigin(input.origin),
           handle: input.handle,
           ...postActionSnapshotOptions(input)
         });

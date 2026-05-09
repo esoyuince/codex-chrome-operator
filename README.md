@@ -12,7 +12,7 @@ small set of strict tools for Codex.
 
 ## Current Status
 
-- Package version: `0.2.11`
+- Package version: `0.2.12`
 - Platform target: Windows Chrome
 - Runtime: Node.js `>=24`
 - Extension model: Manifest V3, side panel, native messaging, broad required
@@ -29,12 +29,14 @@ small set of strict tools for Codex.
 - Exposes browser actions through CLI and MCP tools.
 - Opens and observes pages in the active Chrome profile.
 - Reads compact accessibility-like page snapshots for faster text-first
-  inspection.
+  inspection, including focused `refId` subtrees and clear size-limit hints.
 - Batches guarded low-risk read and DOM action steps into one browser command.
 - Keeps the active tab warm with an offscreen heartbeat and short-lived
-  observe/read-page cache.
+  observe/read-page cache with keepalive telemetry.
 - Performs low-risk DOM actions such as click, fill, type, select, check,
   scroll, and key press.
+- Can show an in-page operator active indicator, emergency stop button, target
+  cue, and optional action trace cue for visible automation evidence.
 - Captures visual observations as local screenshot artifacts.
 - Runs local visual analysis with sensitive-screen policy checks.
 - Supports guarded draft-only file upload flows.
@@ -120,6 +122,13 @@ they go through the explicit approval flow where applicable.
 
 Some policy stops are terminal. Checkout, payment, address-change, and
 order-placement blockers must not be converted into approval prompts.
+
+The side panel has separate toggles for guarded actions and place
+order/purchase approval. Turning guarded actions off disables the extra guarded
+action policy layer for ordinary browser actions; it does not globally block
+navigation, clicks, typing, or filling. Purchase and final order placement remain
+controlled by the separate place order/purchase toggle and the terminal
+checkout/payment policy stops.
 
 ### User Blocked Sites
 
@@ -289,6 +298,7 @@ The adapter exposes strict `codex_chrome_*` tools, including:
 - `codex_chrome_tab_read_page`
 - `codex_chrome_tab_locator`
 - `codex_chrome_tab_show_target`
+- `codex_chrome_tab_operator_indicator`
 - `codex_chrome_open_observe`
 - `codex_chrome_observe`
 - `codex_chrome_read_page`
@@ -330,6 +340,7 @@ The extension uses:
 - offscreen heartbeat: `extension/offscreen.html` and `extension/offscreen.js`
 - side panel: `extension/sidepanel.html`
 - content script and debugger action path
+- page overlays: active operator indicator, target cue, and action trace cue
 - icons in `extension/icons/`
 - no popup page
 - no profile setup page

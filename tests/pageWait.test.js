@@ -113,3 +113,26 @@ test('waitForCondition returns a deterministic timeout error', async () => {
   assert.equal(result.error.condition.type, 'textVisible');
   assert.equal(result.error.timeoutMs, 100);
 });
+
+test('evaluateWaitCondition rejects empty text and URL patterns', () => {
+  const env = context();
+
+  assert.deepEqual(evaluateWaitCondition({ type: 'textVisible', text: '' }, env), {
+    type: 'textVisible',
+    valid: false,
+    satisfied: false,
+    reason: 'condition.text must be a non-empty string'
+  });
+  assert.deepEqual(evaluateWaitCondition({ type: 'textGone', text: '   ' }, env), {
+    type: 'textGone',
+    valid: false,
+    satisfied: false,
+    reason: 'condition.text must be a non-empty string'
+  });
+  assert.deepEqual(evaluateWaitCondition({ type: 'urlMatches', pattern: '' }, env), {
+    type: 'urlMatches',
+    valid: false,
+    satisfied: false,
+    reason: 'condition.pattern must be a non-empty string'
+  });
+});

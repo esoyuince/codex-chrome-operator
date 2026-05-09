@@ -105,6 +105,7 @@ The adapter currently exposes 58 strict tools:
 - `codex_chrome_tab_read_page`
 - `codex_chrome_tab_locator`
 - `codex_chrome_tab_show_target`
+- `codex_chrome_tab_operator_indicator`
 - `codex_chrome_open_observe`
 - `codex_chrome_observe`
 - `codex_chrome_read_page`
@@ -160,6 +161,10 @@ session tab, `codex_chrome_name_session` labels the session, and
 `deliverable` while releasing or closing the rest.
 `codex_chrome_policy_status` and `codex_chrome_policy_update` expose the side
 panel policy toggles for guarded actions and purchase approvals.
+When `guardedActionsEnabled` is `false`, ordinary browser actions are not
+globally blocked just because they are action commands. Purchase, checkout,
+payment, and final order placement remain governed by the separate purchase
+approval toggle and terminal policy stops.
 `codex_chrome_tab_screenshot` captures an artifact-backed screenshot for a
 session-owned tab through the guarded CDP path. It returns screenshot metadata
 only; raw image bytes and `dataUrl` fields are redacted before reaching Codex.
@@ -172,6 +177,9 @@ fails closed when it matches zero or multiple targets; optional `click`, `type`,
 `fill`, `focus`, and `clear` actions still pass through the same action policy
 and post-action verification path. `codex_chrome_tab_show_target` draws a
 temporary cue around a resolved session-tab target before an action.
+`codex_chrome_tab_operator_indicator` shows or hides the in-page active
+operator indicator on a session-owned tab. The indicator includes a page-local
+Stop button that routes to `operator.emergencyStop`.
 
 Approval and rejection tools require an explicit `userDecision` argument:
 `"approve"` for `codex_chrome_approval_approve` and `"reject"` for
@@ -179,9 +187,12 @@ Approval and rejection tools require an explicit `userDecision` argument:
 request reaches the daemon.
 
 `codex_chrome_read_page` routes to `page.readPage` and returns compact
-accessibility-like page text with page-state handles and a caller-controlled
-`maxChars` budget. It is the fast text-first read path for pages where a full DOM
-observation or screenshot is unnecessary.
+accessibility-like page text with page-state handles and caller-controlled
+`filter`, `depth`, `maxChars`, and optional `refId` focused subtree. It is the
+fast text-first read path for pages where a full DOM observation or screenshot
+is unnecessary. When the page text exceeds the requested budget, the error
+includes suggested fixes such as using `filter="interactive"`, lowering `depth`,
+or reading a focused `refId`.
 
 `codex_chrome_observe` supports `mode: "tiny" | "medium" | "full"`, bounded
 handle and summary limits, and `sincePageStateId` for delta snapshots. Tiny is
@@ -199,7 +210,9 @@ extension command. The daemon validates each child action, enforces bounded
 full-auto policy per child action kind, and caps the batch length. Batches may
 include `observe`, `readPage`, `waitFor`, and basic DOM actions; screenshot,
 upload, cart, navigation, and approval replay flows remain separate policy
-surfaces.
+surfaces. Basic action tools and locator actions accept optional `actionTrace`
+fields so the extension can draw a compact click/fill/type cue and return
+bounded trace metadata with the action result.
 
 The extension also warms the active tab with an offscreen heartbeat and a
 short-lived `observe` plus compact `readPage` cache. When the daemon receives a
@@ -207,7 +220,9 @@ matching warmup from the current active tab, `page.observe` and
 `page.readPage` can return from that cache after normal readiness and bounded
 full-auto checks, avoiding an extra extension round trip. The cache is summary
 visible in `operator.status`, expires quickly, and is invalidated when the
-active tab URL changes.
+active tab URL changes. The offscreen heartbeat also reports `SW_KEEPALIVE`
+sequence telemetry so service-worker wakeups and reconnects are easier to
+diagnose.
 
 Gate handoff hints are returned for visible auth or anti-abuse gates such as
 password, OTP, WebAuthn, and CAPTCHA. The hint carries the daemon

@@ -230,6 +230,9 @@ const BATCH_ACTION_FIELDS = new Set([
   'summaryMaxChars',
   'sincePageStateId',
   'postActionSnapshot',
+  'actionTrace',
+  'actionTraceLabel',
+  'actionTraceDurationMs',
   'verify'
 ]);
 
@@ -254,6 +257,9 @@ const BATCH_ACTION_FIELD_TYPES = Object.freeze({
   summaryMaxChars: 'number',
   sincePageStateId: 'string',
   postActionSnapshot: 'string',
+  actionTrace: 'boolean',
+  actionTraceLabel: 'string',
+  actionTraceDurationMs: 'number',
   verify: 'object'
 });
 
@@ -816,6 +822,9 @@ function pickRuntimeObservationParams(params = {}) {
     'maxFieldValueChars',
     'postActionSnapshot',
     'requireVerified',
+    'actionTrace',
+    'actionTraceLabel',
+    'actionTraceDurationMs',
     'verify'
   ]);
 }
@@ -934,8 +943,8 @@ class SessionManager {
     this.config = {
       expectedExtensionId: config.expectedExtensionId || 'development-extension-id',
       expectedProtocolVersion: config.expectedProtocolVersion || '1.0',
-      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.11',
-      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.11',
+      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.12',
+      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.12',
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       visualAnalyzerRegistry: config.visualAnalyzerRegistry || createVisualAnalyzerRegistry(),
@@ -1190,6 +1199,7 @@ class SessionManager {
       case 'operator.runtime.tab.readPage':
       case 'operator.runtime.tab.locator':
       case 'operator.runtime.tab.showTarget':
+      case 'operator.runtime.tab.indicator':
         response = await this.routeRuntimeCommand(id, request.method, params);
         break;
       case 'operator.screenshots.cleanup':
@@ -1983,7 +1993,8 @@ class SessionManager {
       'operator.runtime.tab.observe',
       'operator.runtime.tab.readPage',
       'operator.runtime.tab.locator',
-      'operator.runtime.tab.showTarget'
+      'operator.runtime.tab.showTarget',
+      'operator.runtime.tab.indicator'
     ].includes(method)) {
       return rpcError(id, {
         code: ERROR_CODES.UNKNOWN_METHOD,
@@ -2046,6 +2057,18 @@ class SessionManager {
         commandParams = {
           tabId: tabId.tabId,
           ...pickDefinedLocal(cue, ['handle', 'selector', 'text', 'durationMs'])
+        };
+        policyMethod = 'page.observe';
+      } else if (method === 'operator.runtime.tab.indicator') {
+        commandParams = {
+          tabId: tabId.tabId,
+          active: params.active !== false,
+          ...(typeof params.label === 'string' && params.label.trim()
+            ? { label: params.label.trim().slice(0, 120) }
+            : {}),
+          ...(typeof params.stopReason === 'string' && params.stopReason.trim()
+            ? { stopReason: params.stopReason.trim().slice(0, 160) }
+            : {})
         };
         policyMethod = 'page.observe';
       } else if (method === 'operator.runtime.tab.readPage') {

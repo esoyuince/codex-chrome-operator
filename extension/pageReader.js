@@ -446,7 +446,13 @@
           code: 'PAGE_CONTENT_TOO_LARGE',
           message: 'Compact page content exceeds the requested character budget.',
           maxChars,
-          actualChars: pageContent.length
+          actualChars: pageContent.length,
+          suggestedFixes: [
+            'Increase maxChars.',
+            'Use filter="interactive" for controls only.',
+            'Use depth to narrow the tree.',
+            'Use refId to read a focused subtree.'
+          ]
         }
       };
     }

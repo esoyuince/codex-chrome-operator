@@ -16,7 +16,7 @@ const {
 
 const DEFAULT_MCP_PROTOCOL_VERSION = '2025-06-18';
 const SERVER_NAME = 'codex-chrome-operator';
-const SERVER_VERSION = '0.2.11';
+const SERVER_VERSION = '0.2.12';
 
 function makeSessionId() {
   return `task_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -92,10 +92,13 @@ function enrichToolResponse(toolResponse) {
 
 function normalizeToolResult(toolResponse, adapterSession) {
   const payload = enrichToolResponse(toolResponse);
+  const errorCode = payload.error && payload.error.code
+    ? payload.error.code
+    : 'TOOL_EXECUTION_FAILED';
   return {
     content: [{
       type: 'text',
-      text: JSON.stringify(payload, null, 2)
+      text: payload.ok ? 'ok' : `error:${errorCode}`
     }],
     structuredContent: payload,
     isError: !payload.ok,

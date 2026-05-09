@@ -46,6 +46,9 @@ const POST_ACTION_SNAPSHOT_PROPERTIES = {
   maxActionableHandles: OBSERVE_OPTION_PROPERTIES.maxActionableHandles,
   summaryMaxChars: OBSERVE_OPTION_PROPERTIES.summaryMaxChars,
   requireVerified: { type: 'boolean' },
+  actionTrace: { type: 'boolean' },
+  actionTraceLabel: { type: 'string' },
+  actionTraceDurationMs: { type: 'number', minimum: 100 },
   verify: {
     type: 'object',
     additionalProperties: false,
@@ -134,6 +137,9 @@ const BATCH_ACTION_SCHEMA = {
     refId: { type: 'string' },
     ...BATCH_OBSERVE_OPTION_PROPERTIES,
     postActionSnapshot: POST_ACTION_SNAPSHOT_PROPERTIES.postActionSnapshot,
+    actionTrace: POST_ACTION_SNAPSHOT_PROPERTIES.actionTrace,
+    actionTraceLabel: POST_ACTION_SNAPSHOT_PROPERTIES.actionTraceLabel,
+    actionTraceDurationMs: POST_ACTION_SNAPSHOT_PROPERTIES.actionTraceDurationMs,
     verify: POST_ACTION_SNAPSHOT_PROPERTIES.verify
   },
   required: ['action']
@@ -634,6 +640,25 @@ const TOOL_DEFINITIONS = [
         selector: { type: 'string' },
         text: { type: 'string' },
         durationMs: { type: 'number', minimum: 100 }
+      },
+      required: ['tabId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_operator_indicator',
+    description: 'Show or hide the in-page operator active indicator for a session-owned tab.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabId: { type: 'number', minimum: 0 },
+        active: { type: 'boolean' },
+        label: { type: 'string' },
+        stopReason: { type: 'string' }
       },
       required: ['tabId']
     },

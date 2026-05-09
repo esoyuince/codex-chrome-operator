@@ -206,4 +206,10 @@ test('generatePageSnapshot can focus an existing handle and enforces maxChars', 
   });
   assert.equal(tooLarge.ok, false);
   assert.equal(tooLarge.error.code, 'PAGE_CONTENT_TOO_LARGE');
+  assert.deepEqual(tooLarge.error.suggestedFixes, [
+    'Increase maxChars.',
+    'Use filter="interactive" for controls only.',
+    'Use depth to narrow the tree.',
+    'Use refId to read a focused subtree.'
+  ]);
 });

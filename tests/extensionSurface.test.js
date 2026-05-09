@@ -592,12 +592,15 @@ test('extension ships offscreen warm-session heartbeat and active-tab warmup wir
   assert.equal(fs.existsSync(offscreenHtmlPath), true);
   assert.equal(fs.existsSync(offscreenJsPath), true);
   assert.match(fs.readFileSync(offscreenJsPath, 'utf8'), /operator\.offscreenHeartbeat/);
+  assert.match(fs.readFileSync(offscreenJsPath, 'utf8'), /SW_KEEPALIVE/);
+  assert.match(fs.readFileSync(offscreenJsPath, 'utf8'), /heartbeatSequence/);
 
   assert.match(background, /operator\.warmSession/);
   assert.match(background, /ensureOffscreenDocument/);
   assert.match(background, /content\.batch/);
   assert.match(background, /extension\.activeTabWarmup/);
   assert.match(background, /operator\.offscreenHeartbeat/);
+  assert.match(background, /lastOffscreenHeartbeat/);
 });
 
 test('background reads the real user-focused active tab before currentWindow fallback', () => {
@@ -641,6 +644,9 @@ test('background exposes guarded session tab commands for hybrid operator mode',
   assert.match(background, /isClaimableUserTab/);
   assert.match(background, /chrome\.tabs\.group/);
   assert.match(background, /Codex Deliverables/);
+  assert.match(background, /originMetadata/);
+  assert.match(background, /syncSessionGroupMetadataFromChrome/);
+  assert.match(background, /chrome\.tabs\.onRemoved\.addListener/);
   assert.match(background, /TAB_NOT_CLAIMABLE/);
   assert.match(background, /favIconUrl/);
   assert.match(background, /lastAccessed/);
@@ -661,6 +667,7 @@ test('background exposes browser context, download wait, session recovery, and t
   assert.match(background, /operator\.tabs\.move/);
   assert.match(background, /operator\.tabs\.groupRename/);
   assert.match(background, /operator\.runtime\.tab\.showTarget/);
+  assert.match(background, /operator\.runtime\.tab\.indicator/);
   assert.match(background, /chrome\.downloads\.search/);
   assert.match(background, /chrome\.downloads\.show/);
   assert.match(background, /chrome\.sessions\.restore/);
@@ -670,7 +677,10 @@ test('background exposes browser context, download wait, session recovery, and t
   assert.match(background, /chrome\.tabs\.update/);
   assert.match(background, /chrome\.tabGroups\.update/);
   assert.match(contentScript, /content\.showTarget/);
+  assert.match(contentScript, /content\.operatorIndicator/);
+  assert.match(contentScript, /content\.actionTrace/);
   assert.match(contentScript, /codex-operator-target-cue/);
+  assert.match(contentScript, /codex-operator-active-indicator/);
 });
 
 test('background exposes guarded CDP commands without arbitrary runtime evaluation', () => {

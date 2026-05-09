@@ -292,7 +292,7 @@ test('MCP handler calls cart preparation tool through the adapter and rejects ex
   assert.equal(calls.length, 1);
 });
 
-test('MCP handler calls adapter tools and returns JSON content without raw visual bytes', async () => {
+test('MCP handler calls adapter tools and returns minimal text without raw visual bytes', async () => {
   const calls = [];
   const handleMessage = createMcpMessageHandler({
     adapter: {
@@ -335,7 +335,8 @@ test('MCP handler calls adapter tools and returns JSON content without raw visua
   }]);
   assert.equal(response.result.isError, false);
   assert.equal(response.result.content[0].type, 'text');
-  const payload = JSON.parse(response.result.content[0].text);
+  assert.equal(response.result.content[0].text, 'ok');
+  const payload = response.result.structuredContent;
   assert.equal(payload.untrusted, true);
   assert.equal(payload.result.screenshot.artifactId, 'shot_1');
   assert.equal(payload.result.screenshot.dataUrl, undefined);
@@ -343,7 +344,7 @@ test('MCP handler calls adapter tools and returns JSON content without raw visua
   assert.equal(response.result.adapterSession.lastToolName, 'codex_chrome_visual_observe');
 });
 
-test('MCP handler preserves adapter telemetry in structured and text output', async () => {
+test('MCP handler preserves adapter telemetry in structured output', async () => {
   const handleMessage = createMcpMessageHandler({
     adapter: {
       async executeTool(request) {
@@ -380,9 +381,9 @@ test('MCP handler preserves adapter telemetry in structured and text output', as
 
   assert.equal(response.result.isError, false);
   assert.equal(response.result.structuredContent.telemetry.budgetName, 'codex_chrome_status.compact');
-  const payload = JSON.parse(response.result.content[0].text);
-  assert.equal(payload.telemetry.resultChars, 68);
-  assert.equal(payload.telemetry.approxResponseTokens, 55);
+  assert.equal(response.result.structuredContent.telemetry.resultChars, 68);
+  assert.equal(response.result.structuredContent.telemetry.approxResponseTokens, 55);
+  assert.equal(response.result.content[0].text, 'ok');
 });
 
 test('MCP handler exposes explicit task-level session state', async () => {
@@ -581,7 +582,8 @@ test('MCP handler returns deterministic JSON-RPC errors for malformed calls', as
   });
 
   assert.equal(response.result.isError, true);
-  const payload = JSON.parse(response.result.content[0].text);
+  assert.equal(response.result.content[0].text, 'error:UNKNOWN_TOOL');
+  const payload = response.result.structuredContent;
   assert.equal(payload.ok, false);
   assert.equal(payload.error.code, 'UNKNOWN_TOOL');
   assert.equal(payload.toolName, 'missing_tool');
@@ -603,7 +605,8 @@ test('normalizeToolResult preserves structured response and marks errors', () =>
 
   assert.equal(result.isError, true);
   assert.equal(result.content.length, 1);
-  assert.equal(JSON.parse(result.content[0].text).error.code, 'HOST_PERMISSION_REQUIRED');
+  assert.equal(result.content[0].text, 'error:HOST_PERMISSION_REQUIRED');
+  assert.equal(result.structuredContent.error.code, 'HOST_PERMISSION_REQUIRED');
 });
 
 test('package exposes MCP adapter script and docs explain local usage', () => {

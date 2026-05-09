@@ -50,6 +50,7 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   const policyStatus = tools.find((tool) => tool.name === 'codex_chrome_policy_status');
   const policyUpdate = tools.find((tool) => tool.name === 'codex_chrome_policy_update');
   const tabShowTarget = tools.find((tool) => tool.name === 'codex_chrome_tab_show_target');
+  const tabOperatorIndicator = tools.find((tool) => tool.name === 'codex_chrome_tab_operator_indicator');
 
   assert.equal(ADAPTER_PROTOCOL_VERSION, '1.0');
   assert.ok(status);
@@ -192,6 +193,8 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.ok(tabShowTarget);
   assert.deepEqual(tabShowTarget.inputSchema.required, ['tabId']);
   assert.equal(tabShowTarget.inputSchema.properties.durationMs.minimum, 100);
+  assert.ok(tabOperatorIndicator);
+  assert.deepEqual(tabOperatorIndicator.inputSchema.required, ['tabId']);
   assert.match(toolDefinitionsHash(), /^[a-f0-9]{64}$/);
   assert.equal(toolDefinitionsHash(), toolDefinitionsHash());
 });
@@ -289,7 +292,9 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     tabId: 7,
     selector: 'button[data-testid="save"]',
     action: 'click',
-    postActionSnapshot: 'delta'
+    postActionSnapshot: 'delta',
+    actionTrace: true,
+    actionTraceLabel: 'Save click'
   }).ok, true);
   assert.equal(validateToolInput('codex_chrome_tab_locator', {
     tabId: 7,
@@ -319,6 +324,18 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     tabId: 7,
     selector: 'button.save',
     durationMs: 1000
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_operator_indicator', {
+    tabId: 7,
+    active: true,
+    label: 'Codex is active'
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_click', {
+    origin: 'https://example.com',
+    handle: 'el_state_0',
+    actionTrace: true,
+    actionTraceLabel: 'Clicked Save',
+    actionTraceDurationMs: 1000
   }).ok, true);
   assert.equal(validateToolInput('codex_chrome_tab_show_target', {
     tabId: 7,
@@ -545,7 +562,8 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
       text: 'Draft',
       postActionSnapshot: 'delta',
       sincePageStateId: 'state_previous',
-      maxActionableHandles: 10
+      maxActionableHandles: 10,
+      actionTrace: true
     }).ok,
     true
   );
@@ -826,7 +844,17 @@ test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
       tabId: 7,
       selector: 'button[data-testid="save"]',
       action: 'click',
-      postActionSnapshot: 'delta'
+      postActionSnapshot: 'delta',
+      actionTrace: true,
+      actionTraceLabel: 'Save click'
+    }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_tab_operator_indicator',
+    input: {
+      tabId: 7,
+      active: true,
+      label: 'Codex is active in this tab'
     }
   });
 
@@ -838,7 +866,14 @@ test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
       tabId: 7,
       selector: 'button[data-testid="save"]',
       action: 'click',
-      postActionSnapshot: 'delta'
+      postActionSnapshot: 'delta',
+      actionTrace: true,
+      actionTraceLabel: 'Save click'
+    }],
+    ['operator.runtime.tab.indicator', {
+      tabId: 7,
+      active: true,
+      label: 'Codex is active in this tab'
     }]
   ]);
 });
@@ -1633,26 +1668,31 @@ test('CodexChromeToolAdapter exposes and routes basic DOM action tools', async (
 
   const checks = [
     ['codex_chrome_type', 'page.type', {
-      origin: 'https://example.com',
+      origin: 'https://example.com/form?draft=1',
       handle: 'el_0',
       text: 'hello',
       postActionSnapshot: 'delta',
       sincePageStateId: 'state_previous',
-      maxActionableHandles: 8
+      maxActionableHandles: 8,
+      actionTrace: true,
+      actionTraceLabel: 'Typing hello'
     }],
-    ['codex_chrome_clear', 'page.clear', { origin: 'https://example.com', handle: 'el_0' }],
-    ['codex_chrome_focus', 'page.focus', { origin: 'https://example.com', handle: 'el_0' }],
-    ['codex_chrome_select', 'page.select', { origin: 'https://example.com', handle: 'el_1', value: 'tr' }],
-    ['codex_chrome_check', 'page.check', { origin: 'https://example.com', handle: 'el_2', checked: false }],
-    ['codex_chrome_scroll', 'page.scroll', { origin: 'https://example.com', handle: 'el_4', deltaX: 0, deltaY: 240 }],
-    ['codex_chrome_press_key', 'page.pressKey', { origin: 'https://example.com', handle: 'el_0', key: 'Enter' }]
+    ['codex_chrome_clear', 'page.clear', { origin: 'https://example.com/form?draft=1', handle: 'el_0' }],
+    ['codex_chrome_focus', 'page.focus', { origin: 'https://example.com/form?draft=1', handle: 'el_0' }],
+    ['codex_chrome_select', 'page.select', { origin: 'https://example.com/form?draft=1', handle: 'el_1', value: 'tr' }],
+    ['codex_chrome_check', 'page.check', { origin: 'https://example.com/form?draft=1', handle: 'el_2', checked: false }],
+    ['codex_chrome_scroll', 'page.scroll', { origin: 'https://example.com/form?draft=1', handle: 'el_4', deltaX: 0, deltaY: 240 }],
+    ['codex_chrome_press_key', 'page.pressKey', { origin: 'https://example.com/form?draft=1', handle: 'el_0', key: 'Enter' }]
   ];
 
   for (const [toolName, method, input] of checks) {
     const response = await adapter.executeTool({ toolName, input });
     assert.equal(response.ok, true);
     assert.equal(response.result.method, method);
-    assert.deepEqual(response.result.params, input);
+    assert.deepEqual(response.result.params, {
+      ...input,
+      origin: 'https://example.com'
+    });
   }
   assert.deepEqual(calls.map((request) => request.method), checks.map(([, method]) => method));
 });

@@ -37,6 +37,10 @@
     return bodyText.includes(String(text || ''));
   }
 
+  function nonEmptyString(value) {
+    return typeof value === 'string' && value.trim().length > 0;
+  }
+
   function evaluateWaitCondition(condition, context) {
     if (!condition || typeof condition !== 'object' || typeof condition.type !== 'string') {
       return { satisfied: false, valid: false, reason: 'condition.type is required' };
@@ -52,8 +56,17 @@
     }
 
     if (type === 'urlMatches') {
+      const patternText = condition.pattern || condition.value || '';
+      if (!nonEmptyString(patternText)) {
+        return {
+          type,
+          valid: false,
+          satisfied: false,
+          reason: 'condition.pattern must be a non-empty string'
+        };
+      }
       try {
-        const pattern = new RegExp(condition.pattern || condition.value || '');
+        const pattern = new RegExp(patternText);
         return {
           type,
           valid: true,
@@ -73,6 +86,14 @@
     }
 
     if (type === 'textVisible' || type === 'textGone') {
+      if (!nonEmptyString(condition.text)) {
+        return {
+          type,
+          valid: false,
+          satisfied: false,
+          reason: 'condition.text must be a non-empty string'
+        };
+      }
       const present = textIncludes(context, condition.text);
       return {
         type,

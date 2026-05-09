@@ -1510,7 +1510,10 @@ async function runAction(message) {
       return { ok: false, error: risk };
     }
     element.click();
-    return withPostActionSnapshot({ ok: true, result: { action: 'clicked' } }, message, {
+    return withPostActionSnapshot({
+      ok: true,
+      result: resultWithActionTrace({ action: 'clicked' }, 'click', element, message.handle, message)
+    }, message, {
       targetElement: element
     });
   }
@@ -1520,9 +1523,16 @@ async function runAction(message) {
     element.value = message.text || message.value || '';
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
+    const traceAction = message.action === 'type' ? 'type' : 'fill';
     return withPostActionSnapshot({
       ok: true,
-      result: { action: message.action === 'type' ? 'typed' : 'filled' }
+      result: resultWithActionTrace(
+        { action: message.action === 'type' ? 'typed' : 'filled' },
+        traceAction,
+        element,
+        message.handle,
+        message
+      )
     }, message, {
       targetElement: element
     });
@@ -1533,14 +1543,20 @@ async function runAction(message) {
     element.value = '';
     element.dispatchEvent(new Event('input', { bubbles: true }));
     element.dispatchEvent(new Event('change', { bubbles: true }));
-    return withPostActionSnapshot({ ok: true, result: { action: 'cleared' } }, message, {
+    return withPostActionSnapshot({
+      ok: true,
+      result: resultWithActionTrace({ action: 'cleared' }, 'clear', element, message.handle, message)
+    }, message, {
       targetElement: element
     });
   }
 
   if (message.action === 'focus') {
     element.focus();
-    return withPostActionSnapshot({ ok: true, result: { action: 'focused' } }, message, {
+    return withPostActionSnapshot({
+      ok: true,
+      result: resultWithActionTrace({ action: 'focused' }, 'focus', element, message.handle, message)
+    }, message, {
       targetElement: element
     });
   }
@@ -1548,7 +1564,10 @@ async function runAction(message) {
   if (message.action === 'select') {
     element.value = message.value || '';
     element.dispatchEvent(new Event('change', { bubbles: true }));
-    return withPostActionSnapshot({ ok: true, result: { action: 'selected' } }, message, {
+    return withPostActionSnapshot({
+      ok: true,
+      result: resultWithActionTrace({ action: 'selected' }, 'select', element, message.handle, message)
+    }, message, {
       targetElement: element
     });
   }
@@ -1559,7 +1578,13 @@ async function runAction(message) {
     element.dispatchEvent(new Event('change', { bubbles: true }));
     return withPostActionSnapshot({
       ok: true,
-      result: { action: 'checked', checked: element.checked }
+      result: resultWithActionTrace(
+        { action: 'checked', checked: element.checked },
+        'check',
+        element,
+        message.handle,
+        message
+      )
     }, message, {
       targetElement: element
     });
@@ -1580,7 +1605,7 @@ async function runAction(message) {
     element.dispatchEvent(new KeyboardEvent('keyup', { key: event.key, bubbles: true }));
     return withPostActionSnapshot({
       ok: true,
-      result: { action: 'key-pressed', key: event.key }
+      result: resultWithActionTrace({ action: 'key-pressed', key: event.key }, 'pressKey', element, message.handle, message)
     }, message);
   }
 
@@ -1888,12 +1913,186 @@ function resolveLocator(message = {}) {
 }
 
 globalThis.__codexTargetCueId = globalThis.__codexTargetCueId || 'codex-operator-target-cue';
+globalThis.__codexActionTraceCueId = globalThis.__codexActionTraceCueId || 'codex-operator-action-trace';
+globalThis.__codexOperatorIndicatorId = globalThis.__codexOperatorIndicatorId || 'codex-operator-active-indicator';
 
 function removeTargetCue() {
   const existing = document.getElementById(globalThis.__codexTargetCueId);
   if (existing && existing.parentNode) {
     existing.parentNode.removeChild(existing);
   }
+}
+
+function removeElementById(id) {
+  const existing = document.getElementById(id);
+  if (existing && existing.parentNode) {
+    existing.parentNode.removeChild(existing);
+  }
+}
+
+function roundedBbox(rect) {
+  return {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height)
+  };
+}
+
+function showActionTraceCue(message = {}) {
+  const target = message.element || null;
+  const rect = target && typeof target.getBoundingClientRect === 'function'
+    ? target.getBoundingClientRect()
+    : message.bbox;
+  if (!rect || rect.width <= 0 || rect.height <= 0) {
+    return {
+      ok: false,
+      error: {
+        code: 'TARGET_NOT_VISIBLE',
+        message: 'Action trace target is not visible enough to mark.'
+      }
+    };
+  }
+
+  removeElementById(globalThis.__codexActionTraceCueId);
+  const cue = document.createElement('div');
+  cue.id = globalThis.__codexActionTraceCueId;
+  cue.setAttribute('aria-hidden', 'true');
+  Object.assign(cue.style, {
+    position: 'fixed',
+    left: `${Math.max(0, rect.x + rect.width / 2 - 14)}px`,
+    top: `${Math.max(0, rect.y + rect.height / 2 - 14)}px`,
+    width: '28px',
+    height: '28px',
+    zIndex: '2147483647',
+    pointerEvents: 'none',
+    border: '3px solid #d93025',
+    borderRadius: '50%',
+    boxSizing: 'border-box',
+    background: 'rgba(217, 48, 37, 0.12)',
+    boxShadow: '0 0 0 8px rgba(217, 48, 37, 0.16)'
+  });
+  const label = document.createElement('div');
+  label.textContent = message.label || message.action || 'Codex action';
+  Object.assign(label.style, {
+    position: 'absolute',
+    left: '34px',
+    top: '-2px',
+    maxWidth: '220px',
+    padding: '3px 7px',
+    borderRadius: '4px',
+    background: '#d93025',
+    color: '#fff',
+    font: '12px/18px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis'
+  });
+  cue.appendChild(label);
+  document.documentElement.appendChild(cue);
+  const durationMs = Number.isFinite(Number(message.durationMs))
+    ? Math.max(100, Math.min(10000, Math.trunc(Number(message.durationMs))))
+    : 1800;
+  window.setTimeout(() => removeElementById(globalThis.__codexActionTraceCueId), durationMs);
+  return {
+    ok: true,
+    result: {
+      visible: true,
+      action: message.action || null,
+      label: message.label || null,
+      durationMs,
+      bbox: roundedBbox(rect)
+    }
+  };
+}
+
+function actionTraceForElement(action, element, handle, message = {}) {
+  if (message.actionTrace !== true || !element) {
+    return null;
+  }
+  const summary = elementSummary(element, handle, message);
+  const label = typeof message.actionTraceLabel === 'string' && message.actionTraceLabel.trim()
+    ? message.actionTraceLabel.trim().slice(0, 120)
+    : `${action} ${summary.label || summary.tag || 'target'}`.slice(0, 120);
+  showActionTraceCue({
+    element,
+    action,
+    label,
+    durationMs: message.actionTraceDurationMs
+  });
+  return {
+    action,
+    label,
+    target: {
+      handle,
+      tag: summary.tag || null,
+      label: summary.label || null,
+      bbox: summary.bbox || null
+    }
+  };
+}
+
+function resultWithActionTrace(result, action, element, handle, message = {}) {
+  const actionTrace = actionTraceForElement(action, element, handle, message);
+  return actionTrace ? { ...result, actionTrace } : result;
+}
+
+function showOperatorIndicator(message = {}) {
+  if (message.active === false) {
+    removeElementById(globalThis.__codexOperatorIndicatorId);
+    return { ok: true, result: { visible: false } };
+  }
+
+  removeElementById(globalThis.__codexOperatorIndicatorId);
+  const indicator = document.createElement('div');
+  indicator.id = globalThis.__codexOperatorIndicatorId;
+  indicator.setAttribute('role', 'status');
+  indicator.textContent = message.label || 'Codex Operator active';
+  Object.assign(indicator.style, {
+    position: 'fixed',
+    left: '50%',
+    bottom: '16px',
+    transform: 'translateX(-50%)',
+    zIndex: '2147483647',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    maxWidth: 'min(520px, calc(100vw - 32px))',
+    padding: '8px 10px',
+    borderRadius: '6px',
+    background: '#202124',
+    color: '#fff',
+    boxShadow: '0 8px 24px rgba(60, 64, 67, 0.28)',
+    font: '12px/18px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+  });
+  const stopButton = document.createElement('button');
+  stopButton.type = 'button';
+  stopButton.textContent = 'Stop';
+  Object.assign(stopButton.style, {
+    border: '0',
+    borderRadius: '4px',
+    padding: '4px 8px',
+    background: '#fce8e6',
+    color: '#a50e0e',
+    font: '12px/16px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    cursor: 'pointer'
+  });
+  stopButton.addEventListener('click', () => {
+    chrome.runtime.sendMessage({
+      type: 'operator.emergencyStop',
+      reason: message.stopReason || 'Stopped from page indicator.',
+      source: 'page-indicator'
+    }).catch(() => {});
+  });
+  indicator.appendChild(stopButton);
+  document.documentElement.appendChild(indicator);
+  return {
+    ok: true,
+    result: {
+      visible: true,
+      label: message.label || 'Codex Operator active'
+    }
+  };
 }
 
 function resolveTargetCueElement(message = {}) {
@@ -2083,6 +2282,16 @@ function handleContentMessage(message, sender, sendResponse) {
 
     if (message && message.type === 'content.showTarget') {
       sendResponse(showTargetCue(message));
+      return;
+    }
+
+    if (message && message.type === 'content.operatorIndicator') {
+      sendResponse(showOperatorIndicator(message));
+      return;
+    }
+
+    if (message && message.type === 'content.actionTrace') {
+      sendResponse(showActionTraceCue(message));
       return;
     }
 

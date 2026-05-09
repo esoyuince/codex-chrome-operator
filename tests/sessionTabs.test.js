@@ -198,6 +198,56 @@ test('runtime show target requires a session tab and routes a compact visual cue
   }]);
 });
 
+test('runtime operator indicator routes through session-owned tabs', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Example',
+    url: 'https://example.com/app',
+    ownership: 'agent',
+    active: true,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    return {
+      ok: true,
+      result: {
+        visible: params.active,
+        label: params.label
+      }
+    };
+  };
+
+  const response = await session.handleRpc({
+    id: 'indicator',
+    method: 'operator.runtime.tab.indicator',
+    params: {
+      tabId: 7,
+      active: true,
+      label: 'Codex is active in this tab'
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.visible, true);
+  assert.deepEqual(calls, [{
+    method: 'operator.runtime.tab.indicator',
+    params: {
+      tabId: 7,
+      active: true,
+      label: 'Codex is active in this tab'
+    }
+  }]);
+});
+
 test('policy toggles allow ordinary actions while gating purchase approvals', async () => {
   const session = makeSession();
   await session.handleRpc({

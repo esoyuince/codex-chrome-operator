@@ -1,19 +1,22 @@
 ---
-name: legacy-chrome-operator-performance
-description: Legacy guidance for maintaining the retired Codex Chrome Operator repo only. Superseded by the OpenAI bundled native Chrome plugin for live browser work. Use only when explicitly working on this archived operator repo, its old MCP adapter, installer, daemon, extension code, tests, or historical runbooks.
+name: chrome-operator-performance
+description: Use, diagnose, optimize, and live-test the Codex Chrome Operator browser extension. Use when operating this extension on real browser tasks, working on the codex-chrome-operator repo, checking profile binding and reload issues, debugging stale handles, guarded actions, action traces, tab indicators, gate detection false positives, debugger/click/type reliability, React-heavy sites, live smoke tests, performance regressions, or turning live automation findings into best-practice fixes.
 ---
 
-# Legacy Chrome Operator Performance And Usage
+# Chrome Operator Performance And Usage
 
-> Legacy status: this repo-owned skill is archived. For ordinary browser automation, use the OpenAI bundled native Chrome plugin (`chrome@openai-bundled`). Do not route new live Chrome tasks through this operator. Use this document only when maintaining or auditing the retired `codex-chrome-operator` repo, reproducing old operator bugs, or preserving historical behavior.
+This repo-owned skill is active for maintaining, testing, and using the Codex
+Chrome Operator extension. Treat the operator as a current guarded automation
+surface for this repo. When another browser tool is also available, choose
+deliberately and record which layer is being tested.
 
-## Native Chrome Default
+## Tool Choice
 
-- Default to `chrome@openai-bundled` for real Chrome browsing, logged-in tabs, Firebase, Cloudflare, Play Console, and similar live web tasks.
-- Do not start, install, or re-enable the old `codex-chrome-operator` MCP for normal browser work.
-- Keep this operator as a reference for guarded approvals, audit logs, site-specific extractor ideas, and old compatibility investigations.
+- Prefer this operator for extension development, policy/approval debugging, live smoke tests, guarded actions, audit-log behavior, site-specific extractor work, and regressions reported against this repo.
+- For ordinary browser tasks, use this operator when the user wants this extension exercised, guarded approvals/audit logs matter, or native/browser-plugin behavior is unreliable.
+- When comparing both paths, record which layer failed: native browser tool, extension bridge, daemon policy, content script, debugger action, or site state.
 
-## Legacy Maintenance Workflow
+## Core Workflow
 
 Start from repo truth and installed-extension truth:
 
@@ -32,22 +35,29 @@ Use live browser evidence as a diagnostic, not only as a demo. When a live task 
 - **App-state layer**: React/contenteditable state not updated even though DOM text appears changed.
 - **Policy layer**: high-risk action approval, publish/checkout/payment guard.
 
-Do not turn every live-task failure into code work. For current browser tasks, use native Chrome first. Patch this repo only when the retired extension behavior itself is the blocker, the failure is reproducible in legacy mode, or the user asked for development work on this archived operator.
+Do not turn every live-task failure into code work. First try to complete the
+user's browser task with the safest available workflow. Patch this repo when the
+extension behavior itself is the blocker, the failure is reproducible, or the
+user asked for development work on this operator.
 
-## Legacy Operator Use
+## Correct Extension Use
 
-Only when intentionally exercising the retired operator, use the extension as a guarded browser operator, not as a raw click macro:
+Use the extension as a guarded browser operator, not as a raw click macro:
 
 1. Confirm `operator.status` or `codex_chrome_status` before acting: profile, active tab, versions, pending approvals, emergency stop, and target origin readiness.
 2. Prefer read-only observation first: `observe`, `read_page`, or `visual_observe` only when DOM confidence is low.
 3. Keep observations compact by default. Use `tiny` or `medium`; switch to `full` only when the missing handles or page structure justify it.
-4. Verify the target account, page, and user-visible state before mutation. On social, commerce, upload, or account settings surfaces, name the target clearly to yourself before clicking.
-5. Draft before final actions. Compose text, prepare upload previews, or prepare carts, then stop before publish, purchase, checkout, destructive changes, or account changes unless the user gives explicit action-time authorization.
-6. Use fresh handles for mutations. If a handle is stale or ambiguous, re-observe and narrow by label, href, role, visible text, layout, or target summary.
-7. Treat tool success as provisional until the page proves it. Verify final state through a posted status URL, changed UI state, uploaded preview, cart count, or another durable page signal.
-8. Clean up accidental drafts, duplicate composers, and modal leftovers after a live action.
+4. Prefer focused `readPage` follow-ups with `refId`, `filter`, `depth`, and `maxChars` instead of repeated full-page dumps.
+5. Use `codex_chrome_tab_operator_indicator` when a session-owned tab should make operator activity visible on the page; its Stop button routes to emergency stop.
+6. For live smoke or risky UI debugging, enable `actionTrace` on basic actions so the page shows the click/fill/type cue and the result carries bounded trace metadata.
+7. Verify the target account, page, and user-visible state before mutation. On social, commerce, upload, or account settings surfaces, name the target clearly to yourself before clicking.
+8. Draft before final actions. Compose text, prepare upload previews, or prepare carts, then stop before publish, purchase, checkout, destructive changes, or account changes unless the user gives explicit action-time authorization.
+9. Use fresh handles for mutations. If a handle is stale or ambiguous, re-observe and narrow by label, href, role, visible text, layout, or target summary.
+10. Treat tool success as provisional until the page proves it. Verify final state through a posted status URL, changed UI state, uploaded preview, cart count, or another durable page signal.
+11. Clean up accidental drafts, duplicate composers, and modal leftovers after a live action.
 
-When the task is ordinary browser operation in legacy mode, prefer this use sequence over editing repo code:
+When the task is ordinary browser operation, prefer this use sequence over
+editing repo code:
 
 ```text
 status/readiness -> open or observe target -> verify target -> draft action -> ask if final/public/high-impact -> execute -> re-observe -> report evidence
@@ -55,47 +65,25 @@ status/readiness -> open or observe target -> verify target -> draft action -> a
 
 ## Live-Test Discipline
 
-For public web actions such as posting on X, keep the action count low and relevant. Draft the text, verify the target page and account, then submit only when the control is truly enabled and the user has authorized the public action.
+Keep live actions low, reversible where possible, and tied to the user's stated
+goal. For public, destructive, account-changing, purchase, checkout, upload, or
+publish actions, draft and verify first, then require explicit action-time
+authorization before the final click or submit.
 
-Prefer these observations:
+Prefer this observation loop:
 
 ```powershell
 node scripts\operator-cli.js status
 node scripts\operator-cli.js navigate <url>
-Start-Sleep -Seconds 10
 node scripts\operator-cli.js observe <origin>
 node scripts\operator-cli.js visual-observe <origin> --max-bytes 2000000
 ```
 
-When a CLI handle fails, retry with a fresh `observe` handle and, if needed, direct RPC with an explicit target summary. If the target is not in the default tiny handle window, request `mode: "full"` and a larger `maxActionableHandles`; never pass an empty or guessed handle to a mutation command. Do not assume `data-testid` alone is unique on React feeds; combine stable attributes with visible label, href, role, and bounded layout evidence such as `bbox`.
-
-Remember that `scripts/operator-cli.js click <origin> <handle>` carries only the handle. On React-heavy pages where the handle can stale between observation and click, use direct RPC so `page.click` includes both the handle and the observed target summary:
-
-```json
-{
-  "origin": "https://x.com",
-  "handle": "el_<pageState>_<index>",
-  "target": {
-    "tag": "button",
-    "role": "button",
-    "type": "button",
-    "label": "Yanıtla",
-    "data": { "testid": "tweetButton" },
-    "testid": "tweetButton",
-    "bbox": { "x": 1160, "y": 885, "width": 84, "height": 36 }
-  }
-}
-```
-
-For X reply tests, prefer the intent composer when the target tweet id is known:
-
-```text
-https://x.com/intent/post?in_reply_to=<tweet-id>&text=<urlencoded-text>
-```
-
-This avoids React/contenteditable typing drift. If X renders both a modal composer and an inline timeline composer, expect duplicate `Yanıtla` controls. A content `batch` click can report `clicked` while X ignores the untrusted programmatic event; treat that as inconclusive until the composer closes and the account-authored reply appears. After explicit user authorization, a foreground Chrome `Ctrl+Enter` OS key event is a useful fallback for the open, prefilled composer. Always verify the posted status link and watch for leftover top-level compose drafts.
-
-For X duplicate composers, prefer the modal submit button when using the intent composer: `data.testid`/`testid` usually equals `tweetButton`, while inline controls may be `tweetButtonInline`. If both controls share a label or test id, select by the previous observed `bbox` or layout proximity. After submit, navigate to the returned status URL or observe the page until the composer is gone; a remaining top-level `tweetTextarea_0` with an enabled `tweetButtonInline` can be a leftover standalone draft and must be cleared before reporting success.
+When handles fail, re-observe and narrow by label, role, href, stable app
+attributes, target summary, and layout evidence. Never pass an empty or guessed
+handle to a mutation command. For site-specific React/contenteditable issues,
+read `references/live-test-findings.md` instead of loading those notes by
+default.
 
 ## Optimization Rules
 
@@ -111,16 +99,19 @@ Patch for measured failure modes:
 
 ## Verification Set
 
-Use changed-surface tests first:
+Use changed-surface tests first. For broad operator changes, prefer the repo
+scripts:
 
 ```powershell
-node --test tests\gateDetector.test.js tests\pageHandles.test.js tests\debuggerActions.test.js
+npm test
+npm run check
 ```
 
-Use broader operator safety tests before claiming improvement:
+For narrow investigations, run the smallest relevant `node --test` slice, then
+broaden before claiming the operator is improved:
 
 ```powershell
-node --test tests\controlServer.test.js tests\contentScript.test.js tests\extensionSurface.test.js tests\pageHandles.test.js tests\gateDetector.test.js tests\debuggerActions.test.js
+node --test tests\contentScript.test.js tests\extensionSurface.test.js tests\codexAdapter.test.js tests\pageReader.test.js tests\sessionTabs.test.js
 ```
 
 After install/restart, re-check:

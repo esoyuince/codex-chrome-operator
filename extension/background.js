@@ -49,6 +49,7 @@ let connectionState = 'DISCONNECTED';
 let suppressNextNativeReconnect = false;
 let warmSessionInFlight = false;
 let lastWarmSessionAt = 0;
+let lastOffscreenHeartbeat = null;
 let sessionStateLoaded = false;
 let operatorSessionName = null;
 let operatorSessionTabs = new Map();
@@ -71,7 +72,7 @@ async function buildHello() {
     protocolVersion: '1.0',
     extensionId: chrome.runtime.id,
     extensionVersion: chrome.runtime.getManifest().version,
-  bridgeVersion: '0.2.11',
+  bridgeVersion: '0.2.12',
     sessionBootstrapId: requestId('boot'),
     ...getProfileBinding(),
     capabilities: [
@@ -93,7 +94,9 @@ async function buildHello() {
       'browserContext.v1',
       'downloads.v1',
       'sessionRecovery.v1',
-      'targetCue.v1'
+      'targetCue.v1',
+      'operatorIndicator.v1',
+      'actionTrace.v1'
     ]
   };
 }
@@ -716,30 +719,71 @@ function userTabInfo(tab, groupTitles = new Map()) {
   };
 }
 
+function originMetadata(url) {
+  try {
+    const parsed = new URL(url);
+    return {
+      origin: parsed.origin,
+      hostname: parsed.hostname,
+      protocol: parsed.protocol.replace(/:$/, '')
+    };
+  } catch {
+    return null;
+  }
+}
+
 function sessionTabInfo(tab, ownership, finalizedStatus = null) {
   return {
     ...tabInfo(tab),
     ownership,
     active: tab.active === true,
-    finalizedStatus
+    finalizedStatus,
+    originMetadata: originMetadata(tab && tab.url)
   };
 }
 
 async function groupTabsBestEffort(tabIds, title) {
   if (!chrome.tabs.group || !chrome.tabGroups || !chrome.tabGroups.update || tabIds.length === 0) {
-    return;
+    return null;
   }
   try {
     const groupId = await chrome.tabs.group({
       tabIds: tabIds.length === 1 ? tabIds[0] : tabIds
     });
-    await chrome.tabGroups.update(groupId, {
+    const group = await chrome.tabGroups.update(groupId, {
       title,
       color: title === DELIVERABLE_SESSION_GROUP_TITLE ? 'blue' : 'grey'
     });
+    return { groupId, title: group.title || title };
   } catch {
     // Tabs may span windows or Chrome may reject grouping. Ownership still works.
+    return null;
   }
+}
+
+async function syncSessionGroupMetadataFromChrome() {
+  await loadSessionTabState();
+  const tabs = [];
+  for (const tabId of operatorSessionTabs.keys()) {
+    try {
+      tabs.push(await chrome.tabs.get(tabId));
+    } catch {
+      operatorSessionTabs.delete(tabId);
+    }
+  }
+  const groupTitles = await tabGroupTitlesById(tabs);
+  for (const tab of tabs) {
+    const previous = operatorSessionTabs.get(tab.id);
+    if (!previous) {
+      continue;
+    }
+    operatorSessionTabs.set(tab.id, {
+      ...previous,
+      ...sessionTabInfo(tab, previous.ownership, previous.finalizedStatus || null),
+      ...(groupTitles.has(tab.groupId) ? { tabGroup: groupTitles.get(tab.groupId) } : {})
+    });
+  }
+  await saveSessionTabState();
 }
 
 async function refreshSessionTabsFromChrome() {
@@ -803,6 +847,7 @@ async function handleSessionTabCommand(method, params = {}) {
     const record = sessionTabInfo(tab, 'user');
     operatorSessionTabs.set(record.id, record);
     await groupTabsBestEffort([...operatorSessionTabs.keys()], operatorSessionName || DEFAULT_SESSION_GROUP_TITLE);
+    await syncSessionGroupMetadataFromChrome();
     await saveSessionTabState();
     return { ok: true, result: { tab: record } };
   }
@@ -812,6 +857,7 @@ async function handleSessionTabCommand(method, params = {}) {
     const record = sessionTabInfo(tab, 'agent');
     operatorSessionTabs.set(record.id, record);
     await groupTabsBestEffort([...operatorSessionTabs.keys()], operatorSessionName || DEFAULT_SESSION_GROUP_TITLE);
+    await syncSessionGroupMetadataFromChrome();
     await saveSessionTabState();
     return { ok: true, result: { tab: record } };
   }
@@ -851,6 +897,7 @@ async function handleSessionTabCommand(method, params = {}) {
       .filter((entry) => entry.status === 'deliverable')
       .map((entry) => entry.tabId);
     await groupTabsBestEffort(deliverableIds, DELIVERABLE_SESSION_GROUP_TITLE);
+    await syncSessionGroupMetadataFromChrome();
     await saveSessionTabState();
     return { ok: true, result: { kept, closed, released } };
   }
@@ -862,6 +909,7 @@ async function handleSessionTabCommand(method, params = {}) {
     }
     operatorSessionName = name;
     await groupTabsBestEffort([...operatorSessionTabs.keys()], operatorSessionName || DEFAULT_SESSION_GROUP_TITLE);
+    await syncSessionGroupMetadataFromChrome();
     await saveSessionTabState();
     return { ok: true, result: { name } };
   }
@@ -1108,6 +1156,7 @@ async function handleSessionRecoveryCommand(method, params = {}) {
     await loadSessionTabState();
     operatorSessionTabs.set(record.id, record);
     await groupTabsBestEffort([...operatorSessionTabs.keys()], operatorSessionName || DEFAULT_SESSION_GROUP_TITLE);
+    await syncSessionGroupMetadataFromChrome();
     await saveSessionTabState();
   }
   return { ok: true, result: { tab: record } };
@@ -1228,6 +1277,15 @@ async function handleRuntimeCommand(method, params = {}) {
     });
   }
 
+  if (method === 'operator.runtime.tab.indicator') {
+    return chrome.tabs.sendMessage(tab.id, {
+      type: 'content.operatorIndicator',
+      active: params.active !== false,
+      label: params.label,
+      stopReason: params.stopReason
+    });
+  }
+
   if (method === 'operator.runtime.tab.locator') {
     const locator = await chrome.tabs.sendMessage(tab.id, {
       type: 'content.resolveLocator',
@@ -1268,7 +1326,14 @@ async function handleRuntimeCommand(method, params = {}) {
         value: params.textValue
       }
     });
-    return attachPostActionSnapshot(tab.id, actionResponse, {
+    const tracedResponse = await attachActionTraceCue(tab.id, actionResponse, {
+      ...params,
+      action,
+      handle: target.handle,
+      target,
+      label: params.actionTraceLabel
+    });
+    return attachPostActionSnapshot(tab.id, tracedResponse, {
       ...params,
       action,
       handle: target.handle,
@@ -1536,6 +1601,55 @@ async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
       }
     };
   }
+}
+
+async function attachActionTraceCue(tabId, actionResponse, params = {}) {
+  if (!actionResponse || actionResponse.ok !== true || params.actionTrace !== true) {
+    return actionResponse;
+  }
+  const target = params.target || {};
+  if (!target.bbox) {
+    return actionResponse;
+  }
+  const action = params.action || null;
+  const label = typeof params.actionTraceLabel === 'string' && params.actionTraceLabel.trim()
+    ? params.actionTraceLabel.trim().slice(0, 120)
+    : `${action || 'action'} ${target.label || target.tag || 'target'}`.slice(0, 120);
+  let cue = null;
+  try {
+    cue = await chrome.tabs.sendMessage(tabId, {
+      type: 'content.actionTrace',
+      action,
+      label,
+      bbox: target.bbox,
+      durationMs: params.actionTraceDurationMs
+    });
+  } catch (error) {
+    cue = {
+      ok: false,
+      error: {
+        code: 'ACTION_TRACE_CUE_FAILED',
+        message: error.message || String(error)
+      }
+    };
+  }
+  return {
+    ...actionResponse,
+    result: {
+      ...(actionResponse.result || {}),
+      actionTrace: {
+        action,
+        label,
+        target: {
+          handle: params.handle || target.handle || null,
+          tag: target.tag || null,
+          label: target.label || null,
+          bbox: target.bbox
+        },
+        cue
+      }
+    }
+  };
 }
 
 async function approvedForWarmSession(origin) {
@@ -2005,7 +2119,13 @@ async function handleOperatorCommand(command) {
         key: params.key
       }
     });
-    return attachPostActionSnapshot(ready.tab.id, actionResponse, {
+    const tracedResponse = await attachActionTraceCue(ready.tab.id, actionResponse, {
+      ...params,
+      action,
+      handle: params.handle,
+      target: observedTarget
+    });
+    return attachPostActionSnapshot(ready.tab.id, tracedResponse, {
       ...params,
       action,
       preActionUrl: ready.tab.url,
@@ -2074,6 +2194,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         ok: true,
         connectionState,
         lastNativeError,
+        lastOffscreenHeartbeat,
         activeTab: await activeTabInfo()
       });
       return;
@@ -2141,6 +2262,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message && message.type === 'operator.emergencyStop') {
+      await connectNative();
+      sendResponse(await requestNativeRpc('operator.emergencyStop', {
+        reason: message.reason || 'Emergency stop requested from page indicator.',
+        source: message.source || 'page-indicator'
+      }));
+      return;
+    }
+
     if (message && message.type === 'operator.hasHostPermission') {
       sendResponse({
         ok: true,
@@ -2151,6 +2281,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message && message.type === 'operator.offscreenHeartbeat') {
+      lastOffscreenHeartbeat = {
+        keepaliveKind: message.keepaliveKind || null,
+        heartbeatSequence: Number.isFinite(Number(message.heartbeatSequence))
+          ? Number(message.heartbeatSequence)
+          : null,
+        sentAt: Number.isFinite(Number(message.sentAt)) ? Number(message.sentAt) : null,
+        receivedAt: Date.now()
+      };
+      chrome.storage.local.set({ lastOffscreenHeartbeat }).catch(() => {});
       if (!nativePort) {
         wakeNativeBridge();
       } else {
@@ -2257,4 +2396,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     }
     reportActiveTab();
   }
+});
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (!operatorSessionTabs.has(tabId)) {
+    return;
+  }
+  operatorSessionTabs.delete(tabId);
+  saveSessionTabState().catch(() => {});
 });

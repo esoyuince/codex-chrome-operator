@@ -22,7 +22,10 @@ function element(tagName, attrs = {}, children = []) {
         .map(([key, value]) => [key.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()), String(value)]))
     },
     children,
+    parentNode: null,
     shadowRoot: attrs.shadowRoot || null,
+    style: {},
+    attributes: {},
     get contentDocument() {
       if (attrs.contentDocumentThrows) {
         throw new Error('Blocked cross-origin frame');
@@ -39,9 +42,25 @@ function element(tagName, attrs = {}, children = []) {
     },
     setAttribute(name, value) {
       this.__attrs[name] = String(value);
+      this.attributes[name] = String(value);
       if (name === 'id') {
         this.id = String(value);
       }
+    },
+    appendChild(child) {
+      child.parentNode = this;
+      child.parentElement = this;
+      this.children.push(child);
+      return child;
+    },
+    removeChild(child) {
+      this.children = this.children.filter((entry) => entry !== child);
+      child.parentNode = null;
+      child.parentElement = null;
+      return child;
+    },
+    addEventListener(type, handler) {
+      this[`on${type}`] = handler;
     },
     matches(selector) {
       if (selector === 'input[type="password"], [autocomplete="one-time-code"]') {
@@ -214,8 +233,10 @@ function loadContentScript(rootElement) {
   let listener = null;
   let listenerCount = 0;
   let removeCount = 0;
+  const runtimeMessages = [];
   const activeListeners = new Set();
   const allElements = flattenElements(rootElement);
+  const documentElement = element('html', {}, [rootElement]);
   const context = {
     console,
     location: { href: 'https://example.com/form', origin: 'https://example.com' },
@@ -242,11 +263,16 @@ function loadContentScript(rootElement) {
       scrollBy(deltaX = 0, deltaY = 0) {
         this.scrollX += deltaX;
         this.scrollY += deltaY;
-      }
+      },
+      setTimeout
     },
     document: {
       title: 'Fixture',
       body: rootElement,
+      documentElement,
+      createElement(tagName) {
+        return element(tagName);
+      },
       activeElement: null,
       querySelectorAll(selector) {
         const selectors = selector.split(',').map((item) => item.trim());
@@ -263,13 +289,17 @@ function loadContentScript(rootElement) {
         return allElements.find((node) => selectors.some((part) => selectorMatchesElement(part, node))) || null;
       },
       getElementById(id) {
-        return allElements.find((node) => node.id === id) || null;
+        return flattenElements(documentElement).find((node) => node.id === id) || null;
       }
     },
     chrome: {
       runtime: {
         getManifest() {
-          return { version: '0.2.11' };
+          return { version: '0.2.12' };
+        },
+        sendMessage(message) {
+          runtimeMessages.push(message);
+          return Promise.resolve({ ok: true });
         },
         onMessage: {
           addListener(callback) {
@@ -319,6 +349,12 @@ function loadContentScript(rootElement) {
     get activeListenerCount() {
       return activeListeners.size;
     },
+    get runtimeMessages() {
+      return runtimeMessages;
+    },
+    get documentElement() {
+      return documentElement;
+    },
     runScriptAgain() {
       vm.runInContext(fs.readFileSync(path.join(ROOT, 'extension/contentScript.js'), 'utf8'), context, {
         filename: 'extension/contentScript.js'
@@ -360,6 +396,63 @@ test('content script can use compact read_page handles for follow-up DOM actions
   assert.deepEqual(input.events, ['input', 'change']);
 });
 
+test('content script shows active operator indicator and routes stop requests to the background', async () => {
+  const root = element('main', {}, [
+    element('button', { text: 'Save draft' })
+  ]);
+  const content = loadContentScript(root);
+
+  const shown = await content.send({
+    type: 'content.operatorIndicator',
+    active: true,
+    label: 'Codex is active in this tab',
+    stopReason: 'Stopped from page indicator'
+  });
+
+  assert.equal(shown.ok, true);
+  assert.equal(shown.result.visible, true);
+  const indicator = content.documentElement.children.find((node) => node.id === 'codex-operator-active-indicator');
+  assert.ok(indicator);
+  assert.match(indicator.textContent, /Codex is active/);
+  const stopButton = indicator.children.find((node) => node.tagName === 'BUTTON');
+  assert.ok(stopButton);
+  stopButton.onclick();
+  assert.deepEqual(JSON.parse(JSON.stringify(content.runtimeMessages.at(-1))), {
+    type: 'operator.emergencyStop',
+    reason: 'Stopped from page indicator',
+    source: 'page-indicator'
+  });
+
+  const hidden = await content.send({ type: 'content.operatorIndicator', active: false });
+  assert.equal(hidden.result.visible, false);
+  assert.equal(content.documentElement.children.some((node) => node.id === 'codex-operator-active-indicator'), false);
+});
+
+test('content actions can emit compact action trace cues without screenshots', async () => {
+  const button = element('button', { text: 'Preview' });
+  const root = element('main', {}, [button]);
+  const content = loadContentScript(root);
+  const observed = await content.send({
+    type: 'content.observe',
+    maxActionableHandles: 5
+  });
+  const handle = observed.elements[0].handle;
+
+  const clicked = await content.send({
+    type: 'content.action',
+    action: 'click',
+    handle,
+    actionTrace: true,
+    actionTraceLabel: 'Preview click'
+  });
+
+  assert.equal(clicked.ok, true);
+  assert.equal(clicked.result.actionTrace.action, 'click');
+  assert.equal(clicked.result.actionTrace.label, 'Preview click');
+  assert.deepEqual(JSON.parse(JSON.stringify(clicked.result.actionTrace.target.bbox)), { x: 10, y: 20, width: 160, height: 32 });
+  assert.ok(content.documentElement.children.some((node) => node.id === 'codex-operator-action-trace'));
+});
+
 test('content script tolerates duplicate injection without duplicate listener registration', async () => {
   const root = element('main', {}, [
     element('button', { text: 'Save draft' })
@@ -375,7 +468,7 @@ test('content script tolerates duplicate injection without duplicate listener re
   const observed = await content.send({ type: 'content.observe' });
 
   assert.equal(observed.origin, 'https://example.com');
-  assert.equal(observed.contentScriptVersion, '0.2.11');
+  assert.equal(observed.contentScriptVersion, '0.2.12');
   assert.equal(observed.elements.length, 1);
 });
 

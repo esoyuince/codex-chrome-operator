@@ -1,8 +1,8 @@
 {
   "adapterProtocolVersion": "1.0",
   "toolSchemaVersion": "2026-05-01.m1",
-  "toolDefinitionsHash": "cc7608649d036b4d6f953bd4e50e599ad5029ba0214a4424215885dff6db0cfd",
-  "toolCount": 58,
+  "toolDefinitionsHash": "0613fc132a2b7066bea4f1882dd4a605c5008e7ca0a652a27d3d2c9ccbd4ab58",
+  "toolCount": 59,
   "toolNames": [
     "codex_chrome_status",
     "codex_chrome_prepare_origin",
@@ -33,6 +33,7 @@
     "codex_chrome_tab_read_page",
     "codex_chrome_tab_locator",
     "codex_chrome_tab_show_target",
+    "codex_chrome_tab_operator_indicator",
     "codex_chrome_open_observe",
     "codex_chrome_observe",
     "codex_chrome_read_page",
@@ -769,6 +770,16 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "actionTrace": {
+            "type": "boolean"
+          },
+          "actionTraceLabel": {
+            "type": "string"
+          },
+          "actionTraceDurationMs": {
+            "type": "number",
+            "minimum": 100
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -841,6 +852,35 @@
           "durationMs": {
             "type": "number",
             "minimum": 100
+          }
+        },
+        "required": [
+          "tabId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_operator_indicator",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "label": {
+            "type": "string"
+          },
+          "stopReason": {
+            "type": "string"
           }
         },
         "required": [
@@ -1123,6 +1163,16 @@
                   "enum": [
                     "delta"
                   ]
+                },
+                "actionTrace": {
+                  "type": "boolean"
+                },
+                "actionTraceLabel": {
+                  "type": "string"
+                },
+                "actionTraceDurationMs": {
+                  "type": "number",
+                  "minimum": 100
                 },
                 "verify": {
                   "type": "object",
@@ -1577,6 +1627,16 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "actionTrace": {
+            "type": "boolean"
+          },
+          "actionTraceLabel": {
+            "type": "string"
+          },
+          "actionTraceDurationMs": {
+            "type": "number",
+            "minimum": 100
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -1672,6 +1732,16 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "actionTrace": {
+            "type": "boolean"
+          },
+          "actionTraceLabel": {
+            "type": "string"
+          },
+          "actionTraceDurationMs": {
+            "type": "number",
+            "minimum": 100
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -1764,6 +1834,16 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "actionTrace": {
+            "type": "boolean"
+          },
+          "actionTraceLabel": {
+            "type": "string"
+          },
+          "actionTraceDurationMs": {
+            "type": "number",
+            "minimum": 100
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -1854,6 +1934,16 @@
           },
           "requireVerified": {
             "type": "boolean"
+          },
+          "actionTrace": {
+            "type": "boolean"
+          },
+          "actionTraceLabel": {
+            "type": "string"
+          },
+          "actionTraceDurationMs": {
+            "type": "number",
+            "minimum": 100
           },
           "verify": {
             "type": "object",
@@ -1949,6 +2039,16 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "actionTrace": {
+            "type": "boolean"
+          },
+          "actionTraceLabel": {
+            "type": "string"
+          },
+          "actionTraceDurationMs": {
+            "type": "number",
+            "minimum": 100
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -2043,6 +2143,16 @@
           },
           "requireVerified": {
             "type": "boolean"
+          },
+          "actionTrace": {
+            "type": "boolean"
+          },
+          "actionTraceLabel": {
+            "type": "string"
+          },
+          "actionTraceDurationMs": {
+            "type": "number",
+            "minimum": 100
           },
           "verify": {
             "type": "object",
@@ -2142,6 +2252,16 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "actionTrace": {
+            "type": "boolean"
+          },
+          "actionTraceLabel": {
+            "type": "string"
+          },
+          "actionTraceDurationMs": {
+            "type": "number",
+            "minimum": 100
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -2238,6 +2358,16 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "actionTrace": {
+            "type": "boolean"
+          },
+          "actionTraceLabel": {
+            "type": "string"
+          },
+          "actionTraceDurationMs": {
+            "type": "number",
+            "minimum": 100
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -2329,6 +2459,16 @@
           },
           "requireVerified": {
             "type": "boolean"
+          },
+          "actionTrace": {
+            "type": "boolean"
+          },
+          "actionTraceLabel": {
+            "type": "string"
+          },
+          "actionTraceDurationMs": {
+            "type": "number",
+            "minimum": 100
           },
           "verify": {
             "type": "object",
