@@ -7,6 +7,8 @@ config.json
 token.txt
 state.json
 TODO.md
+AGENTS.md
+docs/superpowers/
 
 # Operator runtime artifacts
 audit/
