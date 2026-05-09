@@ -2066,16 +2066,6 @@ class SessionManager {
     if (!readiness.ok) {
       return rpcError(id, readiness.error);
     }
-    const policy = this.stateStore.getPolicyControls();
-    const runtimeActionKind = PAGE_ACTION_KINDS[policyMethod];
-    if (GUARDED_ACTION_KINDS.has(runtimeActionKind) && policy.guardedActionsEnabled === false) {
-      return rpcError(id, {
-        code: ERROR_CODES.METHOD_NOT_ALLOWED,
-        message: 'Guarded browser actions are disabled in the operator side panel.',
-        actionKind: runtimeActionKind,
-        policy
-      });
-    }
     const boundedFullAuto = this.enforceBoundedFullAuto(policyMethod, origin);
     if (!boundedFullAuto.ok) {
       return rpcError(id, boundedFullAuto.error);
@@ -3377,17 +3367,6 @@ class SessionManager {
 
     if (!readiness.ok) {
       return rpcError(id, readiness.error);
-    }
-
-    const actionKind = PAGE_ACTION_KINDS[method];
-    const policy = this.stateStore.getPolicyControls();
-    if (GUARDED_ACTION_KINDS.has(actionKind) && policy.guardedActionsEnabled === false) {
-      return rpcError(id, {
-        code: ERROR_CODES.METHOD_NOT_ALLOWED,
-        message: 'Guarded browser actions are disabled in the operator side panel.',
-        actionKind,
-        policy
-      });
     }
 
     const boundedFullAuto = batch

@@ -198,7 +198,7 @@ test('runtime show target requires a session tab and routes a compact visual cue
   }]);
 });
 
-test('policy toggles block guarded actions and gate purchase approvals', async () => {
+test('policy toggles allow ordinary actions while gating purchase approvals', async () => {
   const session = makeSession();
   await session.handleRpc({
     id: 'approve-local',
@@ -211,6 +211,9 @@ test('policy toggles block guarded actions and gate purchase approvals', async (
     calls.push({ method, params });
     if (method === 'page.observe') {
       return { ok: true, result: { title: 'Fixture', elements: [] } };
+    }
+    if (method === 'page.navigate') {
+      return { ok: true, result: { action: 'navigate', url: params.url } };
     }
     return {
       ok: false,
@@ -230,14 +233,14 @@ test('policy toggles block guarded actions and gate purchase approvals', async (
   assert.equal(disabled.ok, true);
   assert.equal(disabled.result.policy.guardedActionsEnabled, false);
 
-  const blockedAction = await session.handleRpc({
-    id: 'blocked-click',
-    method: 'page.click',
-    params: { origin: 'http://127.0.0.1:18888', handle: 'pay_button' }
+  const navigation = await session.handleRpc({
+    id: 'guarded-off-navigation',
+    method: 'page.navigate',
+    params: { url: 'http://127.0.0.1:18888/path' }
   });
-  assert.equal(blockedAction.ok, false);
-  assert.equal(blockedAction.error.code, ERROR_CODES.METHOD_NOT_ALLOWED);
-  assert.equal(calls.length, 0);
+  assert.equal(navigation.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'page.navigate');
 
   const observe = await session.handleRpc({
     id: 'observe',
@@ -245,12 +248,12 @@ test('policy toggles block guarded actions and gate purchase approvals', async (
     params: { origin: 'http://127.0.0.1:18888' }
   });
   assert.equal(observe.ok, true);
-  assert.deepEqual(calls.map((call) => call.method), ['page.observe']);
+  assert.deepEqual(calls.map((call) => call.method), ['page.navigate', 'page.observe']);
 
   await session.handleRpc({
-    id: 'guarded-on',
+    id: 'purchase-off',
     method: 'operator.policy.update',
-    params: { guardedActionsEnabled: true, purchaseApprovalsEnabled: false }
+    params: { purchaseApprovalsEnabled: false }
   });
   const purchaseBlocked = await session.handleRpc({
     id: 'purchase-blocked',
@@ -275,7 +278,7 @@ test('policy toggles block guarded actions and gate purchase approvals', async (
   assert.equal(approvalPrompt.ok, false);
   assert.equal(approvalPrompt.error.code, ERROR_CODES.HIGH_RISK_BLOCKED);
   assert.match(approvalPrompt.error.approvalId, /^approval_/);
-  assert.equal(session.status({ detail: 'compact' }).policy.guardedActionsEnabled, true);
+  assert.equal(session.status({ detail: 'compact' }).policy.guardedActionsEnabled, false);
   assert.equal(session.status({ detail: 'compact' }).policy.purchaseApprovalsEnabled, true);
 });
 
