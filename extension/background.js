@@ -1550,17 +1550,39 @@ function navigationHrefForTarget(target, baseUrl) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function shouldRetryPostActionVerification(verification, params = {}) {
+  return params.requireVerified === true &&
+    params.action === 'click' &&
+    verification &&
+    verification.status === 'inconclusive';
+}
+
 async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
   if (!actionResponse || actionResponse.ok !== true || params.postActionSnapshot !== 'delta') {
     return actionResponse;
   }
   try {
-    const snapshot = await chrome.tabs.sendMessage(tabId, {
+    let snapshot = await chrome.tabs.sendMessage(tabId, {
       type: 'content.observe',
       mode: params.mode || 'tiny',
       ...observeOptions(params)
     });
-    const verification = verifyBackgroundAction(actionResponse, snapshot, params);
+    let verification = verifyBackgroundAction(actionResponse, snapshot, params);
+    if (shouldRetryPostActionVerification(verification, params)) {
+      await sleep(Number.isFinite(params.postActionRetryDelayMs) ? params.postActionRetryDelayMs : 1000);
+      snapshot = await chrome.tabs.sendMessage(tabId, {
+        type: 'content.observe',
+        mode: params.mode || 'tiny',
+        ...observeOptions(params)
+      });
+      verification = verifyBackgroundAction(actionResponse, snapshot, params);
+    }
     if (params.requireVerified === true && verification.status !== 'succeeded') {
       return {
         ok: false,
@@ -1786,6 +1808,7 @@ async function requireActiveTabForOrigin(origin) {
 }
 
 async function preflightDebuggerAction(ready, action, params) {
+  const highRiskPolicyEnabled = !(params.policy && params.policy.highRiskEnabled === false);
   if (action === 'scroll' && !params.handle) {
     return { ok: true };
   }
@@ -1809,8 +1832,9 @@ async function preflightDebuggerAction(ready, action, params) {
       const approvedHighRisk = risk &&
         params.approval &&
         params.approval.allowHighRisk === true &&
-        params.approval.approvalKind === risk.approvalKind;
-      if (risk && !approvedHighRisk) {
+        (params.approval.approvalKind === risk.approvalKind ||
+          params.approval.approvalKind === 'policy-disabled');
+      if (risk && highRiskPolicyEnabled && !approvedHighRisk) {
         return { ok: false, error: risk };
       }
       return { ok: true, result: { target: params.target, risk } };
@@ -1828,8 +1852,9 @@ async function preflightDebuggerAction(ready, action, params) {
   const approvedHighRisk = risk &&
     params.approval &&
     params.approval.allowHighRisk === true &&
-    params.approval.approvalKind === risk.approvalKind;
-  if (risk && !approvedHighRisk) {
+    (params.approval.approvalKind === risk.approvalKind ||
+      params.approval.approvalKind === 'policy-disabled');
+  if (risk && highRiskPolicyEnabled && !approvedHighRisk) {
     return { ok: false, error: risk };
   }
 

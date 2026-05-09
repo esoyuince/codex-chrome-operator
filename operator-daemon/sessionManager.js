@@ -1325,6 +1325,65 @@ class SessionManager {
       method !== 'operator.tabs.listSession';
   }
 
+  relaxedHighRiskApproval() {
+    const policy = this.stateStore.getPolicyControls();
+    return policy.guardedActionsEnabled === false
+      ? {
+        approval: {
+          allowHighRisk: true,
+          approvalKind: 'policy-disabled'
+        },
+        policy: {
+          highRiskEnabled: false
+        }
+      }
+      : {};
+  }
+
+  withRelaxedHighRiskApproval(params = {}) {
+    if (params.approval && typeof params.approval === 'object') {
+      return params;
+    }
+    const relaxed = this.relaxedHighRiskApproval();
+    return relaxed.approval ? {
+      ...params,
+      ...relaxed,
+      policy: {
+        ...(params.policy && typeof params.policy === 'object' ? params.policy : {}),
+        ...relaxed.policy
+      }
+    } : params;
+  }
+
+  highRiskGuardsDisabled() {
+    return this.stateStore.getPolicyControls().guardedActionsEnabled === false;
+  }
+
+  async enqueueExtensionCommandWithPolicy(method, params = {}) {
+    const commandParams = this.withRelaxedHighRiskApproval(params);
+    const response = await this.enqueueExtensionCommand(method, commandParams);
+    if (
+      response &&
+      response.ok === false &&
+      response.error &&
+      response.error.code === ERROR_CODES.HIGH_RISK_BLOCKED &&
+      this.highRiskGuardsDisabled()
+    ) {
+      return this.enqueueExtensionCommand(method, {
+        ...commandParams,
+        approval: {
+          allowHighRisk: true,
+          approvalKind: response.error.approvalKind || 'policy-disabled'
+        },
+        policy: {
+          ...(commandParams.policy && typeof commandParams.policy === 'object' ? commandParams.policy : {}),
+          highRiskEnabled: false
+        }
+      });
+    }
+    return response;
+  }
+
   recordTokenUsage({ method, params, response }) {
     if (!this.shouldTrackTokenUsage(method) || !response || !response.telemetry) {
       return;
@@ -3469,7 +3528,7 @@ class SessionManager {
         return rpcError(id, upload.error);
       }
 
-      const extensionResponse = await this.enqueueExtensionCommand(method, {
+      const extensionResponse = await this.enqueueExtensionCommandWithPolicy(method, {
         origin,
         target: upload.target,
         ruleset: upload.ruleset,
@@ -3495,7 +3554,7 @@ class SessionManager {
     }
 
     if (method === 'page.prepareCart') {
-      const extensionResponse = await this.enqueueExtensionCommand(method, prepareCart.commandParams);
+      const extensionResponse = await this.enqueueExtensionCommandWithPolicy(method, prepareCart.commandParams);
       if (!extensionResponse.ok) {
         return rpcError(id, this.attachApprovalRequest(method, prepareCart.commandParams, extensionResponse.error));
       }
@@ -3515,7 +3574,7 @@ class SessionManager {
     }
 
     if (method === 'page.batch') {
-      const extensionResponse = await this.enqueueExtensionCommand(method, batch.commandParams);
+      const extensionResponse = await this.enqueueExtensionCommandWithPolicy(method, batch.commandParams);
       if (!extensionResponse.ok) {
         return rpcError(id, this.attachApprovalRequest(method, batch.commandParams, extensionResponse.error));
       }
@@ -3543,7 +3602,7 @@ class SessionManager {
     }
 
     const extensionMethod = method === 'page.visualAnalyze' ? 'page.visualObserve' : method;
-    const extensionResponse = await this.enqueueExtensionCommand(extensionMethod, {
+    const extensionResponse = await this.enqueueExtensionCommandWithPolicy(extensionMethod, {
       ...params,
       ...(target ? { url: target.url } : {}),
       origin
@@ -3925,10 +3984,11 @@ class SessionManager {
         message: `Approval request is ${record.status}.`
       });
     }
-    if (!isLocalMockOrigin(record.origin)) {
+    const policy = this.stateStore.getPolicyControls();
+    if (!isLocalMockOrigin(record.origin) && policy.guardedActionsEnabled !== false) {
       return rpcError(id, {
         code: ERROR_CODES.HIGH_RISK_BLOCKED,
-        message: 'M1 manual approval replay is enabled only for local mock origins.'
+        message: 'Manual approval replay for real origins requires guarded actions to be disabled.'
       });
     }
 

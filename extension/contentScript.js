@@ -1499,15 +1499,18 @@ async function runAction(message) {
   const element = resolved.element;
 
   if (message.action === 'click') {
-    const risk = globalThis.CodexActionPolicy.classifyActionRisk({
-      action: 'click',
-      target: elementSummary(element, message.handle)
-    });
-    const approvedHighRisk = message.approval &&
-      message.approval.allowHighRisk === true &&
-      message.approval.approvalKind === (risk && risk.approvalKind);
-    if (risk && !approvedHighRisk) {
-      return { ok: false, error: risk };
+    if (!(message.policy && message.policy.highRiskEnabled === false)) {
+      const risk = globalThis.CodexActionPolicy.classifyActionRisk({
+        action: 'click',
+        target: elementSummary(element, message.handle)
+      });
+      const approvedHighRisk = message.approval &&
+        message.approval.allowHighRisk === true &&
+        (message.approval.approvalKind === (risk && risk.approvalKind) ||
+          message.approval.approvalKind === 'policy-disabled');
+      if (risk && !approvedHighRisk) {
+        return { ok: false, error: risk };
+      }
     }
     element.click();
     return withPostActionSnapshot({

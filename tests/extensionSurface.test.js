@@ -229,6 +229,15 @@ test('side panel treats daemon EXTENSION_CONNECTED status as connected', async (
   );
 });
 
+test('side panel auto-refreshes live token metrics while visible', () => {
+  const js = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.js'), 'utf8');
+
+  assert.match(js, /AUTO_REFRESH_INTERVAL_MS/);
+  assert.match(js, /setInterval\(refreshIfVisible,\s*AUTO_REFRESH_INTERVAL_MS\)/);
+  assert.match(js, /document\.addEventListener\('visibilitychange',\s*refreshIfVisible\)/);
+  assert.match(js, /document\.visibilityState === 'hidden'/);
+});
+
 test('side panel keeps policy toggle failures visible', async () => {
   const vm = require('node:vm');
   const js = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.js'), 'utf8');
@@ -638,6 +647,8 @@ test('background fails closed when required click verification is inconclusive',
 
   assert.match(background, /requireVerified/);
   assert.match(background, /ACTION_RESULT_UNVERIFIED/);
+  assert.match(background, /shouldRetryPostActionVerification/);
+  assert.match(background, /postActionRetryDelayMs/);
 });
 
 test('background verifies debugger link clicks with observed navigation targets', () => {

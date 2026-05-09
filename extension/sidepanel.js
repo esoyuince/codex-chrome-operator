@@ -33,6 +33,9 @@ const els = {
 
 let currentOrigin = null;
 let transientNextStep = null;
+let refreshInFlight = null;
+let lastRefreshStartedAt = 0;
+const AUTO_REFRESH_INTERVAL_MS = 2000;
 const APPROVAL_MESSAGE_TYPES = {
   approve: 'operator.approvals.approve',
   reject: 'operator.approvals.reject',
@@ -326,6 +329,18 @@ function renderTokenUsage(tokenUsage) {
 }
 
 async function refresh() {
+  const now = Date.now();
+  if (refreshInFlight) {
+    return refreshInFlight;
+  }
+  lastRefreshStartedAt = now;
+  refreshInFlight = refreshNow().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+async function refreshNow() {
   els.summary.textContent = 'Checking Chrome operator status...';
   els.connect.disabled = true;
   els.refresh.disabled = true;
@@ -416,6 +431,19 @@ async function refresh() {
   els.saveBlockedSites.disabled = false;
 }
 
+function refreshIfVisible() {
+  if (document.visibilityState === 'hidden') {
+    return;
+  }
+  const elapsed = Date.now() - lastRefreshStartedAt;
+  if (elapsed < AUTO_REFRESH_INTERVAL_MS / 2) {
+    return;
+  }
+  refresh().catch((error) => {
+    setTransientNextStep(`Auto refresh failed: ${formatError(error) || 'unknown error'}`);
+  });
+}
+
 els.connect.addEventListener('click', async () => {
   els.connect.disabled = true;
   try {
@@ -427,6 +455,14 @@ els.connect.addEventListener('click', async () => {
 });
 
 els.refresh.addEventListener('click', refresh);
+
+if (typeof setInterval === 'function') {
+  setInterval(refreshIfVisible, AUTO_REFRESH_INTERVAL_MS);
+}
+
+if (typeof document.addEventListener === 'function') {
+  document.addEventListener('visibilitychange', refreshIfVisible);
+}
 
 async function updatePolicyToggle(update) {
   els.guardedActionsToggle.disabled = true;

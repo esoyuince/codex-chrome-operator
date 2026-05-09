@@ -971,6 +971,62 @@ test('content batch propagates child action failures to the outer response', asy
   assert.equal(batch.result.stoppedOnError, true);
 });
 
+test('content click allows high-risk targets when policy-disabled approval is attached', async () => {
+  const publish = element('button', {
+    text: 'Publish',
+    'data-risk': 'publish',
+    onClick() {
+      clicked = true;
+    }
+  });
+  let clicked = false;
+  const root = element('main', { text: 'Release controls' }, [publish]);
+  const content = loadContentScript(root);
+  const observed = await content.send({ type: 'content.observe' });
+  const handle = observed.elements.find((entry) => entry.tag === 'button').handle;
+
+  const action = await content.send({
+    type: 'content.action',
+    action: 'click',
+    handle,
+    approval: {
+      allowHighRisk: true,
+      approvalKind: 'policy-disabled'
+    }
+  });
+
+  assert.equal(action.ok, true);
+  assert.equal(clicked, true);
+});
+
+test('content click skips high-risk checks when high-risk policy is disabled', async () => {
+  let clicked = false;
+  const publish = element('button', {
+    text: 'Publish',
+    'data-risk': 'publish',
+    onClick() {
+      clicked = true;
+    }
+  });
+  const root = element('main', { text: 'Release controls' }, [publish]);
+  const content = loadContentScript(root);
+  const observed = await content.send({ type: 'content.observe' });
+  const handle = observed.elements.find((entry) => entry.tag === 'button').handle;
+
+  const action = await content.send({
+    type: 'content.action',
+    action: 'click',
+    handle,
+    policy: {
+      highRiskEnabled: false
+    }
+  });
+
+  assert.equal(action.ok, true);
+  assert.equal(clicked, true);
+});
+
+
 test('content extract returns bounded shopping product candidates without generic DOM dump', async () => {
   const add = element('button', {
     'data-cart-action': 'add',
