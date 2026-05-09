@@ -97,6 +97,7 @@ button.secondary {
 .permissions,
 .pending-approvals,
 .operational-status,
+.token-usage,
 .next-step {
   background: #ffffff;
   border: 1px solid #d8dee4;
@@ -217,6 +218,13 @@ button.secondary {
 .mini-badge.disabled {
   background: #eaeef2;
   color: #566573;
+}
+
+.token-total {
+  color: #0b1f33;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
 }
 
 .switch-control {

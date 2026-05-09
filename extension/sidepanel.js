@@ -17,6 +17,11 @@ const els = {
   sessionTabsCount: document.getElementById('session-tabs-count'),
   lastCommand: document.getElementById('last-command'),
   downloadWatchStatus: document.getElementById('download-watch-status'),
+  tokenTotal: document.getElementById('token-total'),
+  tokenInput: document.getElementById('token-input'),
+  tokenOutput: document.getElementById('token-output'),
+  tokenCommandCount: document.getElementById('token-command-count'),
+  tokenLastCommand: document.getElementById('token-last-command'),
   pendingApprovals: document.getElementById('pending-approvals'),
   blockedSites: document.getElementById('blocked-sites'),
   blockedSitesDetail: document.getElementById('blocked-sites-detail'),
@@ -36,6 +41,11 @@ const APPROVAL_MESSAGE_TYPES = {
 
 function setText(element, value) {
   element.textContent = value || 'none';
+}
+
+function formatCount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number).toLocaleString('en-US') : '0';
 }
 
 function formatError(error) {
@@ -306,6 +316,15 @@ function renderApprovals(approvals, error) {
   }
 }
 
+function renderTokenUsage(tokenUsage) {
+  const usage = tokenUsage && typeof tokenUsage === 'object' ? tokenUsage : {};
+  setText(els.tokenTotal, formatCount(usage.totalTokens));
+  setText(els.tokenInput, formatCount(usage.inputTokens));
+  setText(els.tokenOutput, formatCount(usage.outputTokens));
+  setText(els.tokenCommandCount, formatCount(usage.commandCount));
+  setText(els.tokenLastCommand, usage.lastMethod || 'none');
+}
+
 async function refresh() {
   els.summary.textContent = 'Checking Chrome operator status...';
   els.connect.disabled = true;
@@ -365,6 +384,7 @@ async function refresh() {
     : null;
   setText(els.lastCommand, recentEvent && recentEvent.method ? recentEvent.method : 'none');
   setText(els.downloadWatchStatus, 'Available via codex_chrome_download_wait');
+  renderTokenUsage(daemonResult && daemonResult.tokenUsage ? daemonResult.tokenUsage : status && status.tokenUsage);
   renderApprovals(approvals, approvalsStatus.statusError || null);
   els.blockedSites.value = blockedStatus.blockedOrigins.join('\n');
   setText(

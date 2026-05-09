@@ -179,6 +179,15 @@ const CDP_ALLOWED_METHODS = new Set([
 const CDP_METADATA_METHODS = new Set([
   'Target.getTargets'
 ]);
+const TOKEN_USAGE_METHOD_PREFIXES = Object.freeze([
+  'page.',
+  'operator.runtime.',
+  'operator.cdp.',
+  'operator.context.',
+  'operator.downloads.',
+  'operator.sessions.',
+  'operator.tabs.'
+]);
 const RUNTIME_LOCATOR_ACTIONS = new Set(['resolve', 'click', 'type', 'fill', 'focus', 'clear']);
 const RUNTIME_LOCATOR_MUTATION_METHODS = Object.freeze({
   click: 'page.click',
@@ -992,6 +1001,19 @@ class SessionManager {
     this.sessionName = null;
     this.sessionTabs = new Map();
     this.lastUserTabInventory = new Map();
+    this.tokenUsage = this.defaultTokenUsage();
+  }
+
+  defaultTokenUsage() {
+    return {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      commandCount: 0,
+      lastMethod: null,
+      lastOrigin: null,
+      updatedAt: null
+    };
   }
 
   status({ detail = 'full' } = {}) {
@@ -1021,6 +1043,7 @@ class SessionManager {
       warmSession: this.warmSessionStatus(),
       recentEvents: this.recentEvents.map((event) => cloneJson(event)),
       recentActionLog: this.recentEvents.map((event) => cloneJson(event)),
+      tokenUsage: { ...this.tokenUsage },
       emergencyStop: { ...this.emergencyStop },
       boundedFullAuto: this.boundedFullAutoStatus(),
       version: {
@@ -1053,6 +1076,7 @@ class SessionManager {
       sessionName: fullStatus.sessionName,
       sessionTabs: fullStatus.sessionTabs.map((tab) => ({ ...tab })),
       warmSession: { ...fullStatus.warmSession },
+      tokenUsage: { ...fullStatus.tokenUsage },
       pendingApprovalCount: fullStatus.pendingApprovals.length,
       emergencyStop: { ...fullStatus.emergencyStop },
       boundedFullAuto: this.compactBoundedFullAutoStatus(fullStatus.boundedFullAuto),
@@ -1266,6 +1290,11 @@ class SessionManager {
     }
 
     response = attachRpcTelemetry(request.method, response);
+    this.recordTokenUsage({
+      method: request.method,
+      params,
+      response
+    });
 
     this.audit.append({
       ...this.buildAuditEntry({
@@ -1289,6 +1318,33 @@ class SessionManager {
     });
 
     return response;
+  }
+
+  shouldTrackTokenUsage(method) {
+    return TOKEN_USAGE_METHOD_PREFIXES.some((prefix) => method.startsWith(prefix)) &&
+      method !== 'operator.tabs.listSession';
+  }
+
+  recordTokenUsage({ method, params, response }) {
+    if (!this.shouldTrackTokenUsage(method) || !response || !response.telemetry) {
+      return;
+    }
+    const inputTokens = approxTokens(jsonCharLength({
+      method,
+      params
+    }));
+    const outputTokens = Number.isFinite(response.telemetry.approxResultTokens)
+      ? response.telemetry.approxResultTokens
+      : 0;
+    this.tokenUsage = {
+      inputTokens: this.tokenUsage.inputTokens + inputTokens,
+      outputTokens: this.tokenUsage.outputTokens + outputTokens,
+      totalTokens: this.tokenUsage.totalTokens + inputTokens + outputTokens,
+      commandCount: this.tokenUsage.commandCount + 1,
+      lastMethod: method,
+      lastOrigin: originFromParams(params) || (response.ok && response.result && response.result.origin) || null,
+      updatedAt: new Date().toISOString()
+    };
   }
 
   recordRecentEvent(event) {

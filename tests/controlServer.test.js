@@ -204,6 +204,7 @@ test('operator.status supports compact detail while default remains full', async
     assert.equal(compactResult.connectionState, 'EXTENSION_CONNECTED');
     assert.equal(compactResult.activeTab.origin, 'https://example.com');
     assert.equal(compactResult.warmSession.active, true);
+    assert.equal(compactResult.tokenUsage.totalTokens, 0);
     assert.equal(compactResult.pendingApprovalCount, 1);
     assert.equal(compactResult.emergencyStop.active, false);
     assert.equal(compactResult.boundedFullAuto.active, true);
@@ -234,6 +235,41 @@ test('operator.status supports compact detail while default remains full', async
       'compact status should be much smaller than full status'
     );
   });
+});
+
+test('operator.status exposes cumulative browser token usage without counting status polling', async () => {
+  const session = makeSession();
+  await session.handleRpc({
+    id: 'status_1',
+    method: 'operator.status',
+    params: {}
+  });
+  assert.equal(session.status().tokenUsage.totalTokens, 0);
+
+  session.recordTokenUsage({
+    method: 'page.observe',
+    params: {
+      origin: 'https://example.com',
+      mode: 'tiny'
+    },
+    response: {
+      ok: true,
+      result: {
+        origin: 'https://example.com'
+      },
+      telemetry: {
+        approxResultTokens: 42
+      }
+    }
+  });
+
+  const status = session.status({ detail: 'compact' });
+  assert.equal(status.tokenUsage.outputTokens, 42);
+  assert.ok(status.tokenUsage.inputTokens > 0);
+  assert.equal(status.tokenUsage.totalTokens, status.tokenUsage.inputTokens + 42);
+  assert.equal(status.tokenUsage.commandCount, 1);
+  assert.equal(status.tokenUsage.lastMethod, 'page.observe');
+  assert.equal(status.tokenUsage.lastOrigin, 'https://example.com');
 });
 
 test('operator.ensureStarted reports daemon readiness and bootstrap URL before extension connects', async () => {

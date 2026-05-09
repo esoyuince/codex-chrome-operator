@@ -84,9 +84,14 @@ test('side panel exposes action permissions, purchase approval, and blocked-site
   assert.match(html, /guarded-actions-toggle/);
   assert.match(html, /purchase-approvals-toggle/);
   assert.match(html, /Operational status/);
+  assert.match(html, /Token usage/);
   assert.match(html, /session-tabs-count/);
   assert.match(html, /last-command/);
   assert.match(html, /download-watch-status/);
+  assert.match(html, /token-total/);
+  assert.match(html, /token-input/);
+  assert.match(html, /token-output/);
+  assert.match(js, /renderTokenUsage/);
   assert.match(html, /pending-approvals/);
   assert.match(js, /operator\.blockedOriginsStatus/);
   assert.match(js, /operator\.daemonStatus/);
@@ -168,7 +173,14 @@ test('side panel treats daemon EXTENSION_CONNECTED status as connected', async (
               activeTab,
               connectionState: 'EXTENSION_CONNECTED',
               lastError: null,
-              pendingApprovals: []
+              pendingApprovals: [],
+              tokenUsage: {
+                inputTokens: 12,
+                outputTokens: 34,
+                totalTokens: 46,
+                commandCount: 2,
+                lastMethod: 'page.observe'
+              }
             }
           };
         }
@@ -206,6 +218,11 @@ test('side panel treats daemon EXTENSION_CONNECTED status as connected', async (
 
   assert.equal(elements.get('status-badge').textContent, 'Ready');
   assert.equal(elements.get('permission-safe').textContent, 'Ready');
+  assert.equal(elements.get('token-total').textContent, '46');
+  assert.equal(elements.get('token-input').textContent, '12');
+  assert.equal(elements.get('token-output').textContent, '34');
+  assert.equal(elements.get('token-command-count').textContent, '2');
+  assert.equal(elements.get('token-last-command').textContent, 'page.observe');
   assert.equal(
     elements.get('next-step').textContent,
     'Ready for Codex operator commands on this active origin.'
