@@ -111,6 +111,48 @@ test('control server rejects GET and wrong bearer token', async () => {
   });
 });
 
+test('control server accepts application/json content type parameters', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/v1/rpc`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test-token',
+        'content-type': 'application/json; charset=utf-8'
+      },
+      body: JSON.stringify({ id: 'req_1', method: 'operator.status', params: {} })
+    });
+
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, true);
+  });
+});
+
+test('domain and host permission approvals require valid http origins', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    const invalidApproval = await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'not a url'
+    });
+    assert.equal(invalidApproval.body.ok, false);
+    assert.equal(invalidApproval.body.error.code, ERROR_CODES.INVALID_SCHEMA);
+
+    const invalidPermission = await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'file:///C:/Users/example/Desktop'
+    });
+    assert.equal(invalidPermission.body.ok, false);
+    assert.equal(invalidPermission.body.error.code, ERROR_CODES.INVALID_SCHEMA);
+
+    const normalized = await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com/deep/path?x=1'
+    });
+    assert.equal(normalized.body.ok, true);
+    assert.equal(normalized.body.result.origin, 'https://example.com');
+
+    const status = await postJson(baseUrl, 'operator.status');
+    assert.deepEqual(status.body.result.approvedOrigins, ['https://example.com']);
+  });
+});
+
 test('operator.status returns disconnected state before HELLO', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     const result = await postJson(baseUrl, 'operator.status');
@@ -2970,10 +3012,12 @@ test('page.click carries relaxed approval to extension when guarded actions are 
     assert.equal(command.body.result.command.method, 'page.click');
     assert.deepEqual(command.body.result.command.params.approval, {
       allowHighRisk: true,
+      allowSensitiveFormFill: true,
       approvalKind: 'policy-disabled'
     });
     assert.deepEqual(command.body.result.command.params.policy, {
-      highRiskEnabled: false
+      highRiskEnabled: false,
+      sensitiveFormFillEnabled: false
     });
     await postJson(baseUrl, 'bridge.deliver', {
       commandId: command.body.result.command.commandId,
@@ -3024,10 +3068,12 @@ test('page.click retries extension high-risk blocks internally when guarded acti
     assert.equal(retryCommand.body.result.command.method, 'page.click');
     assert.deepEqual(retryCommand.body.result.command.params.approval, {
       allowHighRisk: true,
+      allowSensitiveFormFill: true,
       approvalKind: 'publish'
     });
     assert.deepEqual(retryCommand.body.result.command.params.policy, {
-      highRiskEnabled: false
+      highRiskEnabled: false,
+      sensitiveFormFillEnabled: false
     });
     await postJson(baseUrl, 'bridge.deliver', {
       commandId: retryCommand.body.result.command.commandId,
@@ -3040,6 +3086,80 @@ test('page.click retries extension high-risk blocks internally when guarded acti
     const clicked = await clickPromise;
     assert.equal(clicked.body.ok, true);
     assert.equal(clicked.body.result.action, 'clicked');
+
+    const approvals = await postJson(baseUrl, 'operator.approvals.list');
+    assert.deepEqual(approvals.body.result.approvals, []);
+  });
+});
+
+test('page.formFillExecute retries sensitive form blocks internally when guarded actions are disabled', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: verifiedHello(['observe.v1'])
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'https://example.com'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'https://example.com'
+    });
+    await postJson(baseUrl, 'operator.policy.update', {
+      guardedActionsEnabled: false
+    });
+
+    const fillPromise = postJson(baseUrl, 'page.formFillExecute', {
+      origin: 'https://example.com',
+      steps: [{
+        action: 'fill',
+        handle: 'api_token',
+        text: 'temporary-token',
+        sensitive: true
+      }]
+    });
+    const firstCommand = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(firstCommand.body.result.command.method, 'page.formFillExecute');
+    assert.deepEqual(firstCommand.body.result.command.params.approval, {
+      allowHighRisk: true,
+      allowSensitiveFormFill: true,
+      approvalKind: 'policy-disabled'
+    });
+    assert.deepEqual(firstCommand.body.result.command.params.policy, {
+      highRiskEnabled: false,
+      sensitiveFormFillEnabled: false
+    });
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: firstCommand.body.result.command.commandId,
+      response: {
+        ok: false,
+        error: {
+          code: ERROR_CODES.SENSITIVE_FORM_FILL_BLOCKED,
+          approvalKind: 'sensitive-form-fill',
+          targetSummary: 'API token'
+        }
+      }
+    });
+    const retryCommand = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(retryCommand.body.result.command.method, 'page.formFillExecute');
+    assert.deepEqual(retryCommand.body.result.command.params.approval, {
+      allowHighRisk: true,
+      allowSensitiveFormFill: true,
+      approvalKind: 'sensitive-form-fill'
+    });
+    assert.deepEqual(retryCommand.body.result.command.params.policy, {
+      highRiskEnabled: false,
+      sensitiveFormFillEnabled: false
+    });
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: retryCommand.body.result.command.commandId,
+      response: {
+        ok: true,
+        result: { executed: [{ handle: 'api_token', action: 'fill' }] }
+      }
+    });
+
+    const filled = await fillPromise;
+    assert.equal(filled.body.ok, true);
+    assert.equal(filled.body.result.executed[0].handle, 'api_token');
 
     const approvals = await postJson(baseUrl, 'operator.approvals.list');
     assert.deepEqual(approvals.body.result.approvals, []);

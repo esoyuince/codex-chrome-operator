@@ -1267,3 +1267,39 @@ test('content form fill requires explicit approval for sensitive fields', async 
   assert.equal(approved.ok, true);
   assert.equal(password.value, 'new-secret');
 });
+
+test('content form fill allows sensitive fields when policy disables guarded actions', async () => {
+  const tokenInput = element('input', {
+    id: 'api-token',
+    name: 'api_token',
+    'aria-label': 'API token'
+  });
+  const root = element('main', {}, [element('form', { id: 'token-form' }, [tokenInput])]);
+  const content = loadContentScript(root);
+  const extracted = await content.send({
+    type: 'content.formExtract',
+    includeValues: false
+  });
+  const handle = extracted.result.forms[0].fields[0].handle;
+  const plan = await content.send({
+    type: 'content.formFillPlan',
+    fields: [{ handle, text: 'temporary-token' }]
+  });
+
+  const executed = await content.send({
+    type: 'content.formFillExecute',
+    steps: plan.result.steps,
+    approval: {
+      allowHighRisk: true,
+      allowSensitiveFormFill: true,
+      approvalKind: 'policy-disabled'
+    },
+    policy: {
+      highRiskEnabled: false,
+      sensitiveFormFillEnabled: false
+    }
+  });
+
+  assert.equal(executed.ok, true);
+  assert.equal(tokenInput.value, 'temporary-token');
+});

@@ -1977,7 +1977,8 @@ async function handleOperatorCommand(command) {
       return chrome.tabs.sendMessage(ready.tab.id, {
         type: 'content.formFillExecute',
         steps: params.steps,
-        approval: params.approval
+        approval: params.approval,
+        policy: params.policy
       });
     }
 

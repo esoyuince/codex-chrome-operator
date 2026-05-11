@@ -14,6 +14,18 @@ const { SessionManager } = require('../operator-daemon/sessionManager');
 test('redactValue redacts Windows file paths and sensitive strings', () => {
   assert.equal(redactValue('C:/Users/example/Desktop/icon.png'), '[REDACTED_PATH:icon.png]');
   assert.equal(redactValue('C:\\Users\\example\\Desktop\\secret.txt'), '[REDACTED_PATH:secret.txt]');
+  assert.equal(
+    redactValue('Copy this token once: cfut_abcdefghijklmnopqrstuvwxyz1234567890'),
+    'Copy this token once: [REDACTED_TOKEN]'
+  );
+  assert.equal(
+    redactValue('Authorization: Bearer abcdefghijklmnopqrstuvwxyz1234567890'),
+    'Authorization: Bearer [REDACTED_TOKEN]'
+  );
+  assert.equal(
+    redactValue('Uploaded from C:\\Users\\example\\Desktop\\secret.txt'),
+    'Uploaded from [REDACTED_PATH:secret.txt]'
+  );
   assert.equal(redactValue('plain text'), 'plain text');
 });
 
@@ -76,6 +88,37 @@ test('AuditLog.tail returns recent redacted entries in order', () => {
   assert.equal(entries[0].requestId, 'req_2');
   assert.equal(entries[0].path, '[REDACTED_PATH:file.txt]');
   assert.equal(entries[1].requestId, 'req_3');
+});
+
+test('AuditLog redacts sensitive token text outside sensitive keys', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-audit-'));
+  const file = path.join(dir, 'audit.jsonl');
+  const audit = new AuditLog(file);
+
+  audit.append({
+    method: 'page.read',
+    response: {
+      visibleTextSummary: 'API token was successfully created: cfut_abcdefghijklmnopqrstuvwxyz1234567890'
+    }
+  });
+
+  const raw = fs.readFileSync(file, 'utf8');
+  assert.equal(raw.includes('cfut_abcdefghijklmnopqrstuvwxyz1234567890'), false);
+  assert.equal(raw.includes('[REDACTED_TOKEN]'), true);
+});
+
+test('AuditLog.tail skips oversized legacy entries without reading entire audit file', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-audit-'));
+  const file = path.join(dir, 'audit.jsonl');
+  const audit = new AuditLog(file);
+  fs.writeFileSync(file, `${JSON.stringify({ requestId: 'huge', text: 'x'.repeat(2 * 1024 * 1024) })}\n`, 'utf8');
+  fs.appendFileSync(file, `${JSON.stringify({ requestId: 'recent' })}\n`, 'utf8');
+
+  const entries = audit.tail({ limit: 2 });
+
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].requestId, '[TRUNCATED_AUDIT_ENTRY]');
+  assert.equal(entries[1].requestId, 'recent');
 });
 
 test('status recentEvents omits raw sensitive params from failed page commands', async () => {

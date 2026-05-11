@@ -388,6 +388,28 @@ function originFromUrl(url) {
   return undefined;
 }
 
+function normalizeHttpOrigin(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null;
+  }
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+function invalidOriginResponse(id) {
+  return rpcError(id, {
+    code: ERROR_CODES.INVALID_SCHEMA,
+    message: 'origin must be an http(s) URL or origin.'
+  });
+}
+
 function safeCdpAuditParams(params = {}) {
   const cdpParams = isPlainObject(params.params) ? params.params : {};
   return {
@@ -1331,10 +1353,12 @@ class SessionManager {
       ? {
         approval: {
           allowHighRisk: true,
+          allowSensitiveFormFill: true,
           approvalKind: 'policy-disabled'
         },
         policy: {
-          highRiskEnabled: false
+          highRiskEnabled: false,
+          sensitiveFormFillEnabled: false
         }
       }
       : {};
@@ -1359,25 +1383,41 @@ class SessionManager {
     return this.stateStore.getPolicyControls().guardedActionsEnabled === false;
   }
 
+  relaxedRetryApprovalForError(error = {}) {
+    if (!this.highRiskGuardsDisabled()) {
+      return null;
+    }
+    if (error.code === ERROR_CODES.HIGH_RISK_BLOCKED) {
+      return {
+        allowHighRisk: true,
+        allowSensitiveFormFill: true,
+        approvalKind: error.approvalKind || 'policy-disabled'
+      };
+    }
+    if (error.code === ERROR_CODES.SENSITIVE_FORM_FILL_BLOCKED) {
+      return {
+        allowHighRisk: true,
+        allowSensitiveFormFill: true,
+        approvalKind: error.approvalKind || 'sensitive-form-fill'
+      };
+    }
+    return null;
+  }
+
   async enqueueExtensionCommandWithPolicy(method, params = {}) {
     const commandParams = this.withRelaxedHighRiskApproval(params);
     const response = await this.enqueueExtensionCommand(method, commandParams);
-    if (
-      response &&
-      response.ok === false &&
-      response.error &&
-      response.error.code === ERROR_CODES.HIGH_RISK_BLOCKED &&
-      this.highRiskGuardsDisabled()
-    ) {
+    const retryApproval = response && response.ok === false && response.error
+      ? this.relaxedRetryApprovalForError(response.error)
+      : null;
+    if (retryApproval) {
       return this.enqueueExtensionCommand(method, {
         ...commandParams,
-        approval: {
-          allowHighRisk: true,
-          approvalKind: response.error.approvalKind || 'policy-disabled'
-        },
+        approval: retryApproval,
         policy: {
           ...(commandParams.policy && typeof commandParams.policy === 'object' ? commandParams.policy : {}),
-          highRiskEnabled: false
+          highRiskEnabled: false,
+          sensitiveFormFillEnabled: false
         }
       });
     }
@@ -2688,12 +2728,9 @@ class SessionManager {
   }
 
   approveDomain(id, params) {
-    const origin = params && params.origin;
-    if (!origin || typeof origin !== 'string') {
-      return rpcError(id, {
-        code: ERROR_CODES.INVALID_SCHEMA,
-        message: 'origin is required.'
-      });
+    const origin = normalizeHttpOrigin(params && params.origin);
+    if (!origin) {
+      return invalidOriginResponse(id);
     }
     const approval = this.stateStore.approveDomain(origin, {
       mode: params.mode,
@@ -2705,12 +2742,9 @@ class SessionManager {
   }
 
   revokeDomain(id, params) {
-    const origin = params && params.origin;
-    if (!origin || typeof origin !== 'string') {
-      return rpcError(id, {
-        code: ERROR_CODES.INVALID_SCHEMA,
-        message: 'origin is required.'
-      });
+    const origin = normalizeHttpOrigin(params && params.origin);
+    if (!origin) {
+      return invalidOriginResponse(id);
     }
     const revoked = this.stateStore.revokeDomain(origin);
     this.approvedOrigins = new Set(this.activeDomainApprovalOrigins());
@@ -2734,12 +2768,9 @@ class SessionManager {
         hostPermissionGranted: false
       });
     }
-    const origin = params && params.origin;
-    if (!origin || typeof origin !== 'string') {
-      return rpcError(id, {
-        code: ERROR_CODES.INVALID_SCHEMA,
-        message: 'origin is required.'
-      });
+    const origin = normalizeHttpOrigin(params && params.origin);
+    if (!origin) {
+      return invalidOriginResponse(id);
     }
     this.stateStore.grantHostPermission(origin, { grantedAt: params.grantedAt });
     this.hostPermissions = new Set(this.activeHostPermissionOrigins());
@@ -2762,8 +2793,13 @@ class SessionManager {
       });
     }
 
+    const origins = params.origins.map((origin) => normalizeHttpOrigin(origin));
+    if (origins.some((origin) => !origin)) {
+      return invalidOriginResponse(id);
+    }
+
     this.stateStore.syncHostPermissions({
-      origins: params.origins,
+      origins,
       syncedAt: params.syncedAt
     });
     this.hostPermissions = new Set(this.activeHostPermissionOrigins());

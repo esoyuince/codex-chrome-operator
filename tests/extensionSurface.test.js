@@ -660,6 +660,17 @@ test('background verifies debugger link clicks with observed navigation targets'
   assert.match(background, /target:\s*observedTarget/);
 });
 
+test('background forwards form fill policy to the content script', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const start = background.indexOf("if (command.method === 'page.formFillExecute')");
+  const end = background.indexOf("if (command.method === 'page.visualInspectTarget')", start);
+  const block = background.slice(start, end);
+
+  assert.ok(start !== -1 && end !== -1, 'page.formFillExecute handler should be present');
+  assert.match(block, /approval:\s*params\.approval/);
+  assert.match(block, /policy:\s*params\.policy/);
+});
+
 test('background exposes guarded session tab commands for hybrid operator mode', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 

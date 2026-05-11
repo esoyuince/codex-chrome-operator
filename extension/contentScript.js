@@ -1166,9 +1166,16 @@ function formFillPlan(message = {}) {
 
 async function formFillExecute(message = {}) {
   const steps = Array.isArray(message.steps) ? message.steps : [];
-  const approvedSensitiveFill = message.approval &&
+  const sensitiveFormFillPolicyDisabled = message.policy &&
+    message.policy.sensitiveFormFillEnabled === false;
+  const approvedSensitiveFill = sensitiveFormFillPolicyDisabled || (
+    message.approval &&
     message.approval.allowSensitiveFormFill === true &&
-    message.approval.approvalKind === 'sensitive-form-fill';
+    (
+      message.approval.approvalKind === 'sensitive-form-fill' ||
+      message.approval.approvalKind === 'policy-disabled'
+    )
+  );
   const executed = [];
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index];

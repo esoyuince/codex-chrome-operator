@@ -20,6 +20,10 @@ function isAuthorized(req, token) {
   return auth === `Bearer ${token}`;
 }
 
+function isJsonContentType(value) {
+  return String(value || '').split(';')[0].trim().toLowerCase() === 'application/json';
+}
+
 async function readBody(req) {
   const chunks = [];
   let total = 0;
@@ -61,7 +65,7 @@ function startControlServer({ session, token, host = '127.0.0.1', port = 17391 }
       return;
     }
 
-    if (req.headers['content-type'] !== 'application/json') {
+    if (!isJsonContentType(req.headers['content-type'])) {
       jsonResponse(res, 415, {
         ok: false,
         error: { code: ERROR_CODES.INVALID_REQUEST, message: 'application/json is required.' }
