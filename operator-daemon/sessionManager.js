@@ -1800,6 +1800,16 @@ class SessionManager {
       if (!extensionResponse.ok) {
         return rpcError(id, extensionResponse.error);
       }
+      const finalizedResult = extensionResponse.result || {};
+      const removedTabIds = [
+        ...(Array.isArray(finalizedResult.closed) ? finalizedResult.closed : []),
+        ...(Array.isArray(finalizedResult.released) ? finalizedResult.released : [])
+      ];
+      for (const tabId of removedTabIds) {
+        if (Number.isInteger(tabId)) {
+          this.sessionTabs.delete(tabId);
+        }
+      }
       for (const entry of keep.keep) {
         const tab = this.sessionTabs.get(entry.tabId);
         if (tab) {

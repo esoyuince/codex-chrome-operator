@@ -479,6 +479,57 @@ test('session tabs create, list, name, and finalize with validated keep states',
   assert.equal(session.status({ detail: 'compact' }).sessionTabs[0].finalizedStatus, 'deliverable');
 });
 
+test('finalize removes closed and released tabs from daemon session state', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(11, {
+    id: 11,
+    title: 'Kept',
+    url: 'https://example.com/kept',
+    ownership: 'agent',
+    finalizedStatus: null
+  });
+  session.sessionTabs.set(12, {
+    id: 12,
+    title: 'Closed',
+    url: 'https://example.com/closed',
+    ownership: 'agent',
+    finalizedStatus: null
+  });
+  session.sessionTabs.set(13, {
+    id: 13,
+    title: 'Released',
+    url: 'https://example.com/released',
+    ownership: 'user',
+    finalizedStatus: null
+  });
+  session.enqueueExtensionCommand = async (method) => {
+    assert.equal(method, 'operator.tabs.finalize');
+    return {
+      ok: true,
+      result: {
+        kept: [{ tabId: 11, status: 'deliverable' }],
+        closed: [12],
+        released: [13]
+      }
+    };
+  };
+
+  const finalized = await session.handleRpc({
+    id: 'finalize',
+    method: 'operator.tabs.finalize',
+    params: { keep: [{ tabId: 11, status: 'deliverable' }] }
+  });
+
+  assert.equal(finalized.ok, true);
+  assert.deepEqual(
+    session.status({ detail: 'compact' }).sessionTabs.map((tab) => ({
+      id: tab.id,
+      finalizedStatus: tab.finalizedStatus
+    })),
+    [{ id: 11, finalizedStatus: 'deliverable' }]
+  );
+});
+
 test('guarded CDP commands require session-owned tabs and origin readiness', async () => {
   const session = makeSession();
   const calls = [];
