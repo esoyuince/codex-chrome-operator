@@ -15,6 +15,7 @@
     "release:m1": "npm run check:version-discipline && node scripts/m1-release-check.js",
     "release:m6": "npm run check:version-discipline && node scripts/m6-final-check.js",
     "smoke:clean": "node scripts/clean-smoke.js",
+    "smoke:dynamic-dom": "node scripts/dynamic-dom-smoke.js",
     "smoke:mcp": "node scripts/mcp-smoke.js",
     "smoke:live": "node scripts/live-smoke.js",
     "codex:mcp:install": "node scripts/install-codex-mcp.js",

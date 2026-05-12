@@ -95,6 +95,33 @@ test('waitForCondition polls until the condition is satisfied', async () => {
   assert.equal(result.result.elapsedMs, 50);
 });
 
+test('waitForCondition waits until the DOM mutation counter stays quiet', async () => {
+  let now = 0;
+  let mutationCounter = 0;
+  const result = await waitForCondition({
+    condition: { type: 'domQuiet', quietMs: 100 },
+    context: {
+      ...context(),
+      mutationCounter: () => mutationCounter
+    },
+    timeoutMs: 300,
+    pollIntervalMs: 50,
+    now: () => now,
+    sleeper: async (delayMs) => {
+      now += delayMs;
+      if (now === 50) {
+        mutationCounter += 1;
+      }
+    }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.condition.type, 'domQuiet');
+  assert.equal(result.result.elapsedMs, 150);
+  assert.equal(result.result.finalState.quietForMs, 100);
+  assert.equal(result.result.finalState.mutationCounter, 1);
+});
+
 test('waitForCondition returns a deterministic timeout error', async () => {
   let now = 0;
   const result = await waitForCondition({

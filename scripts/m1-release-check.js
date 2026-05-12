@@ -19,6 +19,7 @@ function buildReleaseChecks({ includeSmoke = false } = {}) {
     nodeCheck('unit-tests', ['--test']),
     nodeCheck('syntax-check', [path.join('scripts', 'check-syntax.js')]),
     nodeCheck('mcp-smoke', [path.join('scripts', 'mcp-smoke.js')]),
+    nodeCheck('dynamic-dom-smoke', [path.join('scripts', 'dynamic-dom-smoke.js')]),
     nodeCheck('daemon-doctor', [path.join('operator-daemon', 'daemon.js'), '--doctor']),
     {
       name: 'install-doctor-no-install-check',
@@ -152,6 +153,33 @@ function extractMcpSmokeEvidence(stdout) {
   return Object.keys(evidence).length > 0 ? evidence : null;
 }
 
+function extractDynamicDomSmokeEvidence(stdout) {
+  let smoke;
+  try {
+    smoke = JSON.parse(String(stdout || '').trim());
+  } catch {
+    return null;
+  }
+  if (!smoke || typeof smoke !== 'object' || Array.isArray(smoke)) {
+    return null;
+  }
+
+  const finalState = smoke.finalState && typeof smoke.finalState === 'object'
+    ? smoke.finalState
+    : {};
+  const evidence = {};
+  addDefined(evidence, 'ok', smoke.ok);
+  addDefined(evidence, 'quietMs', smoke.quietMs);
+  addDefined(evidence, 'elapsedMs', smoke.elapsedMs);
+  addDefined(evidence, 'mutationBursts', smoke.mutationBursts);
+  addDefined(evidence, 'lastMutationAtMs', smoke.lastMutationAtMs);
+  addDefined(evidence, 'settledAfterLastMutationMs', smoke.settledAfterLastMutationMs);
+  addDefined(evidence, 'finalQuietForMs', finalState.quietForMs);
+  addDefined(evidence, 'finalMutationCounter', finalState.mutationCounter);
+
+  return Object.keys(evidence).length > 0 ? evidence : null;
+}
+
 function defaultRunner(check) {
   return childProcess.spawnSync(check.command, check.args, {
     cwd: ROOT,
@@ -202,6 +230,12 @@ function runReleaseCheck({
         checkReport.evidence = evidence;
       }
     }
+    if (check.name === 'dynamic-dom-smoke') {
+      const evidence = extractDynamicDomSmokeEvidence(result.stdout);
+      if (evidence) {
+        checkReport.evidence = evidence;
+      }
+    }
     checks.push(checkReport);
   }
 
@@ -234,6 +268,7 @@ if (require.main === module) {
 module.exports = {
   buildReleaseChecks,
   extractCleanSmokeEvidence,
+  extractDynamicDomSmokeEvidence,
   extractMcpSmokeEvidence,
   parseArgs,
   runReleaseCheck,

@@ -122,6 +122,7 @@ test('runM6FinalCheck combines release gates with sandbox install lifecycle', ()
     'unit-tests',
     'syntax-check',
     'mcp-smoke',
+    'dynamic-dom-smoke',
     'daemon-doctor',
     'install-doctor-no-install-check',
     'sandbox-install',
@@ -134,7 +135,7 @@ test('runM6FinalCheck combines release gates with sandbox install lifecycle', ()
   assert.equal(report.failedChecks, 0);
   assert.equal(report.checks[0].name, 'release-gates');
   assert.equal(report.checks[0].evidence.releaseOk, true);
-  assert.equal(report.checks[0].evidence.totalChecks, 5);
+  assert.equal(report.checks[0].evidence.totalChecks, 6);
   assert.equal(report.checks[2].evidence.tokenLength, 43);
   assert.equal(report.checks[4].name, 'sandbox-install-dir-removed');
   assert.equal(report.checks[4].ok, true);

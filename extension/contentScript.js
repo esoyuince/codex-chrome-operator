@@ -92,6 +92,41 @@ function visualRoleForElement(element) {
   return null;
 }
 
+function implicitRoleForElement(element) {
+  const explicitRole = element.getAttribute('role');
+  if (explicitRole) {
+    return explicitRole;
+  }
+  const tag = element.tagName.toLowerCase();
+  const type = String(element.getAttribute('type') || '').toLowerCase();
+  if (tag === 'button') {
+    return 'button';
+  }
+  if (tag === 'a' && element.getAttribute('href')) {
+    return 'link';
+  }
+  if (tag === 'textarea') {
+    return 'textbox';
+  }
+  if (tag === 'select') {
+    return 'combobox';
+  }
+  if (tag === 'input') {
+    if (['button', 'submit', 'reset', 'image'].includes(type)) {
+      return 'button';
+    }
+    if (['checkbox', 'radio', 'range'].includes(type)) {
+      return type;
+    }
+    return 'textbox';
+  }
+  return null;
+}
+
+function testIdFromData(data) {
+  return data.testid || data.testId || data.testID || data.test || null;
+}
+
 function isSensitiveElement(element) {
   return Boolean(
     element.matches('input[type="password"], [autocomplete="one-time-code"]') ||
@@ -123,6 +158,36 @@ function layoutContext() {
     },
     devicePixelRatio: window.devicePixelRatio
   };
+}
+
+function targetContractForElement(element, handle, summary) {
+  const data = summary.data || {};
+  return compactElementSummary({
+    version: 1,
+    handle,
+    tag: summary.tag,
+    role: implicitRoleForElement(element),
+    type: summary.type || null,
+    id: summary.id || null,
+    name: summary.name || null,
+    href: summary.href || null,
+    placeholder: summary.placeholder || null,
+    title: summary.title || null,
+    label: summary.label || null,
+    accessibleName: summary.label || null,
+    testid: testIdFromData(data),
+    data,
+    productId: summary.productId || null,
+    bbox: summary.bbox || null,
+    context: summary.context || null
+  });
+}
+
+function shouldIncludeTargetContract(options = {}) {
+  return options.includeTargetContract === true ||
+    options.type === 'content.resolveActionTarget' ||
+    options.mode === 'medium' ||
+    options.mode === 'full';
 }
 
 function booleanOption(value, fallback = false) {
@@ -193,12 +258,30 @@ function isOccludedElement(element, rect) {
   if (!document || typeof document.elementFromPoint !== 'function' || !rect || rect.width <= 0 || rect.height <= 0) {
     return null;
   }
-  const x = rect.x + rect.width / 2;
-  const y = rect.y + rect.height / 2;
+  const x = Number.isFinite(rect.x) ? rect.x : (Number.isFinite(rect.left) ? rect.left : 0);
+  const y = Number.isFinite(rect.y) ? rect.y : (Number.isFinite(rect.top) ? rect.top : 0);
+  const centerX = x + rect.width / 2;
+  const centerY = y + rect.height / 2;
+  const xInset = Math.min(12, Math.max(1, rect.width * 0.25));
+  const yInset = Math.min(12, Math.max(1, rect.height * 0.25));
+  const points = [
+    { x: centerX, y: centerY },
+    { x: x + xInset, y: centerY },
+    { x: x + rect.width - xInset, y: centerY },
+    { x: centerX, y: y + yInset },
+    { x: centerX, y: y + rect.height - yInset }
+  ];
   try {
-    const hit = document.elementFromPoint(x, y);
-    if (!hit || hit === element || (element.contains && element.contains(hit))) {
-      return false;
+    for (const point of points) {
+      const hit = document.elementFromPoint(point.x, point.y);
+      if (
+        !hit ||
+        hit === element ||
+        (element.contains && element.contains(hit)) ||
+        (hit.contains && hit.contains(element))
+      ) {
+        return false;
+      }
     }
     return true;
   } catch {
@@ -226,7 +309,7 @@ function elementSummary(element, handle, options = {}) {
   const visualRole = visualRoleForElement(element);
   const ratingValue = numericAttribute(element, 'data-rating');
   const formValue = formValueForElement(element, options);
-  return compactElementSummary({
+  const summary = compactElementSummary({
     handle,
     tag: element.tagName.toLowerCase(),
     role: element.getAttribute('role') || null,
@@ -259,12 +342,42 @@ function elementSummary(element, handle, options = {}) {
       height: Math.round(rect.height)
     }
   });
+  return compactElementSummary({
+    ...summary,
+    ...(shouldIncludeTargetContract(options)
+      ? { targetContract: targetContractForElement(element, handle, summary) }
+      : {})
+  });
 }
 
+var ACTIONABLE_SELECTOR = globalThis.__codexActionableSelector || [
+  'a',
+  'button',
+  'input',
+  'textarea',
+  'select',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="checkbox"]',
+  '[role="radio"]',
+  '[role="switch"]',
+  '[role="textbox"]',
+  '[role="combobox"]',
+  '[role="listbox"]',
+  '[role="option"]',
+  '[role="menuitem"]',
+  '[role="tab"]',
+  '[contenteditable="true"]',
+  '[contenteditable="plaintext-only"]',
+  '[aria-checked]',
+  '[aria-selected]',
+  '[aria-expanded]',
+  '[tabindex]:not([tabindex="-1"])'
+].join(',');
+globalThis.__codexActionableSelector = ACTIONABLE_SELECTOR;
+
 function collectInteractiveElements() {
-  return querySelectorAllDeep(
-    'a,button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]'
-  ).filter(isVisible).slice(0, 200);
+  return querySelectorAllDeep(ACTIONABLE_SELECTOR).filter(isVisible).slice(0, 200);
 }
 
 function hasVisibleUploadAssociation(input) {
@@ -1601,11 +1714,19 @@ async function runAction(message) {
   }
 
   if (message.action === 'scroll') {
-    window.scrollBy(message.deltaX || 0, message.deltaY || 0);
+    element.scrollIntoView({ block: 'center', inline: 'center' });
+    element.scrollBy(message.deltaX || 0, message.deltaY || 0);
     return withPostActionSnapshot({
       ok: true,
-      result: { action: 'scrolled', scrollX: window.scrollX, scrollY: window.scrollY }
-    }, message);
+      result: {
+        action: 'scrolled',
+        scrollLeft: element.scrollLeft,
+        scrollTop: element.scrollTop,
+        handle: message.handle
+      }
+    }, message, {
+      targetElement: element
+    });
   }
 
   if (message.action === 'pressKey') {
@@ -1634,7 +1755,8 @@ async function waitForPageCondition(message) {
       resolveHandle: (handle) => {
         const resolved = resolveHandle(handle);
         return resolved.ok ? resolved.element : null;
-      }
+      },
+      mutationCounter: () => Number(globalThis.__codexMutationCounter || 0)
     }
   });
 }

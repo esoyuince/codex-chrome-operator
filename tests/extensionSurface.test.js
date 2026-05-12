@@ -651,6 +651,18 @@ test('background fails closed when required click verification is inconclusive',
   assert.match(background, /postActionRetryDelayMs/);
 });
 
+test('background preserves debugger runtime verification for input actions', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+
+  assert.match(background, /runtimeVerificationForActionResponse/);
+  assert.match(background, /actionResponseRuntimeVerificationMatches/);
+  assert.match(background, /runtime verified/);
+  assert.ok(
+    background.indexOf('runtimeVerificationForActionResponse') < background.indexOf('if (params.requireVerified === true'),
+    'runtime verification should be considered before required post-action failure'
+  );
+});
+
 test('background verifies debugger link clicks with observed navigation targets', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 
@@ -718,6 +730,8 @@ test('background exposes browser context, download wait, session recovery, and t
   assert.match(contentScript, /content\.showTarget/);
   assert.match(contentScript, /content\.operatorIndicator/);
   assert.match(contentScript, /content\.actionTrace/);
+  assert.match(background, /actionability:\s*actionResult\.actionability/);
+  assert.match(background, /source:\s*Object\.keys\(resolvedTarget\)/);
   assert.match(contentScript, /codex-operator-target-cue/);
   assert.match(contentScript, /codex-operator-active-indicator/);
 });

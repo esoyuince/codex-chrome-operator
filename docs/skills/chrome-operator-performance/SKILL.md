@@ -1,6 +1,6 @@
 ---
 name: chrome-operator-performance
-description: Use, diagnose, optimize, and live-test the Codex Chrome Operator browser extension. Use when operating this extension on real browser tasks, working on the codex-chrome-operator repo, checking profile binding and reload issues, debugging stale handles, guarded actions, action traces, tab indicators, gate detection false positives, debugger/click/type reliability, React-heavy sites, live smoke tests, performance regressions, or turning live automation findings into best-practice fixes.
+description: Use, diagnose, optimize, and live-test the Codex Chrome Operator browser extension. Use when operating this extension on real browser tasks, working on the codex-chrome-operator repo, using codex_chrome_* MCP tools, checking profile binding and reload issues, debugging session tabs, stale handles, target contracts, guarded actions, action traces, tab indicators, gate detection false positives, debugger/click/type/fill/check/select reliability, DOM quiet waits, React-heavy sites, live smoke tests, performance regressions, or turning live automation findings into best-practice fixes.
 ---
 
 # Chrome Operator Performance And Usage
@@ -13,6 +13,7 @@ deliberately and record which layer is being tested.
 ## Tool Choice
 
 - Prefer this operator for extension development, policy/approval debugging, live smoke tests, guarded actions, audit-log behavior, site-specific extractor work, and regressions reported against this repo.
+- Prefer `codex_chrome_*` MCP tools when they are available. Use `tool_search` to expose missing Chrome Operator tools before falling back to `node scripts/operator-cli.js`.
 - For ordinary browser tasks, use this operator when the user wants this extension exercised, guarded approvals/audit logs matter, or native/browser-plugin behavior is unreliable.
 - When comparing both paths, record which layer failed: native browser tool, extension bridge, daemon policy, content script, debugger action, or site state.
 
@@ -21,10 +22,12 @@ deliberately and record which layer is being tested.
 Start from repo truth and installed-extension truth:
 
 1. Check `git status --short` and preserve unrelated dirty work.
-2. Check `node scripts/operator-cli.js status` for `configuredProfile`, `profileVerified`, `extensionVersion`, `bridgeVersion`, `lastMismatch`, `activeTab`, and pending approvals.
-3. If the user reports extension reload/profile weirdness, verify the real Chrome launch command uses `--user-data-dir=<real Chrome User Data>` and `--profile-directory=Default` before judging browser behavior.
-4. Install with `powershell -ExecutionPolicy Bypass -File install/install.ps1` after extension edits, then fully restart Chrome when background/content scripts must reload.
-5. Run targeted tests before and after live validation. Prefer the narrow suite for changed surfaces, then broaden when shared operator behavior changes.
+2. Check `codex_chrome_status` with compact detail, or `node scripts/operator-cli.js status` if the MCP tool is not active. Confirm `profileReady`, `profileVerified`, `extensionVersion`, `bridgeVersion`, `lastMismatch`, `activeTab`, `sessionTabs`, pending approvals, and emergency stop state.
+3. When tab identity matters, work against session-owned tabs with `codex_chrome_session_tabs`, `codex_chrome_claim_tab`, `codex_chrome_tab_focus`, and tab-scoped tools. Do not rely on whichever Chrome tab is active unless the task explicitly allows it.
+4. If the user reports extension reload/profile weirdness, verify the real Chrome launch command uses `--user-data-dir=<real Chrome User Data>` and `--profile-directory=Default` before judging browser behavior.
+5. Install with `powershell -ExecutionPolicy Bypass -File install/install.ps1` after extension edits. Then run `install/doctor.ps1` and, for changed extension files, confirm the installed unpacked copy under `%LOCALAPPDATA%\CodexChromeOperator\extension-unpacked` contains the expected patch.
+6. Ask the user to reload the unpacked Chrome extension after install. Re-check `codex_chrome_status` for a fresh connection and version match before live testing.
+7. Run targeted tests before and after live validation. Prefer the narrow suite for changed surfaces, then broaden when shared operator behavior changes.
 
 Use live browser evidence as a diagnostic, not only as a demo. When a live task fails, classify the failure layer before patching:
 
@@ -63,6 +66,17 @@ editing repo code:
 status/readiness -> open or observe target -> verify target -> draft action -> ask if final/public/high-impact -> execute -> re-observe -> report evidence
 ```
 
+## Current MCP Surface
+
+Use the MCP surface by intent, and keep payloads small:
+
+- Status and policy: `codex_chrome_status`, `codex_chrome_approvals_list`, policy tools when exposed.
+- Session tabs: `codex_chrome_session_tabs`, `codex_chrome_claim_tab`, `codex_chrome_tab_focus`, `codex_chrome_new_tab`, `codex_chrome_finalize_tabs`, `codex_chrome_name_session`. Use tab-scoped tools for live smoke so grouped or background tabs do not confuse the run.
+- Observation: `codex_chrome_tab_observe`, `codex_chrome_tab_read_page`, `codex_chrome_visual_observe`. Prefer `tiny` or `medium`, `summaryMaxChars`, `maxActionableHandles`, and targeted `read_page` filters.
+- Narrow actions: prefer `codex_chrome_tab_locator` for selector or text-based resolve/action in session tabs. Use direct handle tools (`codex_chrome_fill`, `codex_chrome_type`, `codex_chrome_clear`, `codex_chrome_click`, `codex_chrome_focus`, `codex_chrome_check`) when a fresh handle is already proven.
+- Verification: for mutating actions, use `requireVerified`, explicit `verify` conditions such as `valueEquals` or `textAppears`, `postActionSnapshot: "delta"`, and `actionTrace` labels. Report provider, verification evidence, focused element value, gates, and content script version.
+- Discovery: if a needed tool is not callable in the current context, call `tool_search` for the exact `codex_chrome_*` tool before switching to CLI or another browser layer.
+
 ## Live-Test Discipline
 
 Keep live actions low, reversible where possible, and tied to the user's stated
@@ -73,8 +87,16 @@ authorization before the final click or submit.
 Prefer this observation loop:
 
 ```powershell
+codex_chrome_status detail=compact
+codex_chrome_tab_locator action=resolve selector=<stable selector> tabId=<session tab>
+codex_chrome_tab_locator action=clear requireVerified=true verify=valueEquals:"" tabId=<session tab>
+codex_chrome_tab_locator action=type textValue=<text> requireVerified=true verify=valueEquals:<text> actionTrace=true postActionSnapshot=delta tabId=<session tab>
+```
+
+Use the CLI equivalents only when the MCP tool is unavailable:
+
+```powershell
 node scripts\operator-cli.js status
-node scripts\operator-cli.js navigate <url>
 node scripts\operator-cli.js observe <origin>
 node scripts\operator-cli.js visual-observe <origin> --max-bytes 2000000
 ```
@@ -84,6 +106,14 @@ attributes, target summary, and layout evidence. Never pass an empty or guessed
 handle to a mutation command. For site-specific React/contenteditable issues,
 read `references/live-test-findings.md` instead of loading those notes by
 default.
+
+For a reload/live smoke after extension edits, prove the whole path:
+
+- `codex_chrome_status` shows connected, version match, no pending approvals, and the intended session-owned tab.
+- Fresh resolve finds the target without stale handles. On large commerce sites, confirm the target is not falsely `occluded:true`.
+- `clear`, `fill`, and `type` use `requireVerified` and explicit value checks. Include a Unicode/Turkish sample when input fidelity is the question.
+- If `type` via `chrome.debugger.Input.insertText` returns `TEXT_INSERTION_NOT_OBSERVED`, classify it as debugger/input fidelity. The current operator should attempt a bounded runtime-verified fallback; if fallback also fails, keep the action failed and patch with a regression test.
+- Final cleanup leaves reversible fields empty unless the user wanted otherwise.
 
 ## Optimization Rules
 
@@ -96,6 +126,11 @@ Patch for measured failure modes:
 - Debugger target matching should support stable app attributes from both top-level target fields and content summaries such as `target.data.testid`; label and `bbox` should still narrow repeated controls.
 - Contenteditable/React typing should update application state, not only DOM text. If DOM text appears but a submit button stays disabled, treat it as an input-event fidelity bug.
 - Preflight should not discard explicit target summaries supplied by the caller.
+- Occlusion checks should use multiple hit-test points and treat wrapper or ancestor hits that contain the target as reachable, not as blockers.
+- Debugger runtime verification is stronger than unchanged post-action snapshots for input actions. Preserve `text-value` and `text-inserted` verification evidence instead of overwriting it with inconclusive snapshot deltas.
+- `targetContract` data should improve recovery without bloating observations. Keep contracts compact and prefer stable attributes over repeated full DOM dumps.
+- DOM quiet waits are release-gate material for dynamic pages; keep `smoke:dynamic-dom` in broad verification when page wait behavior changes.
+- Fill/check/select/type hardening should remain fail-closed: a mutation is not successful unless the runtime can verify the requested value or state.
 
 ## Verification Set
 
@@ -105,13 +140,15 @@ scripts:
 ```powershell
 npm test
 npm run check
+npm run smoke:dynamic-dom
+npm run release:m1
 ```
 
 For narrow investigations, run the smallest relevant `node --test` slice, then
 broaden before claiming the operator is improved:
 
 ```powershell
-node --test tests\contentScript.test.js tests\extensionSurface.test.js tests\codexAdapter.test.js tests\pageReader.test.js tests\sessionTabs.test.js
+node --test tests\contentScript.test.js tests\extensionSurface.test.js tests\debuggerActions.test.js
 ```
 
 After install/restart, re-check:
@@ -119,6 +156,7 @@ After install/restart, re-check:
 - `extensionVersion` equals `bridgeVersion`
 - `lastMismatch` is `null`
 - `profileVerified` is `true`
+- `contentScriptVersion` in live observations matches the expected package version
 - Chrome command line uses configured real profile
 - The live page has no unexpected gates
 

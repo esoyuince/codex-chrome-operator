@@ -1678,12 +1678,23 @@ class SessionManager {
     return { ...merged };
   }
 
-  updateSessionTabs(tabs = []) {
+  updateSessionTabs(tabs = [], options = {}) {
     if (!Array.isArray(tabs)) {
       return this.listSessionTabRecords();
     }
+    const seenTabIds = new Set();
     for (const tab of tabs) {
-      this.updateSessionTab(tab, tab && tab.ownership);
+      const updated = this.updateSessionTab(tab, tab && tab.ownership);
+      if (updated && Number.isInteger(updated.id)) {
+        seenTabIds.add(updated.id);
+      }
+    }
+    if (options.pruneMissing) {
+      for (const tabId of [...this.sessionTabs.keys()]) {
+        if (!seenTabIds.has(tabId)) {
+          this.sessionTabs.delete(tabId);
+        }
+      }
     }
     return this.listSessionTabRecords();
   }
@@ -1717,7 +1728,7 @@ class SessionManager {
     }
     const extensionResponse = await this.enqueueExtensionCommand('operator.tabs.listSession', {});
     if (extensionResponse.ok) {
-      this.updateSessionTabs(extensionResponse.result && extensionResponse.result.tabs);
+      this.updateSessionTabs(extensionResponse.result && extensionResponse.result.tabs, { pruneMissing: true });
       tab = this.sessionTabs.get(tabId) || tab;
     }
     return tab;
@@ -1787,7 +1798,7 @@ class SessionManager {
       if (!extensionResponse.ok) {
         return rpcError(id, extensionResponse.error);
       }
-      const tabs = this.updateSessionTabs(extensionResponse.result && extensionResponse.result.tabs);
+      const tabs = this.updateSessionTabs(extensionResponse.result && extensionResponse.result.tabs, { pruneMissing: true });
       return rpcOk(id, { tabs });
     }
 
@@ -1807,6 +1818,12 @@ class SessionManager {
       ];
       for (const tabId of removedTabIds) {
         if (Number.isInteger(tabId)) {
+          this.sessionTabs.delete(tabId);
+        }
+      }
+      const keepTabIds = new Set(keep.keep.map((entry) => entry.tabId));
+      for (const tabId of [...this.sessionTabs.keys()]) {
+        if (!keepTabIds.has(tabId)) {
           this.sessionTabs.delete(tabId);
         }
       }

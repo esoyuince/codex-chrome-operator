@@ -5,6 +5,7 @@ const path = require('node:path');
 const {
   buildReleaseChecks,
   extractCleanSmokeEvidence,
+  extractDynamicDomSmokeEvidence,
   runReleaseCheck,
   tailText
 } = require('../scripts/m1-release-check');
@@ -15,6 +16,7 @@ test('buildReleaseChecks includes M1 release gates and keeps clean smoke opt-in'
     'unit-tests',
     'syntax-check',
     'mcp-smoke',
+    'dynamic-dom-smoke',
     'daemon-doctor',
     'install-doctor-no-install-check'
   ]);
@@ -22,6 +24,7 @@ test('buildReleaseChecks includes M1 release gates and keeps clean smoke opt-in'
     'unit-tests',
     'syntax-check',
     'mcp-smoke',
+    'dynamic-dom-smoke',
     'daemon-doctor',
     'install-doctor-no-install-check',
     'clean-smoke'
@@ -32,6 +35,7 @@ test('buildReleaseChecks includes M1 release gates and keeps clean smoke opt-in'
   assert.equal(checks[2].command, process.execPath);
   assert.equal(checks[0].args[0], '--test');
   assert.equal(checks[2].args[0], path.join('scripts', 'mcp-smoke.js'));
+  assert.equal(checks[3].args[0], path.join('scripts', 'dynamic-dom-smoke.js'));
   assert.ok(!checks.some((check) => /npm(?:\.cmd)?$/i.test(check.command)));
 });
 
@@ -64,16 +68,17 @@ test('runReleaseCheck executes every gate and reports failures as JSON-safe data
     'unit-tests',
     'syntax-check',
     'mcp-smoke',
+    'dynamic-dom-smoke',
     'daemon-doctor',
     'install-doctor-no-install-check',
     'clean-smoke'
   ]);
   assert.equal(report.ok, false);
   assert.equal(report.failedChecks, 1);
-  assert.equal(report.checks.length, 6);
-  assert.equal(report.checks[3].name, 'daemon-doctor');
-  assert.equal(report.checks[3].ok, false);
-  assert.equal(report.checks[3].stderrTail, 'doctor failed');
+  assert.equal(report.checks.length, 7);
+  assert.equal(report.checks[4].name, 'daemon-doctor');
+  assert.equal(report.checks[4].ok, false);
+  assert.equal(report.checks[4].stderrTail, 'doctor failed');
 });
 
 test('extractCleanSmokeEvidence summarizes live browser proof without full daemon state', () => {
@@ -262,6 +267,49 @@ test('runReleaseCheck attaches compact MCP contract evidence when the MCP smoke 
   });
   assert.equal(Object.hasOwn(mcpSmoke.evidence, 'tools'), false);
   assert.equal(Object.hasOwn(mcpSmoke.evidence, 'requiredTools'), false);
+});
+
+test('runReleaseCheck attaches compact dynamic DOM evidence when the smoke gate succeeds', () => {
+  const dynamicDomOutput = {
+    ok: true,
+    smoke: 'dynamic-dom',
+    quietMs: 120,
+    elapsedMs: 200,
+    mutationBursts: 2,
+    lastMutationAtMs: 80,
+    settledAfterLastMutationMs: 120,
+    finalState: {
+      type: 'domQuiet',
+      quietForMs: 120,
+      mutationCounter: 2
+    }
+  };
+  const report = runReleaseCheck({
+    runner: (check) => ({
+      status: 0,
+      stdout: check.name === 'dynamic-dom-smoke'
+        ? JSON.stringify(dynamicDomOutput)
+        : `${check.name} ok`,
+      stderr: ''
+    })
+  });
+
+  const dynamicDomSmoke = report.checks.find((check) => check.name === 'dynamic-dom-smoke');
+  assert.equal(dynamicDomSmoke.ok, true);
+  assert.deepEqual(dynamicDomSmoke.evidence, {
+    ok: true,
+    quietMs: 120,
+    elapsedMs: 200,
+    mutationBursts: 2,
+    lastMutationAtMs: 80,
+    settledAfterLastMutationMs: 120,
+    finalQuietForMs: 120,
+    finalMutationCounter: 2
+  });
+});
+
+test('extractDynamicDomSmokeEvidence ignores invalid JSON output', () => {
+  assert.equal(extractDynamicDomSmokeEvidence('not json'), null);
 });
 
 test('runReleaseCheck fails closed when a process exits without a numeric status', () => {

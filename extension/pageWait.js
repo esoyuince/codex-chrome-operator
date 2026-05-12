@@ -41,6 +41,50 @@
     return typeof value === 'string' && value.trim().length > 0;
   }
 
+  function firstFiniteNumber(...values) {
+    for (const value of values) {
+      const number = Number(value);
+      if (Number.isFinite(number)) {
+        return number;
+      }
+    }
+    return null;
+  }
+
+  function domQuietMs(condition) {
+    return firstFiniteNumber(condition.quietMs, condition.ms, condition.value, 500);
+  }
+
+  function mutationCounterValue(context) {
+    if (context && typeof context.mutationCounter === 'function') {
+      return firstFiniteNumber(context.mutationCounter(), 0);
+    }
+    return firstFiniteNumber(
+      context && context.mutationCounter,
+      context && context.window && context.window.__codexMutationCounter,
+      0
+    );
+  }
+
+  function updateDomQuietRuntime(condition, context, currentTime, previous) {
+    if (!condition || condition.type !== 'domQuiet') {
+      return previous;
+    }
+    const counter = mutationCounterValue(context);
+    if (!previous || previous.mutationCounter !== counter) {
+      return {
+        mutationCounter: counter,
+        quietStartedAt: currentTime,
+        quietForMs: 0
+      };
+    }
+    return {
+      mutationCounter: counter,
+      quietStartedAt: previous.quietStartedAt,
+      quietForMs: Math.max(0, currentTime - previous.quietStartedAt)
+    };
+  }
+
   function evaluateWaitCondition(condition, context) {
     if (!condition || typeof condition !== 'object' || typeof condition.type !== 'string') {
       return { satisfied: false, valid: false, reason: 'condition.type is required' };
@@ -102,6 +146,33 @@
       };
     }
 
+    if (type === 'domQuiet') {
+      const quietMs = domQuietMs(condition);
+      if (quietMs === null || quietMs < 0) {
+        return {
+          type,
+          valid: false,
+          satisfied: false,
+          reason: 'condition.quietMs must be a non-negative number'
+        };
+      }
+      const runtime = context.waitRuntime && context.waitRuntime.domQuiet
+        ? context.waitRuntime.domQuiet
+        : null;
+      const quietForMs = runtime ? runtime.quietForMs : 0;
+      const mutationCounter = runtime
+        ? runtime.mutationCounter
+        : mutationCounterValue(context);
+      return {
+        type,
+        valid: true,
+        satisfied: quietForMs >= quietMs,
+        quietMs,
+        quietForMs,
+        mutationCounter
+      };
+    }
+
     if ([
       'elementVisible',
       'elementGone',
@@ -138,10 +209,22 @@
     const pollInterval = Number.isFinite(pollIntervalMs) && pollIntervalMs > 0
       ? pollIntervalMs
       : DEFAULT_POLL_INTERVAL_MS;
+    let domQuietRuntime = null;
 
     while (true) {
-      const state = evaluateWaitCondition(condition, context);
-      const elapsedMs = Math.max(0, now() - started);
+      const currentTime = now();
+      const elapsedMs = Math.max(0, currentTime - started);
+      domQuietRuntime = updateDomQuietRuntime(condition, context, currentTime, domQuietRuntime);
+      const runtimeContext = domQuietRuntime
+        ? {
+          ...context,
+          waitRuntime: {
+            ...(context.waitRuntime || {}),
+            domQuiet: domQuietRuntime
+          }
+        }
+        : context;
+      const state = evaluateWaitCondition(condition, runtimeContext);
       if (!state.valid) {
         return {
           ok: false,

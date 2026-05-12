@@ -15,6 +15,8 @@ function element(tagName, attrs = {}, children = []) {
     checked: Boolean(attrs.checked),
     disabled: Boolean(attrs.disabled),
     multiple: Boolean(attrs.multiple),
+    scrollLeft: Number(attrs.scrollLeft || 0),
+    scrollTop: Number(attrs.scrollTop || 0),
     dataset: {
       ...(attrs.dataset || {}),
       ...Object.fromEntries(Object.entries(attrs)
@@ -89,6 +91,13 @@ function element(tagName, attrs = {}, children = []) {
       if (typeof attrs.onClick === 'function') {
         attrs.onClick(this);
       }
+    },
+    scrollIntoView() {
+      this.scrolledIntoView = true;
+    },
+    scrollBy(deltaX = 0, deltaY = 0) {
+      this.scrollLeft += deltaX;
+      this.scrollTop += deltaY;
     },
     dispatchEvent(event) {
       this.events.push(event.type);
@@ -178,8 +187,51 @@ function selectorMatchesElement(selector, node) {
   if (selector === '[role="link"]') {
     return node.getAttribute('role') === 'link';
   }
+  if (selector === '[role="checkbox"]') {
+    return node.getAttribute('role') === 'checkbox';
+  }
+  if (selector === '[role="radio"]') {
+    return node.getAttribute('role') === 'radio';
+  }
+  if (selector === '[role="switch"]') {
+    return node.getAttribute('role') === 'switch';
+  }
+  if (selector === '[role="textbox"]') {
+    return node.getAttribute('role') === 'textbox';
+  }
+  if (selector === '[role="combobox"]') {
+    return node.getAttribute('role') === 'combobox';
+  }
+  if (selector === '[role="listbox"]') {
+    return node.getAttribute('role') === 'listbox';
+  }
+  if (selector === '[role="option"]') {
+    return node.getAttribute('role') === 'option';
+  }
+  if (selector === '[role="menuitem"]') {
+    return node.getAttribute('role') === 'menuitem';
+  }
+  if (selector === '[role="tab"]') {
+    return node.getAttribute('role') === 'tab';
+  }
   if (selector === '[contenteditable="true"]') {
     return node.getAttribute('contenteditable') === 'true';
+  }
+  if (selector === '[contenteditable="plaintext-only"]') {
+    return node.getAttribute('contenteditable') === 'plaintext-only';
+  }
+  if (selector === '[aria-checked]') {
+    return node.getAttribute('aria-checked') !== null;
+  }
+  if (selector === '[aria-selected]') {
+    return node.getAttribute('aria-selected') !== null;
+  }
+  if (selector === '[aria-expanded]') {
+    return node.getAttribute('aria-expanded') !== null;
+  }
+  if (selector === '[tabindex]:not([tabindex="-1"])') {
+    const tabindex = node.getAttribute('tabindex');
+    return tabindex !== null && tabindex !== '-1';
   }
   if (selector === '[data-visual-card="product"]') {
     return node.getAttribute('data-visual-card') === 'product';
@@ -453,6 +505,97 @@ test('content actions can emit compact action trace cues without screenshots', a
   assert.ok(content.documentElement.children.some((node) => node.id === 'codex-operator-action-trace'));
 });
 
+test('content scroll action scrolls the resolved element when a handle is present', async () => {
+  const pane = element('div', {
+    id: 'results-pane',
+    role: 'region',
+    'aria-label': 'Results',
+    tabindex: '0'
+  });
+  const root = element('main', {}, [pane]);
+  const content = loadContentScript(root);
+  const observed = await content.send({
+    type: 'content.observe',
+    mode: 'medium',
+    maxActionableHandles: 5
+  });
+  const handle = observed.elements.find((entry) => entry.id === 'results-pane').handle;
+
+  const scrolled = await content.send({
+    type: 'content.action',
+    action: 'scroll',
+    handle,
+    deltaY: 180
+  });
+
+  assert.equal(scrolled.ok, true);
+  assert.equal(scrolled.result.action, 'scrolled');
+  assert.equal(scrolled.result.scrollTop, 180);
+  assert.equal(scrolled.result.handle, handle);
+  assert.equal(pane.scrolledIntoView, true);
+});
+
+test('content observe includes ARIA and rich editable controls as actionable elements', async () => {
+  const root = element('main', {}, [
+    element('div', {
+      id: 'email-alerts',
+      role: 'switch',
+      'aria-label': 'Email alerts',
+      'aria-checked': 'false'
+    }),
+    element('div', {
+      id: 'plain-editor',
+      contenteditable: 'plaintext-only',
+      text: 'Draft'
+    }),
+    element('div', {
+      id: 'keyboard-panel',
+      tabindex: '0',
+      'aria-label': 'Keyboard panel'
+    })
+  ]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    mode: 'medium',
+    maxActionableHandles: 10
+  });
+
+  assert.ok(observed.elements.some((entry) => entry.id === 'email-alerts' && entry.role === 'switch'));
+  assert.ok(observed.elements.some((entry) => entry.id === 'plain-editor'));
+  assert.ok(observed.elements.some((entry) => entry.id === 'keyboard-panel'));
+});
+
+test('content observe attaches target contracts to actionable summaries', async () => {
+  const root = element('main', {}, [
+    element('button', {
+      id: 'save-settings',
+      type: 'button',
+      'data-testid': 'save-button',
+      'aria-label': 'Save settings',
+      text: 'Save'
+    })
+  ]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    mode: 'medium'
+  });
+  const button = observed.elements.find((entry) => entry.id === 'save-settings');
+
+  assert.ok(button.targetContract);
+  assert.equal(button.targetContract.version, 1);
+  assert.equal(button.targetContract.handle, button.handle);
+  assert.equal(button.targetContract.tag, 'button');
+  assert.equal(button.targetContract.role, 'button');
+  assert.equal(button.targetContract.testid, 'save-button');
+  assert.equal(button.targetContract.accessibleName, 'Save settings');
+  assert.deepEqual(button.targetContract.bbox, button.bbox);
+  assert.equal(button.targetContract.context.url, 'https://example.com/form');
+});
+
 test('content script tolerates duplicate injection without duplicate listener registration', async () => {
   const root = element('main', {}, [
     element('button', { text: 'Save draft' })
@@ -662,6 +805,59 @@ test('content observe includes controls from open shadow roots and same-origin i
   assert.ok(observed.elements.some((entry) => entry.label === 'Frame submit'));
   assert.ok(observed.uiGraph.nodes.some((node) => node.name === 'Shadow save'));
   assert.ok(observed.uiGraph.nodes.some((node) => node.name === 'Frame submit'));
+});
+
+test('content observe does not mark a control occluded when alternate hit-test points reach it', async () => {
+  const searchInput = element('input', {
+    type: 'search',
+    placeholder: 'Search products',
+    'data-testid': 'search-bar-input',
+    'aria-label': 'Site search'
+  });
+  searchInput.getBoundingClientRect = () => ({ x: 100, y: 40, width: 300, height: 44 });
+  const centerDecoration = element('div', { text: 'visual search decoration' });
+  centerDecoration.getBoundingClientRect = () => ({ x: 225, y: 50, width: 50, height: 24 });
+  const root = element('main', {}, [searchInput, centerDecoration]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    includeAx: true,
+    mode: 'medium'
+  });
+  const input = observed.elements.find((entry) => entry.data && entry.data.testid === 'search-bar-input');
+  const node = observed.uiGraph.nodes.find((entry) => entry.name === 'Site search');
+
+  assert.notEqual(input.occluded, true);
+  assert.notEqual(node.states.occluded, true);
+  assert.equal(node.evidence.includes('hit-test-occluded'), false);
+});
+
+test('content observe does not mark a control occluded when hit testing reaches its wrapper', async () => {
+  const searchInput = element('input', {
+    type: 'search',
+    placeholder: 'Search products',
+    'data-testid': 'search-bar-input',
+    'aria-label': 'Site search'
+  });
+  searchInput.getBoundingClientRect = () => ({ x: 100, y: 40, width: 300, height: 44 });
+  const searchShell = element('div', { text: 'Search shell' });
+  searchShell.getBoundingClientRect = () => ({ x: 100, y: 40, width: 300, height: 44 });
+  searchShell.contains = (target) => target === searchInput;
+  const root = element('main', {}, [searchInput, searchShell]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    includeAx: true,
+    mode: 'medium'
+  });
+  const input = observed.elements.find((entry) => entry.data && entry.data.testid === 'search-bar-input');
+  const node = observed.uiGraph.nodes.find((entry) => entry.name === 'Site search');
+
+  assert.notEqual(input.occluded, true);
+  assert.notEqual(node.states.occluded, true);
+  assert.equal(node.evidence.includes('hit-test-occluded'), false);
 });
 
 test('content observe marks UI graph nodes occluded when hit testing finds an overlay', async () => {

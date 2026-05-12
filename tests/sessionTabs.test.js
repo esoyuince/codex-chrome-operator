@@ -530,6 +530,94 @@ test('finalize removes closed and released tabs from daemon session state', asyn
   );
 });
 
+test('listSession prunes daemon session tabs missing from extension inventory', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(11, {
+    id: 11,
+    title: 'Kept',
+    url: 'https://example.com/kept',
+    ownership: 'agent',
+    finalizedStatus: null
+  });
+  session.sessionTabs.set(12, {
+    id: 12,
+    title: 'Gone',
+    url: 'https://example.com/gone',
+    ownership: 'agent',
+    finalizedStatus: null
+  });
+  session.enqueueExtensionCommand = async (method) => {
+    assert.equal(method, 'operator.tabs.listSession');
+    return {
+      ok: true,
+      result: {
+        tabs: [{
+          id: 11,
+          title: 'Kept',
+          url: 'https://example.com/kept',
+          ownership: 'agent'
+        }]
+      }
+    };
+  };
+
+  const listed = await session.handleRpc({
+    id: 'list-session',
+    method: 'operator.tabs.listSession',
+    params: {}
+  });
+
+  assert.equal(listed.ok, true);
+  assert.deepEqual(
+    session.status({ detail: 'compact' }).sessionTabs.map((tab) => tab.id),
+    [11]
+  );
+});
+
+test('finalize removes non-kept daemon session tabs even when extension omits them', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(11, {
+    id: 11,
+    title: 'Kept',
+    url: 'https://example.com/kept',
+    ownership: 'agent',
+    finalizedStatus: null
+  });
+  session.sessionTabs.set(12, {
+    id: 12,
+    title: 'Gone',
+    url: 'https://example.com/gone',
+    ownership: 'agent',
+    finalizedStatus: null
+  });
+  session.enqueueExtensionCommand = async (method) => {
+    assert.equal(method, 'operator.tabs.finalize');
+    return {
+      ok: true,
+      result: {
+        kept: [],
+        closed: [],
+        released: []
+      }
+    };
+  };
+
+  const finalized = await session.handleRpc({
+    id: 'finalize',
+    method: 'operator.tabs.finalize',
+    params: { keep: [{ tabId: 11, status: 'handoff' }] }
+  });
+
+  assert.equal(finalized.ok, true);
+  assert.deepEqual(
+    session.status({ detail: 'compact' }).sessionTabs.map((tab) => ({
+      id: tab.id,
+      finalizedStatus: tab.finalizedStatus
+    })),
+    [{ id: 11, finalizedStatus: 'handoff' }]
+  );
+});
+
 test('guarded CDP commands require session-owned tabs and origin readiness', async () => {
   const session = makeSession();
   const calls = [];

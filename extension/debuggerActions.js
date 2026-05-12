@@ -103,6 +103,31 @@
   }
 
   function runtimeActionExecutor(payload) {
+    const ACTIONABLE_SELECTOR = [
+      'a',
+      'button',
+      'input',
+      'textarea',
+      'select',
+      '[role="button"]',
+      '[role="link"]',
+      '[role="checkbox"]',
+      '[role="radio"]',
+      '[role="switch"]',
+      '[role="textbox"]',
+      '[role="combobox"]',
+      '[role="listbox"]',
+      '[role="option"]',
+      '[role="menuitem"]',
+      '[role="tab"]',
+      '[contenteditable="true"]',
+      '[contenteditable="plaintext-only"]',
+      '[aria-checked]',
+      '[aria-selected]',
+      '[aria-expanded]',
+      '[tabindex]:not([tabindex="-1"])'
+    ].join(',');
+
     function isVisible(element) {
       const style = window.getComputedStyle(element);
       const rect = element.getBoundingClientRect();
@@ -244,6 +269,14 @@
       return '';
     }
 
+    function targetContract(target) {
+      if (!target || typeof target !== 'object') {
+        return null;
+      }
+      const contract = target.targetContract || target.contract || null;
+      return contract && typeof contract === 'object' ? contract : null;
+    }
+
     function hasTargetValue(value) {
       return value !== undefined && value !== null && String(value) !== '';
     }
@@ -288,6 +321,163 @@
         x: box.x + box.width / 2,
         y: box.y + box.height / 2
       };
+    }
+
+    function clampPointerPoint(point, box) {
+      const viewportWidth = Number(window.innerWidth);
+      const viewportHeight = Number(window.innerHeight);
+      const maxX = Math.max(1, (Number.isFinite(viewportWidth) && viewportWidth > 0
+        ? viewportWidth
+        : box.x + box.width) - 1);
+      const maxY = Math.max(1, (Number.isFinite(viewportHeight) && viewportHeight > 0
+        ? viewportHeight
+        : box.y + box.height) - 1);
+      return {
+        x: Math.max(1, Math.min(maxX, point.x)),
+        y: Math.max(1, Math.min(maxY, point.y))
+      };
+    }
+
+    function uniquePointerPoints(points, box) {
+      const seen = new Set();
+      const unique = [];
+      for (const rawPoint of points) {
+        const point = clampPointerPoint(rawPoint, box);
+        const key = `${Math.round(point.x * 100) / 100}:${Math.round(point.y * 100) / 100}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          unique.push(point);
+        }
+      }
+      return unique;
+    }
+
+    function pointerPointCandidates(box) {
+      const center = boxCenter(box);
+      const xInset = Math.min(12, Math.max(1, box.width * 0.25));
+      const yInset = Math.min(12, Math.max(1, box.height * 0.25));
+      return uniquePointerPoints([
+        center,
+        { x: box.x + xInset, y: center.y },
+        { x: box.x + box.width - xInset, y: center.y },
+        { x: center.x, y: box.y + yInset },
+        { x: center.x, y: box.y + box.height - yInset }
+      ], box);
+    }
+
+    function isElementDisabled(element) {
+      return Boolean(element && element.disabled) ||
+        String(attr(element, 'aria-disabled')).toLowerCase() === 'true';
+    }
+
+    function elementReceivesPointerEvents(element, hit) {
+      return hit === element ||
+        Boolean(element && typeof element.contains === 'function' && element.contains(hit));
+    }
+
+    function elementDescriptor(element) {
+      if (!element) {
+        return null;
+      }
+      return {
+        tag: elementTagName(element),
+        id: element.id || '',
+        role: implicitRole(element),
+        label: elementLabel(element).slice(0, 80),
+        testid: elementTestId(element)
+      };
+    }
+
+    function targetSnapshotForElement(element, box) {
+      return {
+        ...(elementDescriptor(element) || {}),
+        bbox: {
+          x: box.x,
+          y: box.y,
+          width: box.width,
+          height: box.height
+        }
+      };
+    }
+
+    function actionabilityFailure(reason, message, extra) {
+      return {
+        ok: false,
+        error: {
+          code: 'ACTIONABILITY_FAILED',
+          message,
+          reason,
+          freshObservationRequired: reason === 'TARGET_OCCLUDED',
+          ...(extra || {})
+        }
+      };
+    }
+
+    function targetReportsCurrentOcclusion(target, element) {
+      return Boolean(
+        target &&
+        target.occluded === true &&
+        layoutContextMatches(target) &&
+        elementMatchesTargetBox(target, element)
+      );
+    }
+
+    function resolvePointerActionability(element, box, target) {
+      const candidates = pointerPointCandidates(box);
+      const center = candidates[0] || boxCenter(box);
+      if (targetReportsCurrentOcclusion(target, element)) {
+        return actionabilityFailure(
+          'TARGET_OCCLUDED',
+          'The current observation marked the target as occluded.',
+          {
+            blocker: null,
+            point: center,
+            observedOccluded: true
+          }
+        );
+      }
+      if (typeof document.elementFromPoint !== 'function') {
+        return {
+          ok: true,
+          point: center,
+          actionability: {
+            visible: true,
+            enabled: true,
+            receivesEvents: null,
+            reason: 'ELEMENT_FROM_POINT_UNAVAILABLE'
+          }
+        };
+      }
+
+      let firstBlocked = null;
+      for (let index = 0; index < candidates.length; index += 1) {
+        const point = candidates[index];
+        const hit = document.elementFromPoint(point.x, point.y);
+        if (elementReceivesPointerEvents(element, hit)) {
+          return {
+            ok: true,
+            point,
+            actionability: {
+              visible: true,
+              enabled: true,
+              receivesEvents: true,
+              pointStrategy: index === 0 ? 'center' : 'alternate'
+            }
+          };
+        }
+        if (!firstBlocked) {
+          firstBlocked = { point, hit };
+        }
+      }
+
+      return actionabilityFailure(
+        'TARGET_OCCLUDED',
+        'The target element is covered by another element at the pointer location.',
+        {
+          blocker: elementDescriptor(firstBlocked && firstBlocked.hit),
+          point: firstBlocked ? firstBlocked.point : center
+        }
+      );
     }
 
     function elementMatchesTargetBox(target, element) {
@@ -416,9 +606,7 @@
     }
 
     function collectInteractiveElements() {
-      return [...document.querySelectorAll(
-        'a,button,input,textarea,select,[role="button"],[role="link"],[contenteditable="true"]'
-      )].filter(isVisible).slice(0, 200);
+      return [...document.querySelectorAll(ACTIONABLE_SELECTOR)].filter(isVisible).slice(0, 200);
     }
 
     function collectVisualElements() {
@@ -496,10 +684,111 @@
       return Boolean(target.label) && String(target.label) === elementLabel(element);
     }
 
+    function contractValue(contract, key) {
+      if (!contract || typeof contract !== 'object') {
+        return '';
+      }
+      if (contract[key] !== undefined && contract[key] !== null && contract[key] !== '') {
+        return contract[key];
+      }
+      if (key === 'testid') {
+        return nestedDataValue(contract, 'testid', 'testId', 'testID', 'data-testid', 'data-test-id');
+      }
+      return '';
+    }
+
+    function sameContractValue(expected, actual) {
+      return hasTargetValue(expected) && String(expected) === String(actual || '');
+    }
+
+    function scoreTargetContractCandidate(element, contract) {
+      if (!element || !contract) {
+        return 0;
+      }
+      let score = 0;
+      if (sameContractValue(contractValue(contract, 'testid'), elementTestId(element))) {
+        score += 42;
+      }
+      if (sameContractValue(contractValue(contract, 'role'), implicitRole(element))) {
+        score += 24;
+      }
+      const contractName = contractValue(contract, 'accessibleName') || contractValue(contract, 'label');
+      if (sameContractValue(contractName, elementLabel(element))) {
+        score += 24;
+      }
+      if (sameContractValue(contractValue(contract, 'id'), element.id || '')) {
+        score += 18;
+      }
+      if (sameContractValue(contractValue(contract, 'name'), attr(element, 'name'))) {
+        score += 14;
+      }
+      if (sameContractValue(contractValue(contract, 'type'), normalizedControlType(element))) {
+        score += 8;
+      }
+      if (sameContractValue(contractValue(contract, 'placeholder'), attr(element, 'placeholder'))) {
+        score += 14;
+      }
+      if (sameContractValue(contractValue(contract, 'href'), normalizedHref(element))) {
+        score += 16;
+      }
+      if (sameContractValue(contractValue(contract, 'title'), attr(element, 'title'))) {
+        score += 10;
+      }
+      if (sameContractValue(contractValue(contract, 'productId'), attr(element, 'data-product-id'))) {
+        score += 12;
+      }
+      if (sameContractValue(contractValue(contract, 'tag'), elementTagName(element))) {
+        score += 6;
+      }
+      if (targetBox(contract) && layoutContextMatches(contract) && elementMatchesTargetBox(contract, element)) {
+        score += 8;
+      }
+      return score;
+    }
+
+    function recoverHandleFromTargetContract(elements, target) {
+      const contract = targetContract(target);
+      if (!contract) {
+        return null;
+      }
+      const scored = [];
+      for (let index = 0; index < elements.length; index += 1) {
+        const score = scoreTargetContractCandidate(elements[index], contract);
+        if (score >= 50) {
+          scored.push({ element: elements[index], index, score });
+        }
+      }
+      if (scored.length === 0) {
+        return null;
+      }
+      scored.sort((left, right) => right.score - left.score);
+      const bestScore = scored[0].score;
+      const bestMatches = scored.filter((entry) => entry.score === bestScore);
+      if (bestMatches.length === 1) {
+        return {
+          ok: true,
+          element: bestMatches[0].element,
+          index: bestMatches[0].index,
+          recovered: true,
+          recovery: {
+            strategy: 'target-contract',
+            reason: 'PAGE_STATE_CHANGED',
+            score: bestMatches[0].score
+          }
+        };
+      }
+      return staleHandle('RECOVERY_NOT_UNIQUE', {
+        matchCount: bestMatches.length,
+        strategy: 'target-contract',
+        topScores: scored.slice(0, 3).map((entry) => entry.score)
+      });
+    }
+
     function recoverHandleFromTarget(elements, target) {
       if (!target || typeof target !== 'object') {
         return null;
       }
+      const contractRecovery = recoverHandleFromTargetContract(elements, target);
       const matches = [];
       for (let index = 0; index < elements.length; index += 1) {
         if (targetMatchesElement(target, elements[index])) {
@@ -524,12 +813,15 @@
           }
         };
       }
+      if (contractRecovery && contractRecovery.ok) {
+        return contractRecovery;
+      }
       if (resolvedMatches.length > 1) {
         return staleHandle('RECOVERY_NOT_UNIQUE', {
           matchCount: resolvedMatches.length
         });
       }
-      return null;
+      return contractRecovery;
     }
 
     function resolveHandle(handle) {
@@ -581,8 +873,147 @@
       element.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    function setElementText(element, value) {
-      const text = String(value || '');
+    function clippedVerificationValue(value) {
+      const text = String(value ?? '');
+      return text.length > 160 ? `${text.slice(0, 160)}...` : text;
+    }
+
+    function actionVerificationFailure(action, reason, message, expected, actual, extra) {
+      return {
+        ok: false,
+        error: {
+          code: 'ACTION_VERIFICATION_FAILED',
+          message,
+          reason,
+          action,
+          expected: clippedVerificationValue(expected),
+          actual: clippedVerificationValue(actual),
+          ...(extra || {})
+        }
+      };
+    }
+
+    function elementTextValue(element) {
+      if ('value' in element) {
+        return String(element.value ?? '');
+      }
+      if (element.isContentEditable) {
+        return String(element.textContent ?? '');
+      }
+      return null;
+    }
+
+    function verifyElementText(element, expected, options) {
+      const action = options && options.action ? options.action : 'input';
+      const mode = options && options.mode ? options.mode : 'exact';
+      const expectedText = String(expected ?? '');
+      const actualText = elementTextValue(element);
+      if (actualText === null) {
+        return {
+          ok: false,
+          error: {
+            code: 'TARGET_NOT_EDITABLE',
+            message: 'The target element cannot report typed text.'
+          }
+        };
+      }
+      const matched = mode === 'contains'
+        ? actualText.includes(expectedText)
+        : actualText === expectedText;
+      if (!matched) {
+        return actionVerificationFailure(
+          action,
+          mode === 'contains' ? 'TEXT_INSERTION_NOT_OBSERVED' : 'TARGET_VALUE_MISMATCH',
+          mode === 'contains'
+            ? 'Inserted text was not observed on the target element.'
+            : 'The target value did not match after the action.',
+          expectedText,
+          actualText
+        );
+      }
+      return {
+        ok: true,
+        verification: {
+          type: mode === 'contains' ? 'text-inserted' : 'text-value',
+          expected: clippedVerificationValue(expectedText),
+          actual: clippedVerificationValue(actualText),
+          actualLength: actualText.length
+        }
+      };
+    }
+
+    function checkableRole(element) {
+      const role = String(implicitRole(element) || attr(element, 'role') || '').toLowerCase();
+      return ['checkbox', 'radio', 'switch'].includes(role) ? role : '';
+    }
+
+    function isAriaCheckable(element) {
+      return Boolean(checkableRole(element) || attr(element, 'aria-checked'));
+    }
+
+    function checkedState(element) {
+      if ('checked' in element) {
+        return Boolean(element.checked);
+      }
+      if (isAriaCheckable(element)) {
+        return String(attr(element, 'aria-checked')).toLowerCase() === 'true';
+      }
+      return null;
+    }
+
+    function setElementChecked(element, checked) {
+      const expected = checked !== false;
+      if ('checked' in element) {
+        element.checked = expected;
+        dispatchValueEvents(element);
+        return { ok: true, expected };
+      }
+      if (isAriaCheckable(element) && typeof element.setAttribute === 'function') {
+        element.setAttribute('aria-checked', expected ? 'true' : 'false');
+        dispatchValueEvents(element);
+        return { ok: true, expected };
+      }
+      return {
+        ok: false,
+        error: {
+          code: 'TARGET_NOT_CHECKABLE',
+          message: 'The target element cannot be checked.'
+        }
+      };
+    }
+
+    function verifyElementChecked(element, expected) {
+      const actual = checkedState(element);
+      if (actual === null) {
+        return {
+          ok: false,
+          error: {
+            code: 'TARGET_NOT_CHECKABLE',
+            message: 'The target element cannot report checked state.'
+          }
+        };
+      }
+      if (actual !== expected) {
+        return actionVerificationFailure(
+          'check',
+          'TARGET_CHECKED_MISMATCH',
+          'The target checked state did not match after the action.',
+          expected,
+          actual
+        );
+      }
+      return {
+        ok: true,
+        verification: {
+          type: 'checked-state',
+          expected,
+          actual
+        }
+      };
+    }
+
+    function setElementText(element, value, action) {
+      const text = String(value ?? '');
       element.focus();
       if ('value' in element) {
         element.value = text;
@@ -599,7 +1030,7 @@
           }
         };
       }
-      return null;
+      return verifyElementText(element, text, { action, mode: 'exact' });
     }
 
     function scrollWindow() {
@@ -614,7 +1045,7 @@
       };
     }
 
-    if (payload.action === 'scroll') {
+    if (payload.action === 'scroll' && !payload.handle) {
       return scrollWindow();
     }
 
@@ -624,7 +1055,7 @@
     }
 
     const element = resolved.element;
-    if (element.disabled) {
+    if (isElementDisabled(element)) {
       return {
         ok: false,
         error: {
@@ -637,8 +1068,8 @@
     element.scrollIntoView({ block: 'center', inline: 'center' });
 
     if (payload.action === 'resolvePointerTarget') {
-      const rect = element.getBoundingClientRect();
-      if (!rect || rect.width <= 0 || rect.height <= 0) {
+      const box = elementBox(element);
+      if (!box) {
         return {
           ok: false,
           error: {
@@ -647,15 +1078,19 @@
           }
         };
       }
-      const x = Math.max(1, Math.min((window.innerWidth || rect.right) - 1, rect.left + rect.width / 2));
-      const y = Math.max(1, Math.min((window.innerHeight || rect.bottom) - 1, rect.top + rect.height / 2));
+      const pointerTarget = resolvePointerActionability(element, box, payload.target);
+      if (!pointerTarget.ok) {
+        return pointerTarget;
+      }
       return {
         ok: true,
         result: {
           action: 'resolved-pointer-target',
           handle: payload.handle,
-          x,
-          y,
+          x: pointerTarget.point.x,
+          y: pointerTarget.point.y,
+          actionability: pointerTarget.actionability,
+          targetSnapshot: targetSnapshotForElement(element, box),
           recovered: resolved.recovered === true,
           recovery: resolved.recovery || null
         }
@@ -667,26 +1102,52 @@
       return { ok: true, result: { action: 'clicked', handle: payload.handle } };
     }
 
+    if (payload.action === 'verifyInsertedText') {
+      const verification = verifyElementText(element, payload.text ?? payload.value, {
+        action: 'type',
+        mode: 'contains'
+      });
+      if (!verification.ok) {
+        return verification;
+      }
+      return {
+        ok: true,
+        result: {
+          action: 'verified-text-inserted',
+          handle: payload.handle,
+          verification: verification.verification
+        }
+      };
+    }
+
     if (payload.action === 'fill' || payload.action === 'type') {
-      const error = setElementText(element, payload.text ?? payload.value);
-      if (error) {
-        return error;
+      const textResult = setElementText(element, payload.text ?? payload.value, payload.action);
+      if (!textResult.ok) {
+        return textResult;
       }
       return {
         ok: true,
         result: {
           action: payload.action === 'type' ? 'typed' : 'filled',
-          handle: payload.handle
+          handle: payload.handle,
+          verification: textResult.verification
         }
       };
     }
 
     if (payload.action === 'clear') {
-      const error = setElementText(element, '');
-      if (error) {
-        return error;
+      const textResult = setElementText(element, '', 'clear');
+      if (!textResult.ok) {
+        return textResult;
       }
-      return { ok: true, result: { action: 'cleared', handle: payload.handle } };
+      return {
+        ok: true,
+        result: {
+          action: 'cleared',
+          handle: payload.handle,
+          verification: textResult.verification
+        }
+      };
     }
 
     if (payload.action === 'focus') {
@@ -704,29 +1165,40 @@
           }
         };
       }
-      element.value = payload.value || '';
+      const expectedValue = String(payload.value ?? '');
+      element.value = expectedValue;
       dispatchValueEvents(element);
-      return { ok: true, result: { action: 'selected', value: element.value, handle: payload.handle } };
+      const verification = verifyElementText(element, expectedValue, { action: 'select', mode: 'exact' });
+      if (!verification.ok) {
+        return verification;
+      }
+      return {
+        ok: true,
+        result: {
+          action: 'selected',
+          value: element.value,
+          handle: payload.handle,
+          verification: verification.verification
+        }
+      };
     }
 
     if (payload.action === 'check') {
-      if (!('checked' in element)) {
-        return {
-          ok: false,
-          error: {
-            code: 'TARGET_NOT_CHECKABLE',
-            message: 'The target element cannot be checked.'
-          }
-        };
+      const checked = setElementChecked(element, payload.checked);
+      if (!checked.ok) {
+        return checked;
       }
-      element.checked = payload.checked !== false;
-      dispatchValueEvents(element);
+      const verification = verifyElementChecked(element, checked.expected);
+      if (!verification.ok) {
+        return verification;
+      }
       return {
         ok: true,
         result: {
           action: 'checked',
-          checked: Boolean(element.checked),
-          handle: payload.handle
+          checked: checked.expected,
+          handle: payload.handle,
+          verification: verification.verification
         }
       };
     }
@@ -1082,6 +1554,7 @@
         };
       }
       if (action === 'type') {
+        const text = String(params.text ?? params.value ?? '');
         const response = await sendCommand(chromeApi, target, 'Runtime.evaluate', {
           expression: buildRuntimeActionExpression({ action: 'focus', ...params }),
           awaitPromise: true,
@@ -1092,8 +1565,64 @@
           return value;
         }
         await sendCommand(chromeApi, target, 'Input.insertText', {
-          text: String(params.text ?? params.value ?? '')
+          text
         }, timeoutMs);
+        const verifyResponse = await sendCommand(chromeApi, target, 'Runtime.evaluate', {
+          expression: buildRuntimeActionExpression({ action: 'verifyInsertedText', ...params, text }),
+          awaitPromise: true,
+          returnByValue: true
+        }, timeoutMs);
+        const verified = normalizeRuntimeActionValue(
+          verifyResponse && verifyResponse.result && verifyResponse.result.value
+        );
+        if (!verified.ok) {
+          if (
+            verified.error &&
+            verified.error.code === 'ACTION_VERIFICATION_FAILED' &&
+            verified.error.reason === 'TEXT_INSERTION_NOT_OBSERVED'
+          ) {
+            const fallbackResponse = await sendCommand(chromeApi, target, 'Runtime.evaluate', {
+              expression: buildRuntimeActionExpression({ action: 'type', ...params, text }),
+              awaitPromise: true,
+              returnByValue: true
+            }, timeoutMs);
+            const fallback = normalizeRuntimeActionValue(
+              fallbackResponse && fallbackResponse.result && fallbackResponse.result.value
+            );
+            if (!fallback.ok) {
+              return {
+                ok: false,
+                error: {
+                  ...(fallback.error || {
+                    code: 'DEBUGGER_ACTION_FAILED',
+                    message: 'Runtime typing fallback failed.'
+                  }),
+                  cdpReason: verified.error.reason,
+                  cdpExpected: verified.error.expected ?? null,
+                  cdpActual: verified.error.actual ?? null
+                }
+              };
+            }
+            const fallbackResult = fallback.result || {};
+            return {
+              ok: true,
+              result: {
+                provider: `${DEBUGGER_TEXT_PROVIDER}+Runtime.evaluate`,
+                ...fallbackResult,
+                action: 'typed',
+                handle: fallbackResult.handle || params.handle,
+                input: true,
+                focus: value.result || null,
+                fallback: {
+                  provider: DEBUGGER_ACTION_PROVIDER,
+                  reason: verified.error.reason
+                },
+                verification: fallbackResult.verification || null
+              }
+            };
+          }
+          return verified;
+        }
         return {
           ok: true,
           result: {
@@ -1101,7 +1630,10 @@
             action: 'typed',
             handle: params.handle,
             input: true,
-            focus: value.result || null
+            focus: value.result || null,
+            verification: verified.result && verified.result.verification
+              ? verified.result.verification
+              : null
           }
         };
       }

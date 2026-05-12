@@ -1501,8 +1501,48 @@ function verifyBackgroundExplicitConditions(params = {}, snapshot) {
   };
 }
 
+function actionResponseRuntimeVerificationMatches(verification, params = {}) {
+  if (!verification || typeof verification !== 'object' || typeof verification.type !== 'string') {
+    return false;
+  }
+  const conditions = params.verify && Array.isArray(params.verify.oneOf)
+    ? params.verify.oneOf
+    : [];
+  if (conditions.length === 0) {
+    return true;
+  }
+  return conditions.some((condition) => {
+    if (!condition || condition.type !== 'valueEquals') {
+      return false;
+    }
+    const actual = verification.actual === undefined ? verification.expected : verification.actual;
+    return String(actual ?? '') === String(condition.value ?? '');
+  });
+}
+
+function runtimeVerificationForActionResponse(actionResponse, params = {}) {
+  const verification = actionResponse && actionResponse.result && actionResponse.result.verification;
+  if (!actionResponse || actionResponse.ok !== true || !actionResponseRuntimeVerificationMatches(verification, params)) {
+    return null;
+  }
+  const type = verification.type || 'action';
+  return {
+    status: 'succeeded',
+    expected: [`runtime ${type}`],
+    observed: [`runtime verified ${type}`],
+    evidence: [`runtime verified ${type}`]
+  };
+}
+
 function verifyBackgroundAction(actionResponse, snapshot, params = {}) {
   const explicit = verifyBackgroundExplicitConditions(params, snapshot);
+  if (explicit && explicit.status === 'succeeded') {
+    return explicit;
+  }
+  const runtimeVerified = runtimeVerificationForActionResponse(actionResponse, params);
+  if (runtimeVerified) {
+    return runtimeVerified;
+  }
   if (explicit) {
     return explicit;
   }
@@ -1629,11 +1669,22 @@ async function attachActionTraceCue(tabId, actionResponse, params = {}) {
   if (!actionResponse || actionResponse.ok !== true || params.actionTrace !== true) {
     return actionResponse;
   }
-  const target = params.target || {};
+  const actionResult = actionResponse.result || {};
+  const resolvedTarget = actionResult.targetSnapshot && typeof actionResult.targetSnapshot === 'object'
+    ? actionResult.targetSnapshot
+    : {};
+  const target = {
+    ...(params.target || {}),
+    ...resolvedTarget,
+    bbox: resolvedTarget.bbox || (params.target && params.target.bbox)
+  };
   if (!target.bbox) {
     return actionResponse;
   }
   const action = params.action || null;
+  const point = Number.isFinite(Number(actionResult.x)) && Number.isFinite(Number(actionResult.y))
+    ? { x: Number(actionResult.x), y: Number(actionResult.y) }
+    : null;
   const label = typeof params.actionTraceLabel === 'string' && params.actionTraceLabel.trim()
     ? params.actionTraceLabel.trim().slice(0, 120)
     : `${action || 'action'} ${target.label || target.tag || 'target'}`.slice(0, 120);
@@ -1662,12 +1713,16 @@ async function attachActionTraceCue(tabId, actionResponse, params = {}) {
       actionTrace: {
         action,
         label,
+        source: Object.keys(resolvedTarget).length > 0 ? 'resolved-target' : 'requested-target',
         target: {
           handle: params.handle || target.handle || null,
           tag: target.tag || null,
           label: target.label || null,
           bbox: target.bbox
         },
+        actionability: actionResult.actionability || null,
+        point,
+        recovery: actionResult.recovery || null,
         cue
       }
     }
