@@ -16,6 +16,7 @@
       label: 'one-time-code gate',
       fieldPattern: /\b(otp|one[-\s]?time|verification[-\s]?code|authenticator|2fa|mfa)\b/i,
       textPattern: /\b(otp|one[-\s]?time code|verification code|authenticator app|2fa|two[-\s]?factor|mfa)\b/i,
+      textRequiresField: true,
       recommendedUserAction: 'Enter the one-time code in Chrome.'
     },
     {
@@ -134,26 +135,27 @@
 
     for (const definition of GATE_DEFINITIONS) {
       let evidence = null;
+      const matchingField = definition.fieldPattern
+        ? fields.find((candidate) => definition.fieldPattern.test(fieldText(candidate)))
+        : null;
 
       if (
         definition.textPattern &&
         definition.textPattern.test(visibleText) &&
-        (definition.type !== 'AUTH_REQUIRED' || authFieldPresent)
+        (definition.type !== 'AUTH_REQUIRED' || authFieldPresent) &&
+        (!definition.textRequiresField || matchingField)
       ) {
         evidence = { source: 'visibleText' };
       }
 
-      if (!evidence && definition.fieldPattern) {
-        const field = fields.find((candidate) => definition.fieldPattern.test(fieldText(candidate)));
-        if (field) {
-          evidence = {
-            source: 'field',
-            tag: field.tag || null,
-            type: field.type || null,
-            name: field.name || null,
-            id: field.id || null
-          };
-        }
+      if (!evidence && matchingField) {
+        evidence = {
+          source: 'field',
+          tag: matchingField.tag || null,
+          type: matchingField.type || null,
+          name: matchingField.name || null,
+          id: matchingField.id || null
+        };
       }
 
       if (!evidence && definition.framePattern) {

@@ -642,6 +642,15 @@ test('background reads the real user-focused active tab before currentWindow fal
   assert.match(background, /window-focus-changed/);
 });
 
+test('background rejects active-tab actions when the queued tab lock no longer matches', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+
+  assert.match(background, /expectedActiveTabId/);
+  assert.match(background, /expectedTabId:\s*params\.expectedActiveTabId/);
+  assert.match(background, /TAB_MISMATCH/);
+  assert.match(background, /Active tab changed before the queued page action could dispatch/);
+});
+
 test('background fails closed when required click verification is inconclusive', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 
@@ -649,6 +658,8 @@ test('background fails closed when required click verification is inconclusive',
   assert.match(background, /ACTION_RESULT_UNVERIFIED/);
   assert.match(background, /shouldRetryPostActionVerification/);
   assert.match(background, /postActionRetryDelayMs/);
+  assert.match(background, /postActionVerifyDelayMs/);
+  assert.match(background, /articleTextAppearsInSnapshot/);
 });
 
 test('background preserves debugger runtime verification for input actions', () => {
@@ -719,6 +730,7 @@ test('background exposes browser context, download wait, session recovery, and t
   assert.match(background, /operator\.tabs\.groupRename/);
   assert.match(background, /operator\.runtime\.tab\.showTarget/);
   assert.match(background, /operator\.runtime\.tab\.indicator/);
+  assert.match(background, /runtimeLocatorAction\.js/);
   assert.match(background, /chrome\.downloads\.search/);
   assert.match(background, /chrome\.downloads\.show/);
   assert.match(background, /chrome\.sessions\.restore/);
@@ -736,6 +748,24 @@ test('background exposes browser context, download wait, session recovery, and t
   assert.match(contentScript, /codex-operator-active-indicator/);
 });
 
+test('background forwards runtime locator policy to debugger preflight', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const start = background.indexOf("if (method === 'operator.runtime.tab.locator')");
+  const end = background.indexOf("return { ok: false, error: { code: 'UNKNOWN_METHOD'", start);
+  const block = background.slice(start, end);
+  const helperStart = background.indexOf('async function dispatchRuntimeTabLocatorAction');
+  const helperEnd = background.indexOf('async function handleRuntimeCommand', helperStart);
+  const helperBlock = background.slice(helperStart, helperEnd);
+
+  assert.ok(start !== -1 && end !== -1, 'operator.runtime.tab.locator handler should be present');
+  assert.ok(helperStart !== -1 && helperEnd !== -1, 'runtime locator action helper should be present');
+  assert.match(helperBlock, /approval:\s*params\.approval/);
+  assert.match(helperBlock, /policy:\s*params\.policy/);
+  assert.match(block, /runLocatorActionWithRetry/);
+  assert.match(block, /resolveRuntimeTabLocator\(tab\.id,\s*params,\s*\{\s*includeTargetContract:\s*true\s*\}\)/);
+  assert.match(helperBlock, /preflightDebuggerAction\(\{ tab \}, action,/);
+});
+
 test('background exposes guarded CDP commands without arbitrary runtime evaluation', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
   const debuggerActions = fs.readFileSync(path.join(EXTENSION_DIR, 'debuggerActions.js'), 'utf8');
@@ -745,6 +775,7 @@ test('background exposes guarded CDP commands without arbitrary runtime evaluati
   assert.match(debuggerActions, /runCdpCommand/);
   assert.match(debuggerActions, /CDP_METHOD_NOT_ALLOWED/);
   assert.match(debuggerActions, /Page\.captureScreenshot/);
+  assert.match(debuggerActions, /Page\.handleJavaScriptDialog/);
   assert.match(debuggerActions, /Page\.getLayoutMetrics/);
   assert.match(debuggerActions, /Target\.getTargets/);
 });

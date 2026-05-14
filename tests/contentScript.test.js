@@ -65,13 +65,18 @@ function element(tagName, attrs = {}, children = []) {
       this[`on${type}`] = handler;
     },
     matches(selector) {
-      if (selector === 'input[type="password"], [autocomplete="one-time-code"]') {
-        return this.tagName === 'INPUT' && this.__attrs.type === 'password';
-      }
-      if (selector === 'input[type="file"]') {
-        return this.tagName === 'INPUT' && this.__attrs.type === 'file';
-      }
-      return false;
+      return selector.split(',').map((item) => item.trim()).some((part) => {
+        if (part === 'input[type="password"]') {
+          return this.tagName === 'INPUT' && this.__attrs.type === 'password';
+        }
+        if (part === '[autocomplete="one-time-code"]') {
+          return this.__attrs.autocomplete === 'one-time-code';
+        }
+        if (part === 'input[type="file"]') {
+          return this.tagName === 'INPUT' && this.__attrs.type === 'file';
+        }
+        return selectorMatchesElement(part, this);
+      });
     },
     querySelector(selector) {
       return flattenElements(this).find((node) => node !== this && selectorMatchesElement(selector, node)) || null;
@@ -407,6 +412,9 @@ function loadContentScript(rootElement) {
     get documentElement() {
       return documentElement;
     },
+    setActiveElement(element) {
+      context.document.activeElement = element;
+    },
     runScriptAgain() {
       vm.runInContext(fs.readFileSync(path.join(ROOT, 'extension/contentScript.js'), 'utf8'), context, {
         filename: 'extension/contentScript.js'
@@ -594,6 +602,42 @@ test('content observe attaches target contracts to actionable summaries', async 
   assert.equal(button.targetContract.accessibleName, 'Save settings');
   assert.deepEqual(button.targetContract.bbox, button.bbox);
   assert.equal(button.targetContract.context.url, 'https://example.com/form');
+});
+
+test('content observe and locator retain focused controls beyond the interactive cap', async () => {
+  const quickSearch = element('input', {
+    id: 'quick-search',
+    type: 'text',
+    placeholder: 'Search products, pages, and features...'
+  });
+  const root = element('main', {}, [
+    ...Array.from({ length: 205 }, (_, index) => element('button', {
+      id: `nav-${index}`,
+      text: `Navigation ${index}`
+    })),
+    quickSearch
+  ]);
+  const content = loadContentScript(root);
+  content.setActiveElement(quickSearch);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    mode: 'medium',
+    maxActionableHandles: 10
+  });
+  const observedQuickSearch = observed.elements.find((entry) => entry.id === 'quick-search');
+
+  assert.ok(observedQuickSearch);
+  assert.equal(observed.focusedElement.handle, observedQuickSearch.handle);
+
+  const resolved = await content.send({
+    type: 'content.resolveLocator',
+    selector: 'input',
+    action: 'resolve'
+  });
+
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.result.target.id, 'quick-search');
 });
 
 test('content script tolerates duplicate injection without duplicate listener registration', async () => {
@@ -1020,6 +1064,27 @@ test('content actions can attach post-action delta snapshots when requested', as
   assert.equal(Object.hasOwn(filled.result.postActionSnapshot, 'elements'), false);
 });
 
+test('content observe includes non-sensitive contenteditable values when requested', async () => {
+  const composer = element('div', {
+    role: 'textbox',
+    contenteditable: 'true',
+    text: 'Draft from X composer'
+  });
+  composer.isContentEditable = true;
+  const root = element('main', { text: 'Compose' }, [composer]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    includeFormValues: true,
+    maxFieldValueChars: 80,
+    maxActionableHandles: 5
+  });
+
+  const textbox = observed.elements.find((entry) => entry.role === 'textbox');
+  assert.equal(textbox.value, 'Draft from X composer');
+});
+
 test('content click reports inconclusive when post-action snapshot is unchanged', async () => {
   const button = element('button', {
     text: 'Preview'
@@ -1074,6 +1139,40 @@ test('content click verifies navigable link handoff when snapshot has not change
   assert.equal(clicked.ok, true);
   assert.equal(clicked.result.verification.status, 'succeeded');
   assert.ok(clicked.result.verification.evidence.includes('navigation target changed'));
+});
+
+test('content action verifies explicit textAppearsInArticle post-condition', async () => {
+  const article = element('article', { text: '' });
+  const timeline = element('section', { text: '' }, [article]);
+  const button = element('button', {
+    text: 'Publish',
+    onClick() {
+      article.innerText = 'MTP Live Codex Chrome Operator check';
+      article.textContent = 'MTP Live Codex Chrome Operator check';
+      timeline.innerText = 'MTP Live Codex Chrome Operator check';
+      timeline.textContent = 'MTP Live Codex Chrome Operator check';
+    }
+  });
+  const root = element('main', { text: 'Draft form' }, [button, timeline]);
+  const content = loadContentScript(root);
+  const observed = await content.send({ type: 'content.observe' });
+  const handle = observed.elements.find((entry) => entry.tag === 'button').handle;
+
+  const clicked = await content.send({
+    type: 'content.action',
+    action: 'click',
+    handle,
+    policy: { highRiskEnabled: false },
+    postActionSnapshot: 'delta',
+    verify: {
+      oneOf: [{ type: 'textAppearsInArticle', text: 'Live Codex Chrome Operator check' }]
+    }
+  });
+
+  assert.equal(clicked.ok, true);
+  assert.equal(article.textContent, 'MTP Live Codex Chrome Operator check');
+  assert.equal(clicked.result.verification.status, 'succeeded');
+  assert.ok(clicked.result.verification.evidence.includes('article text appeared: Live Codex Chrome Operator check'));
 });
 
 test('content action verifies explicit textAppears post-condition', async () => {

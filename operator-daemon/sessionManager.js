@@ -152,6 +152,21 @@ const PAGE_ACTION_KINDS = Object.freeze({
   'page.waitFor': 'wait'
 });
 
+const ACTIVE_TAB_MUTATION_METHODS = new Set([
+  'page.formFillExecute',
+  'page.uploadFile',
+  'page.prepareCart',
+  'page.click',
+  'page.type',
+  'page.fill',
+  'page.clear',
+  'page.focus',
+  'page.select',
+  'page.check',
+  'page.scroll',
+  'page.pressKey'
+]);
+
 const BATCH_ACTION_KINDS = Object.freeze({
   observe: 'observe',
   readPage: 'observe',
@@ -167,12 +182,25 @@ const BATCH_ACTION_KINDS = Object.freeze({
   waitFor: 'wait'
 });
 
+const ACTIVE_TAB_MUTATING_BATCH_ACTION_KINDS = new Set([
+  'click',
+  'type',
+  'fill',
+  'clear',
+  'focus',
+  'select',
+  'check',
+  'scroll',
+  'pressKey'
+]);
+
 const CDP_ALLOWED_METHODS = new Set([
   'DOM.scrollIntoViewIfNeeded',
   'Input.dispatchKeyEvent',
   'Input.dispatchMouseEvent',
   'Input.insertText',
   'Page.captureScreenshot',
+  'Page.handleJavaScriptDialog',
   'Page.getLayoutMetrics',
   'Target.getTargets'
 ]);
@@ -239,6 +267,7 @@ const BATCH_ACTION_FIELDS = new Set([
   'summaryMaxChars',
   'sincePageStateId',
   'postActionSnapshot',
+  'postActionVerifyDelayMs',
   'actionTrace',
   'actionTraceLabel',
   'actionTraceDurationMs',
@@ -266,6 +295,7 @@ const BATCH_ACTION_FIELD_TYPES = Object.freeze({
   summaryMaxChars: 'number',
   sincePageStateId: 'string',
   postActionSnapshot: 'string',
+  postActionVerifyDelayMs: 'number',
   actionTrace: 'boolean',
   actionTraceLabel: 'string',
   actionTraceDurationMs: 'number',
@@ -589,6 +619,23 @@ function validateCdpParamsForMethod(method, params) {
     return guardOk({ params });
   }
 
+  if (method === 'Page.handleJavaScriptDialog') {
+    const unknown = rejectUnknownCdpParams(params, new Set(['accept', 'promptText']));
+    if (unknown) {
+      return unknown;
+    }
+    if (typeof params.accept !== 'boolean') {
+      return cdpParamError('CDP Page.handleJavaScriptDialog requires boolean accept.', {
+        field: 'params.accept'
+      });
+    }
+    const promptTextError = requireStringLength(params, 'promptText', 500);
+    if (promptTextError) {
+      return promptTextError;
+    }
+    return guardOk({ params });
+  }
+
   return guardOk({ params });
 }
 
@@ -686,6 +733,38 @@ function normalizeActiveTab(tab) {
     loadingState: tab.status === 'loading' ? 'loading' : 'complete',
     updatedAt: new Date().toISOString()
   };
+}
+
+function tabOrigin(tab) {
+  return (tab && tab.origin) || originFromUrl(tab && tab.url);
+}
+
+function tabIdentitySummary(tab, source) {
+  return {
+    id: tab.id,
+    source,
+    title: tab.title || null,
+    url: tab.url || null,
+    active: tab.active === true
+  };
+}
+
+function mutatingActiveTabBatch(batch) {
+  return Boolean(
+    batch &&
+    Array.isArray(batch.childActions) &&
+    batch.childActions.some((action) => (
+      action &&
+      ACTIVE_TAB_MUTATING_BATCH_ACTION_KINDS.has(action.actionKind)
+    ))
+  );
+}
+
+function requiresActiveTabMutationGuard(method, batch) {
+  if (method === 'page.batch') {
+    return mutatingActiveTabBatch(batch);
+  }
+  return ACTIVE_TAB_MUTATION_METHODS.has(method);
 }
 
 function summarizeActiveTabForEvent(tab) {
@@ -853,6 +932,7 @@ function pickRuntimeObservationParams(params = {}) {
     'maxFieldValueChars',
     'postActionSnapshot',
     'requireVerified',
+    'postActionVerifyDelayMs',
     'actionTrace',
     'actionTraceLabel',
     'actionTraceDurationMs',
@@ -2276,9 +2356,11 @@ class SessionManager {
       return rpcError(id, boundedFullAuto.error);
     }
 
-    const extensionResponse = await this.enqueueExtensionCommand(method, commandParams);
+    const extensionResponse = RUNTIME_LOCATOR_MUTATION_METHODS[commandParams.action]
+      ? await this.enqueueExtensionCommandWithPolicy(method, commandParams)
+      : await this.enqueueExtensionCommand(method, commandParams);
     if (!extensionResponse.ok) {
-      return rpcError(id, extensionResponse.error);
+      return rpcError(id, this.attachApprovalRequest(method, { ...commandParams, origin }, extensionResponse.error));
     }
     if (method === 'operator.runtime.tab.goto') {
       const updatedTab = this.updateSessionTab(extensionResponse.result && extensionResponse.result.tab, tab.ownership);
@@ -2473,6 +2555,74 @@ class SessionManager {
       }
     }
     return this.activeTab;
+  }
+
+  knownSameOriginTabs(origin) {
+    const tabsById = new Map();
+    const addTab = (tab, source) => {
+      if (!tab || !Number.isInteger(tab.id) || tabOrigin(tab) !== origin) {
+        return;
+      }
+      const previous = tabsById.get(tab.id);
+      if (previous) {
+        previous.sources = Array.from(new Set([...previous.sources, source])).sort();
+      } else {
+        tabsById.set(tab.id, {
+          ...tabIdentitySummary(tab, source),
+          sources: [source]
+        });
+      }
+    };
+
+    addTab(this.activeTab, 'active');
+    for (const tab of this.sessionTabs.values()) {
+      addTab(tab, 'session');
+    }
+    for (const tab of this.lastUserTabInventory.values()) {
+      addTab(tab, 'user');
+    }
+    return [...tabsById.values()].sort((left, right) => left.id - right.id);
+  }
+
+  guardActiveTabMutationTarget(method, origin, batch) {
+    if (!origin || !requiresActiveTabMutationGuard(method, batch)) {
+      return guardOk();
+    }
+
+    const activeTab = this.activeTab;
+    if (!activeTab || !Number.isInteger(activeTab.id) || tabOrigin(activeTab) !== origin) {
+      return guardOk();
+    }
+
+    const sameOriginTabs = this.knownSameOriginTabs(origin);
+    const claimedTabs = sameOriginTabs.filter((tab) => tab.sources.includes('session'));
+    const singleClaimedTab = claimedTabs.length === 1 ? claimedTabs[0] : null;
+    if (singleClaimedTab && singleClaimedTab.id !== activeTab.id) {
+      return guardError(
+        ERROR_CODES.TAB_MISMATCH,
+        'Active-tab mutation target does not match the claimed same-origin session tab. Use a tab-scoped tool for this action.',
+        {
+          origin,
+          expectedTabId: singleClaimedTab.id,
+          activeTabId: activeTab.id,
+          sameOriginTabs
+        }
+      );
+    }
+    if (sameOriginTabs.length > 1) {
+      return guardError(
+        ERROR_CODES.TAB_MISMATCH,
+        'Active-tab mutation is ambiguous because multiple same-origin tabs are known. Use a tab-scoped tool for this action.',
+        {
+          origin,
+          expectedTabId: singleClaimedTab ? singleClaimedTab.id : null,
+          activeTabId: activeTab.id,
+          sameOriginTabs
+        }
+      );
+    }
+
+    return guardOk({ expectedActiveTabId: activeTab.id });
   }
 
   normalizedWarmResult(value) {
@@ -3272,6 +3422,12 @@ class SessionManager {
           field
         });
       }
+      if (field === 'postActionVerifyDelayMs' && value < 0) {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, 'Batch action field postActionVerifyDelayMs must be zero or greater.', {
+          actionIndex,
+          field
+        });
+      }
       return guardOk();
     }
     if (typeof value !== type) {
@@ -3577,6 +3733,14 @@ class SessionManager {
       return rpcError(id, boundedFullAuto.error);
     }
 
+    const activeTabGuard = this.guardActiveTabMutationTarget(method, origin, batch);
+    if (!activeTabGuard.ok) {
+      return rpcError(id, activeTabGuard.error);
+    }
+    const activeTabLock = Number.isInteger(activeTabGuard.expectedActiveTabId)
+      ? { expectedActiveTabId: activeTabGuard.expectedActiveTabId }
+      : {};
+
     const warmCache = this.warmCacheHit(method, params, origin);
     if (warmCache) {
       if (!warmCache.ok) {
@@ -3596,7 +3760,8 @@ class SessionManager {
         target: upload.target,
         ruleset: upload.ruleset,
         verifyPreview: upload.verifyPreview,
-        files: upload.files
+        files: upload.files,
+        ...activeTabLock
       });
       if (!extensionResponse.ok) {
         return rpcError(id, this.attachApprovalRequest(method, {
@@ -3604,7 +3769,8 @@ class SessionManager {
           target: upload.target,
           ruleset: upload.ruleset,
           verifyPreview: upload.verifyPreview,
-          files: upload.files
+          files: upload.files,
+          ...activeTabLock
         }, extensionResponse.error));
       }
       if (shouldInvalidateWarmSession(method)) {
@@ -3617,9 +3783,15 @@ class SessionManager {
     }
 
     if (method === 'page.prepareCart') {
-      const extensionResponse = await this.enqueueExtensionCommandWithPolicy(method, prepareCart.commandParams);
+      const extensionResponse = await this.enqueueExtensionCommandWithPolicy(method, {
+        ...prepareCart.commandParams,
+        ...activeTabLock
+      });
       if (!extensionResponse.ok) {
-        return rpcError(id, this.attachApprovalRequest(method, prepareCart.commandParams, extensionResponse.error));
+        return rpcError(id, this.attachApprovalRequest(method, {
+          ...prepareCart.commandParams,
+          ...activeTabLock
+        }, extensionResponse.error));
       }
       if (shouldInvalidateWarmSession(method)) {
         this.clearWarmSessionCache(method);
@@ -3637,9 +3809,13 @@ class SessionManager {
     }
 
     if (method === 'page.batch') {
-      const extensionResponse = await this.enqueueExtensionCommandWithPolicy(method, batch.commandParams);
+      const commandParams = {
+        ...batch.commandParams,
+        ...activeTabLock
+      };
+      const extensionResponse = await this.enqueueExtensionCommandWithPolicy(method, commandParams);
       if (!extensionResponse.ok) {
-        return rpcError(id, this.attachApprovalRequest(method, batch.commandParams, extensionResponse.error));
+        return rpcError(id, this.attachApprovalRequest(method, commandParams, extensionResponse.error));
       }
       const childFailureIndex = Array.isArray(extensionResponse.result && extensionResponse.result.results)
         ? extensionResponse.result.results.findIndex((entry) => !entry || entry.ok === false)
@@ -3668,11 +3844,12 @@ class SessionManager {
     const extensionResponse = await this.enqueueExtensionCommandWithPolicy(extensionMethod, {
       ...params,
       ...(target ? { url: target.url } : {}),
-      origin
+      origin,
+      ...activeTabLock
     });
     if (!extensionResponse.ok) {
       const error = this.remapNavigationSettlingError(method, origin, extensionResponse.error);
-      return rpcError(id, this.attachApprovalRequest(method, { ...params, origin }, error));
+      return rpcError(id, this.attachApprovalRequest(method, { ...params, origin, ...activeTabLock }, error));
     }
     if (shouldInvalidateWarmSession(method)) {
       this.clearWarmSessionCache(method);

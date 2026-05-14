@@ -63,24 +63,35 @@ function suggestedToolForElement(element = {}) {
     };
   }
 
-  if (role === 'textbox' || tag === 'textarea') {
+  const textLikeCombobox = role === 'combobox' && ['input', 'textarea'].includes(tag);
+  if (role === 'textbox' || tag === 'textarea' || textLikeCombobox) {
     return {
       handle: element.handle,
       label,
-      role: 'textbox',
+      role: textLikeCombobox ? 'combobox' : 'textbox',
       preferredTool: 'codex_chrome_type',
       alternateTool: 'codex_chrome_fill',
       verification: 'value'
     };
   }
 
-  if (role === 'combobox' || tag === 'select') {
+  if (tag === 'select') {
     return {
       handle: element.handle,
       label,
       role: 'combobox',
       preferredTool: 'codex_chrome_select',
       verification: 'value'
+    };
+  }
+
+  if (role === 'combobox') {
+    return {
+      handle: element.handle,
+      label,
+      role: tag === 'button' ? 'button' : 'combobox',
+      preferredTool: 'codex_chrome_click',
+      verification: 'explicit-post-condition-or-delta'
     };
   }
 

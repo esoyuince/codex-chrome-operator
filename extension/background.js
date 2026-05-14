@@ -1,6 +1,6 @@
 'use strict';
 
-importScripts('permissionOrigins.js', 'actionPolicy.js', 'visualCapture.js', 'accessibilitySnapshot.js', 'uiGraph.js', 'fileUpload.js', 'cartWorkflow.js', 'debuggerActions.js', 'pageReader.js');
+importScripts('permissionOrigins.js', 'actionPolicy.js', 'visualCapture.js', 'accessibilitySnapshot.js', 'uiGraph.js', 'runtimeLocatorAction.js', 'fileUpload.js', 'cartWorkflow.js', 'debuggerActions.js', 'pageReader.js');
 
 const NATIVE_HOST = 'com.codex.chrome_operator';
 const BLOCKED_ORIGINS_KEY = 'blockedOrigins';
@@ -42,6 +42,9 @@ const {
   runCdpCommand,
   runDebuggerAction
 } = globalThis.CodexDebuggerActions;
+const {
+  runLocatorActionWithRetry
+} = globalThis.CodexRuntimeLocatorAction;
 
 let nativePort = null;
 let lastNativeError = null;
@@ -1212,6 +1215,69 @@ async function tabForRuntimeCommand(tabId) {
   }
 }
 
+async function resolveRuntimeTabLocator(tabId, params = {}, { includeTargetContract = false } = {}) {
+  const locator = await chrome.tabs.sendMessage(tabId, {
+    type: 'content.resolveLocator',
+    selector: params.selector,
+    text: params.text,
+    includeFormValues: params.includeFormValues,
+    maxFieldValueChars: params.maxFieldValueChars,
+    includeTargetContract
+  });
+  if (!locator || !locator.ok) {
+    return locator || {
+      ok: false,
+      error: {
+        code: 'LOCATOR_FAILED',
+        message: 'Locator failed without a structured response.'
+      }
+    };
+  }
+  return locator;
+}
+
+async function dispatchRuntimeTabLocatorAction(tab, action, params, locator) {
+  const target = locator.result && locator.result.target;
+  const preflight = await preflightDebuggerAction({ tab }, action, {
+    handle: target && target.handle,
+    target,
+    approval: params.approval,
+    policy: params.policy
+  });
+  if (!preflight.ok) {
+    return preflight;
+  }
+  const actionResponse = await runDebuggerAction({
+    chromeApi: chrome,
+    tab,
+    action,
+    params: {
+      handle: target.handle,
+      target,
+      text: params.textValue,
+      value: params.textValue,
+      approval: params.approval,
+      policy: params.policy
+    }
+  });
+  const tracedResponse = await attachActionTraceCue(tab.id, actionResponse, {
+    ...params,
+    action,
+    handle: target.handle,
+    target,
+    label: params.actionTraceLabel
+  });
+  return attachPostActionSnapshot(tab.id, tracedResponse, {
+    ...params,
+    action,
+    handle: target.handle,
+    target,
+    text: params.textValue,
+    value: params.textValue,
+    preActionUrl: tab.url
+  });
+}
+
 async function handleRuntimeCommand(method, params = {}) {
   const readyTab = await tabForRuntimeCommand(params.tabId);
   if (!readyTab.ok) {
@@ -1287,60 +1353,13 @@ async function handleRuntimeCommand(method, params = {}) {
   }
 
   if (method === 'operator.runtime.tab.locator') {
-    const locator = await chrome.tabs.sendMessage(tab.id, {
-      type: 'content.resolveLocator',
-      selector: params.selector,
-      text: params.text,
-      includeFormValues: params.includeFormValues,
-      maxFieldValueChars: params.maxFieldValueChars
-    });
-    if (!locator || !locator.ok) {
-      return locator || {
-        ok: false,
-        error: {
-          code: 'LOCATOR_FAILED',
-          message: 'Locator failed without a structured response.'
-        }
-      };
-    }
     const action = params.action || 'resolve';
     if (action === 'resolve') {
-      return locator;
+      return resolveRuntimeTabLocator(tab.id, params);
     }
-    const target = locator.result && locator.result.target;
-    const preflight = await preflightDebuggerAction({ tab }, action, {
-      handle: target && target.handle,
-      target
-    });
-    if (!preflight.ok) {
-      return preflight;
-    }
-    const actionResponse = await runDebuggerAction({
-      chromeApi: chrome,
-      tab,
-      action,
-      params: {
-        handle: target.handle,
-        target,
-        text: params.textValue,
-        value: params.textValue
-      }
-    });
-    const tracedResponse = await attachActionTraceCue(tab.id, actionResponse, {
-      ...params,
-      action,
-      handle: target.handle,
-      target,
-      label: params.actionTraceLabel
-    });
-    return attachPostActionSnapshot(tab.id, tracedResponse, {
-      ...params,
-      action,
-      handle: target.handle,
-      target,
-      text: params.textValue,
-      value: params.textValue,
-      preActionUrl: tab.url
+    return runLocatorActionWithRetry({
+      resolveLocator: () => resolveRuntimeTabLocator(tab.id, params, { includeTargetContract: true }),
+      runAction: ({ locator }) => dispatchRuntimeTabLocatorAction(tab, action, params, locator)
     });
   }
 
@@ -1440,6 +1459,65 @@ function snapshotHasObservableChange(snapshot) {
   return Boolean(snapshot && snapshot.delta && snapshot.delta.unchanged === false);
 }
 
+function hashText(value) {
+  const text = String(value || '');
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function textAppearsInElementSummary(element, text) {
+  if (!element || !text) {
+    return false;
+  }
+  const pieces = [
+    element.label,
+    element.accessibleName,
+    element.value,
+    element.targetContract && element.targetContract.label,
+    element.targetContract && element.targetContract.accessibleName
+  ];
+  return pieces.some((piece) => String(piece || '').includes(text));
+}
+
+function articleTextAppearsInSnapshot(snapshot, text) {
+  const expected = String(text || '').trim();
+  if (!expected || !snapshot || !Array.isArray(snapshot.elements)) {
+    return false;
+  }
+  return snapshot.elements.some((element) => {
+    const tag = String(element && element.tag || '').toLowerCase();
+    const role = String(element && element.role || '').toLowerCase();
+    return (tag === 'article' || role === 'article') && textAppearsInElementSummary(element, expected);
+  });
+}
+
+function verificationValueMatchesCondition(verification, condition) {
+  if (!verification || !condition) {
+    return false;
+  }
+  const expected = String(condition.value ?? '');
+  const actual = verification.actual === undefined ? verification.expected : verification.actual;
+  if (String(actual ?? '') === expected) {
+    return true;
+  }
+  const actualLength = Number(verification.actualLength);
+  const expectedLength = Number(verification.expectedLength);
+  const actualHash = String(verification.actualHash || '');
+  const expectedHash = String(verification.expectedHash || '');
+  const conditionHash = hashText(expected);
+  if (Number.isFinite(actualLength) && actualHash) {
+    return actualLength === expected.length && actualHash === conditionHash;
+  }
+  if (Number.isFinite(expectedLength) && expectedHash) {
+    return expectedLength === expected.length && expectedHash === conditionHash;
+  }
+  return false;
+}
+
 function verifyBackgroundExplicitConditions(params = {}, snapshot) {
   const conditions = params.verify && Array.isArray(params.verify.oneOf)
     ? params.verify.oneOf
@@ -1458,6 +1536,12 @@ function verifyBackgroundExplicitConditions(params = {}, snapshot) {
       if (text && String(snapshot && snapshot.visibleTextSummary || '').includes(text)) {
         evidence.push(`text appeared: ${text}`);
         observed.push(`text appeared: ${text}`);
+      }
+    } else if (condition.type === 'textAppearsInArticle') {
+      const text = String(condition.text || '').trim();
+      if (articleTextAppearsInSnapshot(snapshot, text)) {
+        evidence.push(`article text appeared: ${text}`);
+        observed.push(`article text appeared: ${text}`);
       }
     } else if (condition.type === 'elementGone') {
       const handle = condition.handle || params.handle;
@@ -1515,8 +1599,7 @@ function actionResponseRuntimeVerificationMatches(verification, params = {}) {
     if (!condition || condition.type !== 'valueEquals') {
       return false;
     }
-    const actual = verification.actual === undefined ? verification.expected : verification.actual;
-    return String(actual ?? '') === String(condition.value ?? '');
+    return verificationValueMatchesCondition(verification, condition);
   });
 }
 
@@ -1603,6 +1686,14 @@ function shouldRetryPostActionVerification(verification, params = {}) {
     verification.status === 'inconclusive';
 }
 
+function postActionVerifyDelayMs(params = {}) {
+  const delay = Number(params.postActionVerifyDelayMs);
+  if (!Number.isFinite(delay) || delay <= 0) {
+    return 0;
+  }
+  return Math.min(10000, Math.floor(delay));
+}
+
 async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
   if (!actionResponse || actionResponse.ok !== true || params.postActionSnapshot !== 'delta') {
     return actionResponse;
@@ -1616,6 +1707,16 @@ async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
     let verification = verifyBackgroundAction(actionResponse, snapshot, params);
     if (shouldRetryPostActionVerification(verification, params)) {
       await sleep(Number.isFinite(params.postActionRetryDelayMs) ? params.postActionRetryDelayMs : 1000);
+      snapshot = await chrome.tabs.sendMessage(tabId, {
+        type: 'content.observe',
+        mode: params.mode || 'tiny',
+        ...observeOptions(params)
+      });
+      verification = verifyBackgroundAction(actionResponse, snapshot, params);
+    }
+    const verifyDelayMs = postActionVerifyDelayMs(params);
+    if (verifyDelayMs > 0) {
+      await sleep(verifyDelayMs);
       snapshot = await chrome.tabs.sendMessage(tabId, {
         type: 'content.observe',
         mode: params.mode || 'tiny',
@@ -1831,10 +1932,23 @@ async function reportAndWarmActiveTab(reason) {
   await warmActiveSession({ reason });
 }
 
-async function requireActiveTabForOrigin(origin) {
+async function requireActiveTabForOrigin(origin, options = {}) {
   const tab = await activeTabInfo();
   if (!tab || !tab.id || !tab.url) {
     return { ok: false, error: { code: 'NO_ACTIVE_TAB' } };
+  }
+  const expectedTabId = Number.isInteger(options.expectedTabId) ? options.expectedTabId : null;
+  if (expectedTabId !== null && tab.id !== expectedTabId) {
+    return {
+      ok: false,
+      error: {
+        code: 'TAB_MISMATCH',
+        message: 'Active tab changed before the queued page action could dispatch.',
+        expectedTabId,
+        activeTabId: tab.id,
+        activeTab: tabInfo(tab)
+      }
+    };
   }
   const activeOrigin = new URL(tab.url).origin;
   if (origin && activeOrigin !== origin) {
@@ -1976,7 +2090,9 @@ async function handleOperatorCommand(command) {
       };
     }
 
-    const ready = await requireActiveTabForOrigin(params.origin);
+    const ready = await requireActiveTabForOrigin(params.origin, {
+      expectedTabId: params.expectedActiveTabId
+    });
     if (!ready.ok) {
       return ready;
     }

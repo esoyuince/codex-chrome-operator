@@ -63,6 +63,21 @@ test('detectGatesFromSnapshot ignores auth phrases in normal feed content', () =
   assert.deepEqual(gates.map((gate) => gate.type), []);
 });
 
+test('detectGatesFromSnapshot ignores Cloudflare Security Insights MFA report text without an OTP form', () => {
+  const gates = detectGatesFromSnapshot({
+    visibleText: [
+      'Application security Security Insights',
+      'Review and manage potential security risks and vulnerabilities in your IT infrastructure.',
+      'Insights by severity Moderate 11 Low 5',
+      'Top Insights Domains without HSTS Security.txt not configured Bot Fight Mode not enabled',
+      'Users without MFA esoyuince@example.com Weak authentication 11 May, 2026 Details',
+      'Scan now Disable Security Center scans'
+    ].join(' ')
+  });
+
+  assert.deepEqual(gates.map((gate) => gate.type), []);
+});
+
 test('detectGatesFromSnapshot does not treat a contact email field as an auth gate', () => {
   const gates = detectGatesFromSnapshot({
     visibleText: 'Content ratings Category Email address This will be used to contact you about your content ratings. Other app types Terms and conditions Next',

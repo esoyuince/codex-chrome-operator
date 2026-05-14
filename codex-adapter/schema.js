@@ -46,6 +46,7 @@ const POST_ACTION_SNAPSHOT_PROPERTIES = {
   maxActionableHandles: OBSERVE_OPTION_PROPERTIES.maxActionableHandles,
   summaryMaxChars: OBSERVE_OPTION_PROPERTIES.summaryMaxChars,
   requireVerified: { type: 'boolean' },
+  postActionVerifyDelayMs: { type: 'number', minimum: 0 },
   actionTrace: { type: 'boolean' },
   actionTraceLabel: { type: 'string' },
   actionTraceDurationMs: { type: 'number', minimum: 100 },
@@ -62,7 +63,7 @@ const POST_ACTION_SNAPSHOT_PROPERTIES = {
           properties: {
             type: {
               type: 'string',
-              enum: ['textAppears', 'elementGone', 'elementEnabled', 'valueEquals']
+              enum: ['textAppears', 'textAppearsInArticle', 'elementGone', 'elementEnabled', 'valueEquals']
             },
             text: { type: 'string' },
             handle: { type: 'string' },
@@ -540,6 +541,24 @@ const TOOL_DEFINITIONS = [
         quality: { type: 'number', minimum: 1 }
       },
       required: ['tabId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_handle_dialog',
+    description: 'Accept or dismiss a native JavaScript/browser dialog such as beforeunload on a session-owned Chrome tab.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tabId: { type: 'number', minimum: 0 },
+        accept: { type: 'boolean' },
+        promptText: { type: 'string' }
+      },
+      required: ['tabId', 'accept']
     },
     outputContract: {
       untrusted: true,

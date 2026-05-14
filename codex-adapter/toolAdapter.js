@@ -342,6 +342,7 @@ function postActionSnapshotOptions(input) {
     'maxActionableHandles',
     'summaryMaxChars',
     'requireVerified',
+    'postActionVerifyDelayMs',
     'actionTrace',
     'actionTraceLabel',
     'actionTraceDurationMs',
@@ -501,6 +502,13 @@ class CodexChromeToolAdapter {
           params: pickDefined(input, ['format', 'quality'])
         });
         break;
+      case 'codex_chrome_tab_handle_dialog':
+        response = await this.sendRpc('operator.cdp.execute', {
+          tabId: input.tabId,
+          method: 'Page.handleJavaScriptDialog',
+          params: pickDefined(input, ['accept', 'promptText'])
+        });
+        break;
       case 'codex_chrome_tab_goto':
         response = await this.sendRpc('operator.runtime.tab.goto', {
           tabId: input.tabId,
@@ -542,6 +550,7 @@ class CodexChromeToolAdapter {
             'maxActionableHandles',
             'summaryMaxChars',
             'requireVerified',
+            'postActionVerifyDelayMs',
             'actionTrace',
             'actionTraceLabel',
             'actionTraceDurationMs',

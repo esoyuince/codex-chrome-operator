@@ -235,7 +235,10 @@ function formValueForElement(element, options = {}) {
     return null;
   }
   const tag = element.tagName.toLowerCase();
-  if (!['input', 'textarea', 'select'].includes(tag)) {
+  const contentEditable = element.isContentEditable ||
+    element.getAttribute('contenteditable') === 'true' ||
+    element.getAttribute('contenteditable') === 'plaintext-only';
+  if (!contentEditable && !['input', 'textarea', 'select'].includes(tag)) {
     return null;
   }
   if (isSensitiveFormValueElement(element)) {
@@ -245,7 +248,9 @@ function formValueForElement(element, options = {}) {
   if (tag === 'input' && ['button', 'submit', 'reset', 'file', 'image'].includes(type)) {
     return null;
   }
-  const rawValue = tag === 'select'
+  const rawValue = contentEditable
+    ? (element.textContent || '')
+    : tag === 'select'
     ? (element.value || element.getAttribute('value') || '')
     : element.value;
   const maxChars = Number.isFinite(Number(options.maxFieldValueChars))
@@ -375,6 +380,46 @@ var ACTIONABLE_SELECTOR = globalThis.__codexActionableSelector || [
   '[tabindex]:not([tabindex="-1"])'
 ].join(',');
 globalThis.__codexActionableSelector = ACTIONABLE_SELECTOR;
+
+function elementMatchesSelectorList(element, selectorList) {
+  if (!element || typeof element.matches !== 'function') {
+    return false;
+  }
+  try {
+    if (element.matches(selectorList)) {
+      return true;
+    }
+  } catch {
+    // Try individual selectors below.
+  }
+  return String(selectorList || '')
+    .split(',')
+    .map((selector) => selector.trim())
+    .filter(Boolean)
+    .some((selector) => {
+      try {
+        return element.matches(selector);
+      } catch {
+        return false;
+      }
+    });
+}
+
+function collectFocusedElements() {
+  const active = document.activeElement;
+  if (
+    !active ||
+    !active.tagName ||
+    active === document.body ||
+    active === document.documentElement ||
+    !isVisible(active) ||
+    typeof active.matches !== 'function'
+  ) {
+    return [];
+  }
+
+  return elementMatchesSelectorList(active, ACTIONABLE_SELECTOR) ? [active] : [];
+}
 
 function collectInteractiveElements() {
   return querySelectorAllDeep(ACTIONABLE_SELECTOR).filter(isVisible).slice(0, 200);
@@ -513,7 +558,12 @@ function collectFrameSummaries() {
 }
 
 function collectObservedElements() {
-  return [...new Set([...collectInteractiveElements(), ...collectVisualElements(), ...collectUploadElements()])].slice(0, 300);
+  return [...new Set([
+    ...collectFocusedElements(),
+    ...collectInteractiveElements(),
+    ...collectVisualElements(),
+    ...collectUploadElements()
+  ])].slice(0, 300);
 }
 
 var lastObservationSummaries = globalThis.__codexLastObservationSummaries || new Map();
@@ -826,6 +876,12 @@ function collectObservation(options = {}) {
     document,
     window
   });
+  const focusedCandidateIndex = document.activeElement
+    ? candidates.indexOf(document.activeElement)
+    : -1;
+  const focusedHandle = focusedCandidateIndex >= 0
+    ? described.items[focusedCandidateIndex].handle
+    : null;
   const detectedGates = globalThis.CodexGateDetector
     ? globalThis.CodexGateDetector.detectGates(document)
     : [];
@@ -855,7 +911,7 @@ function collectObservation(options = {}) {
       detectedGates: detectedGates.map((gate) => gate.type)
     },
     elements: candidates.map((element, index) => elementSummary(element, described.items[index].handle, options)),
-    focusedElement: document.activeElement ? elementSummary(document.activeElement, null, options) : null,
+    focusedElement: document.activeElement ? elementSummary(document.activeElement, focusedHandle, options) : null,
     viewport: {
       width: window.innerWidth,
       height: window.innerHeight,
@@ -1411,6 +1467,34 @@ function pageTextNow() {
   return pieces.join(' ').replace(/\s+/g, ' ').trim();
 }
 
+function articleTextAppearsNow(text) {
+  const expected = String(text || '').trim();
+  if (!expected) {
+    return false;
+  }
+  const articles = [];
+  const seen = new Set();
+  function visit(node) {
+    if (!node || seen.has(node)) {
+      return;
+    }
+    seen.add(node);
+    const tag = String(node.tagName || '').toLowerCase();
+    const role = typeof node.getAttribute === 'function' ? String(node.getAttribute('role') || '').toLowerCase() : '';
+    if (tag === 'article' || role === 'article') {
+      articles.push(node);
+    }
+    for (const child of node.children || []) {
+      visit(child);
+    }
+  }
+  visit(document.body);
+  return articles.some((article) => {
+    const value = String(article.innerText || article.textContent || '').replace(/\s+/g, ' ').trim();
+    return value.includes(expected);
+  });
+}
+
 function elementEnabledByHandle(handle) {
   const resolved = handle ? resolveHandle(handle) : null;
   if (!resolved || !resolved.ok) {
@@ -1438,6 +1522,12 @@ function verifyExplicitConditions(message = {}, snapshot, context = {}) {
       if (text && pageTextNow().includes(text)) {
         evidence.push(`text appeared: ${text}`);
         observed.push(`text appeared: ${text}`);
+      }
+    } else if (condition.type === 'textAppearsInArticle') {
+      const text = String(condition.text || '').trim();
+      if (articleTextAppearsNow(text)) {
+        evidence.push(`article text appeared: ${text}`);
+        observed.push(`article text appeared: ${text}`);
       }
     } else if (condition.type === 'elementGone') {
       const handle = condition.handle || (context.targetHandle || message.handle);

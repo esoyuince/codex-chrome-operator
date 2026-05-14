@@ -43,6 +43,7 @@ test('buildMcpSmokeReport summarizes required adapter tool availability', () => 
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_name_session'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_finalize_tabs'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_screenshot'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_handle_dialog'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_goto'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_observe'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_read_page'));

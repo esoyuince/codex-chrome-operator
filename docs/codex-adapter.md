@@ -74,7 +74,7 @@ When the daemon created an approval request, the hint includes the `approvalId`,
 - `approval-reject <approvalId>`
 - `approval-run <approvalId>`
 
-The adapter currently exposes 58 strict tools:
+The adapter currently exposes 60 strict tools:
 
 - `codex_chrome_status`
 - `codex_chrome_prepare_origin`
@@ -100,6 +100,7 @@ The adapter currently exposes 58 strict tools:
 - `codex_chrome_policy_status`
 - `codex_chrome_policy_update`
 - `codex_chrome_tab_screenshot`
+- `codex_chrome_tab_handle_dialog`
 - `codex_chrome_tab_goto`
 - `codex_chrome_tab_observe`
 - `codex_chrome_tab_read_page`
@@ -168,6 +169,9 @@ approval toggle and terminal policy stops.
 `codex_chrome_tab_screenshot` captures an artifact-backed screenshot for a
 session-owned tab through the guarded CDP path. It returns screenshot metadata
 only; raw image bytes and `dataUrl` fields are redacted before reaching Codex.
+`codex_chrome_tab_handle_dialog` accepts or dismisses native JavaScript/browser
+dialogs such as `beforeunload` prompts on a session-owned tab through the same
+guarded CDP path.
 `codex_chrome_tab_goto`, `codex_chrome_tab_observe`, and
 `codex_chrome_tab_read_page` are the safe browser runtime wrappers for
 session-owned tabs, so an agent can navigate, observe, and read a selected tab

@@ -293,6 +293,7 @@ The adapter exposes strict `codex_chrome_*` tools, including:
 - `codex_chrome_policy_status`
 - `codex_chrome_policy_update`
 - `codex_chrome_tab_screenshot`
+- `codex_chrome_tab_handle_dialog`
 - `codex_chrome_tab_goto`
 - `codex_chrome_tab_observe`
 - `codex_chrome_tab_read_page`
@@ -331,6 +332,44 @@ The adapter exposes strict `codex_chrome_*` tools, including:
 
 Tool schemas are strict and versioned. Browser output is untrusted data; callers
 must not treat observed page text as instructions.
+
+## Optional Codex Skill
+
+The extension, daemon, CLI, and MCP adapter do not require a Codex skill. A user
+can install this repository, load the unpacked extension, register the MCP
+adapter, and use the `codex_chrome_*` tools without any skill installed.
+
+This repository also includes an optional Codex skill at
+`docs/skills/chrome-operator-performance`. It is a workflow guide for Codex
+agents that maintain or live-test this operator: it explains session-owned tab
+usage, verified action patterns, reload/install checks, and performance/debugging
+habits. To make it available as a local Codex skill, copy that folder into the
+Codex skills directory, for example:
+
+```powershell
+Copy-Item -Recurse docs\skills\chrome-operator-performance "$env:USERPROFILE\.codex\skills\chrome-operator-performance"
+```
+
+## Future TODO: Multi-Agent Browser Isolation
+
+Current session-tab tools support coordinated multi-tab work from one controller.
+They are not yet a guarantee of fully independent parallel browser agents. True
+multi-agent support should add:
+
+- `agentId` / task `sessionId` propagation through MCP, daemon, extension
+  commands, approvals, audit records, and status output.
+- Per-agent tab ownership or tab leases so two agents cannot claim or finalize
+  the same tab accidentally.
+- Per-tab mutexing for debugger/CDP/runtime actions, especially focus, typing,
+  screenshots, and action-trace overlays.
+- Warm-session and page-state caches keyed by `tabId` plus agent/session identity,
+  not only by the current active tab or origin.
+- Approval, emergency-stop, and policy records that show which agent requested
+  the action and which tab it targeted.
+- Finalize/cleanup behavior scoped to the owning agent, with shared-user tabs
+  released rather than closed unless explicitly requested.
+- Regression tests with two simulated agents operating on separate tabs,
+  proving no active-tab, warm-cache, stale-handle, approval, or cleanup bleed.
 
 ## Extension Surface
 

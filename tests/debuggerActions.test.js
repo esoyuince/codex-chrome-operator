@@ -157,6 +157,31 @@ test('runCdpCommand maps Page.captureScreenshot bytes into screenshot data URL',
   ]);
 });
 
+test('runCdpCommand handles native JavaScript dialogs through the guarded CDP path', async () => {
+  const { chromeApi, calls } = makeChrome({
+    commandResults: {
+      'Page.handleJavaScriptDialog': {}
+    }
+  });
+
+  const result = await runCdpCommand({
+    chromeApi,
+    tab: { id: 7, url: 'https://example.com/app' },
+    method: 'Page.handleJavaScriptDialog',
+    params: { accept: true }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.provider, 'chrome.debugger.Page.handleJavaScriptDialog');
+  assert.deepEqual(result.result.response, {});
+  assert.deepEqual(calls.map((call) => call.method), [
+    'attach',
+    'Page.handleJavaScriptDialog',
+    'detach'
+  ]);
+  assert.deepEqual(calls[1].params, { accept: true });
+});
+
 test('runDebuggerAction refuses restricted browser pages before attaching', async () => {
   const { chromeApi, calls } = makeChrome();
 
@@ -311,6 +336,100 @@ test('runDebuggerAction falls back to verified runtime typing when CDP inserted 
   assert.match(evaluations[0].params.expression, /"action":"focus"/);
   assert.match(evaluations[1].params.expression, /"action":"verifyInsertedText"/);
   assert.match(evaluations[2].params.expression, /"action":"type"/);
+});
+
+test('runDebuggerAction prefers runtime typing for a target after CDP text was not observed', async () => {
+  const target = {
+    tag: 'div',
+    role: 'textbox',
+    label: 'Composer',
+    data: { testid: 'tweetTextarea_0' }
+  };
+  const first = makeChrome({
+    evaluateValues: [
+      {
+        ok: true,
+        result: { action: 'focused', handle: 'el_oldstate_0' }
+      },
+      {
+        ok: false,
+        error: {
+          code: 'ACTION_VERIFICATION_FAILED',
+          reason: 'TEXT_INSERTION_NOT_OBSERVED',
+          action: 'type',
+          expected: 'first text',
+          actual: ''
+        }
+      },
+      {
+        ok: true,
+        result: {
+          action: 'typed',
+          handle: 'el_oldstate_0',
+          verification: {
+            type: 'text-value',
+            expected: 'first text',
+            actual: 'first text',
+            actualLength: 10
+          }
+        }
+      }
+    ]
+  });
+
+  const firstResult = await runDebuggerAction({
+    chromeApi: first.chromeApi,
+    tab: { id: 907, url: 'https://x.com/thread' },
+    action: 'type',
+    params: { handle: 'el_oldstate_0', target, text: 'first text' }
+  });
+
+  assert.equal(firstResult.ok, true);
+  assert.equal(firstResult.result.fallback.reason, 'TEXT_INSERTION_NOT_OBSERVED');
+
+  const second = makeChrome({
+    evaluateValues: [
+      {
+        ok: true,
+        result: { action: 'focused', handle: 'el_newstate_4' }
+      },
+      {
+        ok: true,
+        result: {
+          action: 'typed',
+          handle: 'el_newstate_4',
+          verification: {
+            type: 'text-value',
+            expected: 'second text',
+            actual: 'second text',
+            actualLength: 11
+          }
+        }
+      }
+    ]
+  });
+
+  const secondResult = await runDebuggerAction({
+    chromeApi: second.chromeApi,
+    tab: { id: 907, url: 'https://x.com/thread' },
+    action: 'type',
+    params: { handle: 'el_newstate_4', target, text: 'second text' }
+  });
+
+  assert.equal(secondResult.ok, true);
+  assert.equal(secondResult.result.provider, 'chrome.debugger.Runtime.evaluate');
+  assert.equal(secondResult.result.adaptive.reason, 'previous TEXT_INSERTION_NOT_OBSERVED');
+  assert.deepEqual(second.calls.map((call) => call.method), [
+    'attach',
+    'Runtime.enable',
+    'Runtime.evaluate',
+    'Runtime.evaluate',
+    'detach'
+  ]);
+  assert.equal(second.calls.some((call) => call.method === 'Input.insertText'), false);
+  const evaluations = second.calls.filter((call) => call.method === 'Runtime.evaluate');
+  assert.match(evaluations[0].params.expression, /"action":"focus"/);
+  assert.match(evaluations[1].params.expression, /"action":"type"/);
 });
 
 test('runDebuggerAction fails when CDP inserted text and runtime fallback are not observed', async () => {
@@ -602,6 +721,223 @@ test('runtime fill reports a verification failure when the value is not retained
   assert.deepEqual(events, ['input', 'change']);
 });
 
+test('runtime contenteditable verification carries length and hash evidence for long text', () => {
+  const longText = 'Live Codex Chrome Operator check on real X: clicking is only provisional. A browser agent should verify durable page state before claiming a post, form submit, checkout, or any public action.';
+  const events = [];
+  const commands = [];
+  let text = '';
+  let selectedNode = null;
+  const selection = {
+    removeAllRanges() {
+      selectedNode = null;
+    },
+    addRange(range) {
+      selectedNode = range.node;
+    }
+  };
+  const document = {
+    title: 'X',
+    querySelectorAll() {
+      return [editor];
+    },
+    createRange() {
+      return {
+        node: null,
+        selectNodeContents(node) {
+          this.node = node;
+        }
+      };
+    },
+    getSelection() {
+      return selection;
+    },
+    execCommand(command, _showUi, value) {
+      commands.push({ command, value });
+      if (command === 'insertText' && selectedNode === editor) {
+        text = String(value ?? '');
+        return true;
+      }
+      return false;
+    }
+  };
+  const editor = {
+    tagName: 'DIV',
+    id: 'composer',
+    isContentEditable: true,
+    disabled: false,
+    ownerDocument: document,
+    get innerText() {
+      return text;
+    },
+    get textContent() {
+      return text;
+    },
+    set textContent(next) {
+      text = String(next ?? '');
+    },
+    focus() {
+      this.focused = true;
+    },
+    dispatchEvent(event) {
+      events.push(event.type);
+    },
+    scrollIntoView() {},
+    getAttribute(name) {
+      if (name === 'role') return 'textbox';
+      if (name === 'contenteditable') return 'true';
+      if (name === 'aria-label') return 'Composer';
+      return '';
+    },
+    getBoundingClientRect() {
+      return { left: 20, top: 80, right: 420, bottom: 160, width: 400, height: 80 };
+    }
+  };
+  const expression = buildRuntimeActionExpression({
+    action: 'fill',
+    handle: 'el_oldstate_0',
+    target: { tag: 'div', role: 'textbox', id: 'composer', label: 'Composer' },
+    text: longText
+  });
+  const context = {
+    URL,
+    Event: function Event(type) {
+      this.type = type;
+    },
+    InputEvent: function InputEvent(type) {
+      this.type = type;
+    },
+    location: { href: 'https://x.com/home' },
+    document,
+    window: {
+      innerWidth: 1280,
+      innerHeight: 720,
+      getSelection() {
+        return selection;
+      },
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.verification.type, 'text-value');
+  assert.equal(result.result.verification.actualLength, longText.length);
+  assert.equal(result.result.verification.expectedLength, longText.length);
+  assert.equal(typeof result.result.verification.actualHash, 'string');
+  assert.equal(result.result.verification.actualHash, result.result.verification.expectedHash);
+  assert.match(result.result.verification.actual, /\.\.\.$/);
+  assert.deepEqual(commands, [{ command: 'insertText', value: longText }]);
+  assert.deepEqual(events, ['input', 'change']);
+});
+
+test('runtime contenteditable clear uses browser editing commands instead of direct text assignment', () => {
+  const events = [];
+  const commands = [];
+  let text = 'stale X draft';
+  let textContentAssigned = false;
+  let selectedNode = null;
+  const selection = {
+    removeAllRanges() {
+      selectedNode = null;
+    },
+    addRange(range) {
+      selectedNode = range.node;
+    }
+  };
+  const document = {
+    title: 'X',
+    querySelectorAll() {
+      return [editor];
+    },
+    createRange() {
+      return {
+        node: null,
+        selectNodeContents(node) {
+          this.node = node;
+        }
+      };
+    },
+    getSelection() {
+      return selection;
+    },
+    execCommand(command, _showUi, value) {
+      commands.push({ command, value });
+      if (command === 'delete' && selectedNode === editor) {
+        text = '';
+        return true;
+      }
+      return false;
+    }
+  };
+  const editor = {
+    tagName: 'DIV',
+    id: 'composer',
+    isContentEditable: true,
+    disabled: false,
+    ownerDocument: document,
+    get textContent() {
+      return text;
+    },
+    set textContent(next) {
+      textContentAssigned = true;
+      text = String(next ?? '');
+    },
+    focus() {
+      this.focused = true;
+    },
+    dispatchEvent(event) {
+      events.push(event.type);
+    },
+    scrollIntoView() {},
+    getAttribute(name) {
+      if (name === 'role') return 'textbox';
+      if (name === 'contenteditable') return 'true';
+      if (name === 'aria-label') return 'Composer';
+      return '';
+    },
+    getBoundingClientRect() {
+      return { left: 20, top: 80, right: 420, bottom: 160, width: 400, height: 80 };
+    }
+  };
+  const expression = buildRuntimeActionExpression({
+    action: 'clear',
+    handle: 'el_oldstate_0',
+    target: { tag: 'div', role: 'textbox', id: 'composer', label: 'Composer' }
+  });
+  const context = {
+    URL,
+    Event: function Event(type) {
+      this.type = type;
+    },
+    InputEvent: function InputEvent(type) {
+      this.type = type;
+    },
+    location: { href: 'https://x.com/home' },
+    document,
+    window: {
+      innerWidth: 1280,
+      innerHeight: 720,
+      getSelection() {
+        return selection;
+      },
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.verification.actual, '');
+  assert.equal(textContentAssigned, false);
+  assert.deepEqual(commands, [{ command: 'delete', value: null }]);
+  assert.deepEqual(events, ['input', 'change']);
+});
+
 test('runtime select verifies the selected value after dispatch', () => {
   let selectedValue = 'basic';
   const select = {
@@ -785,6 +1121,97 @@ test('runtime target recovery uses targetContract when unstable ids change', () 
   assert.equal(result.result.targetSnapshot.bbox.width, 140);
   assert.equal(result.result.targetSnapshot.bbox.height, 40);
   assert.equal(result.result.targetSnapshot.label, 'Save settings');
+});
+
+test('runtime target recovery retains focused controls beyond the interactive cap', () => {
+  const makeButton = (index) => ({
+    tagName: 'BUTTON',
+    id: `nav-${index}`,
+    innerText: `Navigation ${index}`,
+    disabled: false,
+    getAttribute(name) {
+      if (name === 'type') return 'button';
+      return '';
+    },
+    matches(selector) {
+      return String(selector).split(',').map((part) => part.trim()).includes('button');
+    },
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 20, top: 20 + index, right: 120, bottom: 52 + index, width: 100, height: 32 };
+    }
+  });
+  const quickSearch = {
+    tagName: 'INPUT',
+    id: 'quick-search',
+    value: '',
+    focused: false,
+    disabled: false,
+    innerText: '',
+    getAttribute(name) {
+      if (name === 'type') return 'text';
+      if (name === 'role') return 'combobox';
+      if (name === 'placeholder') return 'Search products, pages, and features...';
+      return '';
+    },
+    matches(selector) {
+      return String(selector).split(',').map((part) => part.trim()).some((part) => (
+        part === 'input' || part === 'input[type="text"]' || part === '[role="combobox"]'
+      ));
+    },
+    focus() {
+      this.focused = true;
+    },
+    scrollIntoView() {},
+    getBoundingClientRect() {
+      return { left: 400, top: 100, right: 980, bottom: 124, width: 580, height: 24 };
+    }
+  };
+  const elements = [
+    ...Array.from({ length: 205 }, (_, index) => makeButton(index)),
+    quickSearch
+  ];
+  const expression = buildRuntimeActionExpression({
+    action: 'focus',
+    handle: 'el_oldstate_0',
+    target: {
+      tag: 'input',
+      role: 'combobox',
+      type: 'text',
+      id: 'quick-search',
+      placeholder: 'Search products, pages, and features...',
+      label: 'Search products, pages, and features...'
+    }
+  });
+  const context = {
+    URL,
+    location: { href: 'https://dash.cloudflare.com/account/security-center' },
+    document: {
+      title: 'Security insights',
+      activeElement: quickSearch,
+      body: { tagName: 'BODY' },
+      documentElement: { tagName: 'HTML' },
+      querySelectorAll() {
+        return elements;
+      }
+    },
+    window: {
+      innerWidth: 1401,
+      innerHeight: 937,
+      scrollX: 0,
+      scrollY: 981,
+      devicePixelRatio: 1.1,
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.action, 'focused');
+  assert.equal(quickSearch.focused, true);
 });
 
 test('runtime pointer target refuses occluded click targets', () => {

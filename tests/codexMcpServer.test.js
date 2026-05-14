@@ -59,6 +59,7 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   const nameSession = response.result.tools.find((tool) => tool.name === 'codex_chrome_name_session');
   const finalizeTabs = response.result.tools.find((tool) => tool.name === 'codex_chrome_finalize_tabs');
   const tabScreenshot = response.result.tools.find((tool) => tool.name === 'codex_chrome_tab_screenshot');
+  const tabHandleDialog = response.result.tools.find((tool) => tool.name === 'codex_chrome_tab_handle_dialog');
   const tabGoto = response.result.tools.find((tool) => tool.name === 'codex_chrome_tab_goto');
   const tabObserve = response.result.tools.find((tool) => tool.name === 'codex_chrome_tab_observe');
   const tabReadPage = response.result.tools.find((tool) => tool.name === 'codex_chrome_tab_read_page');
@@ -124,6 +125,8 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   assert.equal(tabScreenshot.inputSchema.additionalProperties, false);
   assert.deepEqual(tabScreenshot.inputSchema.required, ['tabId']);
   assert.deepEqual(tabScreenshot.inputSchema.properties.format.enum, ['png', 'jpeg', 'webp']);
+  assert.ok(tabHandleDialog);
+  assert.deepEqual(tabHandleDialog.inputSchema.required, ['tabId', 'accept']);
   assert.ok(tabGoto);
   assert.deepEqual(tabGoto.inputSchema.required, ['tabId', 'url']);
   assert.ok(tabObserve);
@@ -208,6 +211,15 @@ test('MCP handler calls session tab tools through the adapter', async () => {
       arguments: { tabId: 7, selector: 'button', action: 'resolve' }
     }
   });
+  await handleMessage({
+    jsonrpc: '2.0',
+    id: 7,
+    method: 'tools/call',
+    params: {
+      name: 'codex_chrome_tab_handle_dialog',
+      arguments: { tabId: 7, accept: true }
+    }
+  });
 
   assert.deepEqual(calls, [
     { toolName: 'codex_chrome_user_tabs', input: {} },
@@ -215,7 +227,8 @@ test('MCP handler calls session tab tools through the adapter', async () => {
     { toolName: 'codex_chrome_new_tab', input: {} },
     { toolName: 'codex_chrome_name_session', input: { name: 'Firebase cleanup' } },
     { toolName: 'codex_chrome_finalize_tabs', input: { keep: [{ tabId: 7, status: 'deliverable' }] } },
-    { toolName: 'codex_chrome_tab_locator', input: { tabId: 7, selector: 'button', action: 'resolve' } }
+    { toolName: 'codex_chrome_tab_locator', input: { tabId: 7, selector: 'button', action: 'resolve' } },
+    { toolName: 'codex_chrome_tab_handle_dialog', input: { tabId: 7, accept: true } }
   ]);
 });
 
@@ -631,6 +644,7 @@ test('package exposes MCP adapter script and docs explain local usage', () => {
   assert.match(docs, /codex_chrome_user_tabs/);
   assert.match(docs, /codex_chrome_finalize_tabs/);
   assert.match(docs, /codex_chrome_tab_screenshot/);
+  assert.match(docs, /codex_chrome_tab_handle_dialog/);
   assert.match(docs, /codex_chrome_approval_approve/);
   assert.match(docs, /userDecision/);
   assert.match(docs, /approval-approve/);

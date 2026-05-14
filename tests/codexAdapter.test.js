@@ -49,6 +49,7 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   const tabGroupRename = tools.find((tool) => tool.name === 'codex_chrome_tab_group_rename');
   const policyStatus = tools.find((tool) => tool.name === 'codex_chrome_policy_status');
   const policyUpdate = tools.find((tool) => tool.name === 'codex_chrome_policy_update');
+  const tabHandleDialog = tools.find((tool) => tool.name === 'codex_chrome_tab_handle_dialog');
   const tabShowTarget = tools.find((tool) => tool.name === 'codex_chrome_tab_show_target');
   const tabOperatorIndicator = tools.find((tool) => tool.name === 'codex_chrome_tab_operator_indicator');
 
@@ -157,6 +158,11 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.deepEqual(tabScreenshot.inputSchema.properties.format.enum, ['png', 'jpeg', 'webp']);
   assert.equal(tabScreenshot.inputSchema.properties.quality.minimum, 1);
   assert.equal(tabScreenshot.outputContract.rawScreenshotBytes, false);
+  assert.ok(tabHandleDialog);
+  assert.deepEqual(tabHandleDialog.inputSchema.required, ['tabId', 'accept']);
+  assert.equal(tabHandleDialog.inputSchema.properties.tabId.minimum, 0);
+  assert.equal(tabHandleDialog.inputSchema.properties.accept.type, 'boolean');
+  assert.equal(tabHandleDialog.inputSchema.properties.promptText.type, 'string');
   assert.ok(tabGoto);
   assert.deepEqual(tabGoto.inputSchema.required, ['tabId', 'url']);
   assert.ok(tabObserve);
@@ -276,6 +282,19 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     tabId: 7,
     format: 'gif'
   }).error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(validateToolInput('codex_chrome_tab_handle_dialog', {
+    tabId: 7,
+    accept: true
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_handle_dialog', {
+    tabId: 7,
+    accept: false,
+    promptText: 'typed prompt answer'
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_handle_dialog', {
+    tabId: 7,
+    accept: 'yes'
+  }).error.code, 'INVALID_TOOL_INPUT');
   assert.equal(validateToolInput('codex_chrome_tab_goto', {
     tabId: 7,
     url: 'https://example.com/app'
@@ -336,6 +355,19 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     actionTrace: true,
     actionTraceLabel: 'Clicked Save',
     actionTraceDurationMs: 1000
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_click', {
+    origin: 'https://x.com',
+    handle: 'el_state_post',
+    postActionSnapshot: 'delta',
+    requireVerified: true,
+    postActionVerifyDelayMs: 3000,
+    verify: {
+      oneOf: [{
+        type: 'textAppearsInArticle',
+        text: 'Live Codex Chrome Operator check'
+      }]
+    }
   }).ok, true);
   assert.equal(validateToolInput('codex_chrome_tab_show_target', {
     tabId: 7,
@@ -806,6 +838,47 @@ test('CodexChromeToolAdapter routes tab screenshot helper through guarded CDP', 
   assert.equal(response.result.screenshot.rawDataRedacted, true);
 });
 
+test('CodexChromeToolAdapter routes native dialog handling through guarded CDP', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          handled: true
+        }
+      };
+    }
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_tab_handle_dialog',
+    input: { tabId: 7, accept: false }
+  });
+
+  assert.deepEqual(calls.map((call) => ({
+    method: call.method,
+    params: call.params
+  })), [{
+    method: 'operator.cdp.execute',
+    params: {
+      tabId: 7,
+      method: 'Page.handleJavaScriptDialog',
+      params: {
+        accept: false
+      }
+    }
+  }]);
+  assert.equal(response.ok, true);
+  assert.equal(response.result.handled, true);
+});
+
 test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
   const calls = [];
   const adapter = new CodexChromeToolAdapter({
@@ -845,6 +918,7 @@ test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
       selector: 'button[data-testid="save"]',
       action: 'click',
       postActionSnapshot: 'delta',
+      postActionVerifyDelayMs: 500,
       actionTrace: true,
       actionTraceLabel: 'Save click'
     }
@@ -867,6 +941,7 @@ test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
       selector: 'button[data-testid="save"]',
       action: 'click',
       postActionSnapshot: 'delta',
+      postActionVerifyDelayMs: 500,
       actionTrace: true,
       actionTraceLabel: 'Save click'
     }],
@@ -1487,6 +1562,20 @@ test('CodexChromeToolAdapter adds interaction hints from observed page structure
             handle: 'el_state_2',
             tag: 'button',
             label: 'Save'
+          },
+          {
+            handle: 'el_state_3',
+            tag: 'input',
+            type: 'text',
+            role: 'combobox',
+            placeholder: 'Search products, pages, and features...'
+          },
+          {
+            handle: 'el_state_4',
+            tag: 'button',
+            type: 'button',
+            role: 'combobox',
+            label: 'Filter'
           }
         ]
       }
@@ -1515,6 +1604,13 @@ test('CodexChromeToolAdapter adds interaction hints from observed page structure
     hints.suggestedTargets.find((target) => target.handle === 'el_state_2').verification,
     'explicit-post-condition-or-delta'
   );
+  const searchComboboxHint = hints.suggestedTargets.find((target) => target.handle === 'el_state_3');
+  assert.equal(searchComboboxHint.preferredTool, 'codex_chrome_type');
+  assert.equal(searchComboboxHint.alternateTool, 'codex_chrome_fill');
+  const filterComboboxHint = hints.suggestedTargets.find((target) => target.handle === 'el_state_4');
+  assert.equal(filterComboboxHint.role, 'button');
+  assert.equal(filterComboboxHint.preferredTool, 'codex_chrome_click');
+  assert.equal(filterComboboxHint.verification, 'explicit-post-condition-or-delta');
 });
 
 test('CodexChromeToolAdapter executes open observe through the orchestration path', async () => {
@@ -1740,6 +1836,7 @@ test('CodexChromeToolAdapter exposes and routes basic DOM action tools', async (
       postActionSnapshot: 'delta',
       sincePageStateId: 'state_previous',
       maxActionableHandles: 8,
+      postActionVerifyDelayMs: 250,
       actionTrace: true,
       actionTraceLabel: 'Typing hello'
     }],

@@ -25,6 +25,7 @@ const REQUIRED_MCP_SMOKE_TOOLS = [
   'codex_chrome_name_session',
   'codex_chrome_finalize_tabs',
   'codex_chrome_tab_screenshot',
+  'codex_chrome_tab_handle_dialog',
   'codex_chrome_tab_goto',
   'codex_chrome_tab_observe',
   'codex_chrome_tab_read_page',

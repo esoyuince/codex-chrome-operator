@@ -12,10 +12,132 @@
     'Input.dispatchMouseEvent',
     'Input.insertText',
     'Page.captureScreenshot',
+    'Page.handleJavaScriptDialog',
     'Page.getLayoutMetrics',
     'Target.getTargets'
   ]);
   const managedCdpAttachments = new Set();
+  const RUNTIME_TEXT_PREFERENCE_TTL_MS = 2 * 60 * 1000;
+  const RUNTIME_TEXT_PREFERENCE_LIMIT = 64;
+  const runtimeTextPreferences = new Map();
+
+  function compactIdentityValue(value) {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    return text ? text.slice(0, 120) : '';
+  }
+
+  function firstIdentityValue(...values) {
+    for (const value of values) {
+      const text = compactIdentityValue(value);
+      if (text) {
+        return text;
+      }
+    }
+    return '';
+  }
+
+  function targetDataValue(target, field) {
+    if (!target) {
+      return '';
+    }
+    const contract = target.targetContract || target.contract || {};
+    return firstIdentityValue(
+      target.data && target.data[field],
+      contract.data && contract.data[field]
+    );
+  }
+
+  function targetIdentityPart(target) {
+    if (!target) {
+      return '';
+    }
+    const contract = target.targetContract || target.contract || {};
+    const testid = firstIdentityValue(
+      target.testid,
+      target.dataTestId,
+      targetDataValue(target, 'testid'),
+      targetDataValue(target, 'testId'),
+      targetDataValue(target, 'test-id'),
+      contract.testid,
+      contract.dataTestId
+    );
+    if (testid) {
+      return `testid:${testid}`;
+    }
+    const id = firstIdentityValue(target.id, contract.id);
+    if (id) {
+      return `id:${id}`;
+    }
+    const name = firstIdentityValue(target.name, contract.name);
+    if (name) {
+      return `name:${name}`;
+    }
+    const placeholder = firstIdentityValue(target.placeholder, contract.placeholder);
+    if (placeholder) {
+      return `placeholder:${placeholder}`;
+    }
+    const label = firstIdentityValue(
+      target.label,
+      target.accessibleName,
+      contract.label,
+      contract.accessibleName
+    );
+    return label ? `label:${label}` : '';
+  }
+
+  function runtimeTextPreferenceKey(tab, params) {
+    const identity = targetIdentityPart(params && params.target);
+    if (!identity || !tab || !tab.id) {
+      return '';
+    }
+    let origin = '';
+    try {
+      origin = new URL(tab.url).origin;
+    } catch {
+      origin = '';
+    }
+    const target = params.target || {};
+    const contract = target.targetContract || target.contract || {};
+    const tag = firstIdentityValue(target.tag, contract.tag);
+    const role = firstIdentityValue(target.role, contract.role);
+    const type = firstIdentityValue(target.type, contract.type);
+    return [tab.id, origin, tag, role, type, identity].join('|');
+  }
+
+  function runtimeTextPreference(key) {
+    if (!key) {
+      return null;
+    }
+    const entry = runtimeTextPreferences.get(key);
+    if (!entry) {
+      return null;
+    }
+    if (entry.expiresAt <= Date.now()) {
+      runtimeTextPreferences.delete(key);
+      return null;
+    }
+    return entry;
+  }
+
+  function rememberRuntimeTextPreference(key, reason) {
+    if (!key) {
+      return;
+    }
+    runtimeTextPreferences.set(key, {
+      reason,
+      expiresAt: Date.now() + RUNTIME_TEXT_PREFERENCE_TTL_MS
+    });
+    while (runtimeTextPreferences.size > RUNTIME_TEXT_PREFERENCE_LIMIT) {
+      const oldestKey = runtimeTextPreferences.keys().next().value;
+      runtimeTextPreferences.delete(oldestKey);
+    }
+  }
+
+  function forgetRuntimeTextPreference(key) {
+    if (key) {
+      runtimeTextPreferences.delete(key);
+    }
+  }
 
   function isDebuggerSupportedUrl(url) {
     try {
@@ -605,6 +727,46 @@
         .some((value) => value !== null && value !== '');
     }
 
+    function elementMatchesSelectorList(element, selectorList) {
+      if (!element || typeof element.matches !== 'function') {
+        return false;
+      }
+      try {
+        if (element.matches(selectorList)) {
+          return true;
+        }
+      } catch {
+        // Try individual selectors below.
+      }
+      return String(selectorList || '')
+        .split(',')
+        .map((selector) => selector.trim())
+        .filter(Boolean)
+        .some((selector) => {
+          try {
+            return element.matches(selector);
+          } catch {
+            return false;
+          }
+        });
+    }
+
+    function collectFocusedElements() {
+      const active = document.activeElement;
+      if (
+        !active ||
+        !active.tagName ||
+        active === document.body ||
+        active === document.documentElement ||
+        !isVisible(active) ||
+        typeof active.matches !== 'function'
+      ) {
+        return [];
+      }
+
+      return elementMatchesSelectorList(active, ACTIONABLE_SELECTOR) ? [active] : [];
+    }
+
     function collectInteractiveElements() {
       return [...document.querySelectorAll(ACTIONABLE_SELECTOR)].filter(isVisible).slice(0, 200);
     }
@@ -627,7 +789,11 @@
     }
 
     function collectObservedElements() {
-      return [...new Set([...collectInteractiveElements(), ...collectVisualElements()])].slice(0, 300);
+      return [...new Set([
+        ...collectFocusedElements(),
+        ...collectInteractiveElements(),
+        ...collectVisualElements()
+      ])].slice(0, 300);
     }
 
     function buildPageStateId(elements) {
@@ -868,9 +1034,80 @@
       return { ok: true, element, pageStateId: currentPageStateId };
     }
 
-    function dispatchValueEvents(element) {
-      element.dispatchEvent(new Event('input', { bubbles: true }));
+    function dispatchValueEvents(element, inputOptions) {
+      if (inputOptions && typeof InputEvent === 'function') {
+        element.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: inputOptions.inputType,
+          data: inputOptions.data ?? null
+        }));
+      } else {
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+      }
       element.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function setContentEditableText(element, text, action) {
+      const ownerDocument = element.ownerDocument || document;
+      const ownerWindow = ownerDocument.defaultView || window;
+      const getSelection = typeof ownerWindow.getSelection === 'function'
+        ? () => ownerWindow.getSelection()
+        : (typeof ownerDocument.getSelection === 'function' ? () => ownerDocument.getSelection() : null);
+      if (
+        typeof ownerDocument.createRange !== 'function' ||
+        typeof ownerDocument.execCommand !== 'function' ||
+        typeof getSelection !== 'function'
+      ) {
+        return {
+          ok: false,
+          error: {
+            code: 'TARGET_EDIT_COMMAND_UNAVAILABLE',
+            message: 'The contenteditable target cannot be edited through browser editing commands.'
+          }
+        };
+      }
+
+      const selection = getSelection();
+      if (!selection || typeof selection.removeAllRanges !== 'function' || typeof selection.addRange !== 'function') {
+        return {
+          ok: false,
+          error: {
+            code: 'TARGET_SELECTION_UNAVAILABLE',
+            message: 'The contenteditable target cannot be selected for editing.'
+          }
+        };
+      }
+
+      const range = ownerDocument.createRange();
+      if (!range || typeof range.selectNodeContents !== 'function') {
+        return {
+          ok: false,
+          error: {
+            code: 'TARGET_SELECTION_UNAVAILABLE',
+            message: 'The contenteditable target cannot be selected for editing.'
+          }
+        };
+      }
+
+      range.selectNodeContents(element);
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      const command = text === '' ? 'delete' : 'insertText';
+      const inputType = text === '' ? 'deleteContentBackward' : 'insertText';
+      const commandValue = text === '' ? null : text;
+      const commandSucceeded = ownerDocument.execCommand(command, false, commandValue);
+      if (!commandSucceeded) {
+        return {
+          ok: false,
+          error: {
+            code: 'TARGET_EDIT_COMMAND_FAILED',
+            message: `The contenteditable target rejected the ${command} edit command.`
+          }
+        };
+      }
+      dispatchValueEvents(element, { inputType, data: text === '' ? null : text });
+      return { ok: true, command };
     }
 
     function clippedVerificationValue(value) {
@@ -937,7 +1174,10 @@
           type: mode === 'contains' ? 'text-inserted' : 'text-value',
           expected: clippedVerificationValue(expectedText),
           actual: clippedVerificationValue(actualText),
-          actualLength: actualText.length
+          expectedLength: expectedText.length,
+          actualLength: actualText.length,
+          expectedHash: hashText(expectedText),
+          actualHash: hashText(actualText)
         }
       };
     }
@@ -1019,8 +1259,10 @@
         element.value = text;
         dispatchValueEvents(element);
       } else if (element.isContentEditable) {
-        element.textContent = text;
-        dispatchValueEvents(element);
+        const editResult = setContentEditableText(element, text, action);
+        if (!editResult.ok) {
+          return editResult;
+        }
       } else {
         return {
           ok: false,
@@ -1555,6 +1797,8 @@
       }
       if (action === 'type') {
         const text = String(params.text ?? params.value ?? '');
+        const preferenceKey = runtimeTextPreferenceKey(tab, params);
+        const preferredRuntime = runtimeTextPreference(preferenceKey);
         const response = await sendCommand(chromeApi, target, 'Runtime.evaluate', {
           expression: buildRuntimeActionExpression({ action: 'focus', ...params }),
           awaitPromise: true,
@@ -1563,6 +1807,49 @@
         const value = normalizeRuntimeActionValue(response && response.result && response.result.value);
         if (!value.ok) {
           return value;
+        }
+        if (preferredRuntime) {
+          const runtimeResponse = await sendCommand(chromeApi, target, 'Runtime.evaluate', {
+            expression: buildRuntimeActionExpression({ action: 'type', ...params, text }),
+            awaitPromise: true,
+            returnByValue: true
+          }, timeoutMs);
+          const runtimeValue = normalizeRuntimeActionValue(
+            runtimeResponse && runtimeResponse.result && runtimeResponse.result.value
+          );
+          if (!runtimeValue.ok) {
+            forgetRuntimeTextPreference(preferenceKey);
+            return {
+              ok: false,
+              error: {
+                ...(runtimeValue.error || {
+                  code: 'DEBUGGER_ACTION_FAILED',
+                  message: 'Adaptive runtime typing failed.'
+                }),
+                adaptive: {
+                  provider: DEBUGGER_ACTION_PROVIDER,
+                  reason: `previous ${preferredRuntime.reason}`
+                }
+              }
+            };
+          }
+          const runtimeResult = runtimeValue.result || {};
+          return {
+            ok: true,
+            result: {
+              provider: DEBUGGER_ACTION_PROVIDER,
+              ...runtimeResult,
+              action: 'typed',
+              handle: runtimeResult.handle || params.handle,
+              input: true,
+              focus: value.result || null,
+              adaptive: {
+                provider: DEBUGGER_ACTION_PROVIDER,
+                reason: `previous ${preferredRuntime.reason}`
+              },
+              verification: runtimeResult.verification || null
+            }
+          };
         }
         await sendCommand(chromeApi, target, 'Input.insertText', {
           text
@@ -1603,6 +1890,7 @@
                 }
               };
             }
+            rememberRuntimeTextPreference(preferenceKey, verified.error.reason);
             const fallbackResult = fallback.result || {};
             return {
               ok: true,
@@ -1623,6 +1911,7 @@
           }
           return verified;
         }
+        forgetRuntimeTextPreference(preferenceKey);
         return {
           ok: true,
           result: {

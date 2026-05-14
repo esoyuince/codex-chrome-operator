@@ -1,8 +1,8 @@
 {
   "adapterProtocolVersion": "1.0",
   "toolSchemaVersion": "2026-05-01.m1",
-  "toolDefinitionsHash": "0613fc132a2b7066bea4f1882dd4a605c5008e7ca0a652a27d3d2c9ccbd4ab58",
-  "toolCount": 59,
+  "toolDefinitionsHash": "f1220702fa50aad3a51e5fed235e45600537b1f7fa2e76da49abe459a0ab2036",
+  "toolCount": 60,
   "toolNames": [
     "codex_chrome_status",
     "codex_chrome_prepare_origin",
@@ -28,6 +28,7 @@
     "codex_chrome_policy_status",
     "codex_chrome_policy_update",
     "codex_chrome_tab_screenshot",
+    "codex_chrome_tab_handle_dialog",
     "codex_chrome_tab_goto",
     "codex_chrome_tab_observe",
     "codex_chrome_tab_read_page",
@@ -591,6 +592,33 @@
       }
     },
     {
+      "name": "codex_chrome_tab_handle_dialog",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "accept": {
+            "type": "boolean"
+          },
+          "promptText": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tabId",
+          "accept"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
       "name": "codex_chrome_tab_goto",
       "inputSchema": {
         "type": "object",
@@ -770,6 +798,10 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "postActionVerifyDelayMs": {
+            "type": "number",
+            "minimum": 0
+          },
           "actionTrace": {
             "type": "boolean"
           },
@@ -795,6 +827,7 @@
                       "type": "string",
                       "enum": [
                         "textAppears",
+                        "textAppearsInArticle",
                         "elementGone",
                         "elementEnabled",
                         "valueEquals"
@@ -1189,6 +1222,7 @@
                             "type": "string",
                             "enum": [
                               "textAppears",
+                              "textAppearsInArticle",
                               "elementGone",
                               "elementEnabled",
                               "valueEquals"
@@ -1627,6 +1661,10 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "postActionVerifyDelayMs": {
+            "type": "number",
+            "minimum": 0
+          },
           "actionTrace": {
             "type": "boolean"
           },
@@ -1652,6 +1690,7 @@
                       "type": "string",
                       "enum": [
                         "textAppears",
+                        "textAppearsInArticle",
                         "elementGone",
                         "elementEnabled",
                         "valueEquals"
@@ -1732,6 +1771,10 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "postActionVerifyDelayMs": {
+            "type": "number",
+            "minimum": 0
+          },
           "actionTrace": {
             "type": "boolean"
           },
@@ -1757,6 +1800,7 @@
                       "type": "string",
                       "enum": [
                         "textAppears",
+                        "textAppearsInArticle",
                         "elementGone",
                         "elementEnabled",
                         "valueEquals"
@@ -1834,6 +1878,10 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "postActionVerifyDelayMs": {
+            "type": "number",
+            "minimum": 0
+          },
           "actionTrace": {
             "type": "boolean"
           },
@@ -1859,6 +1907,7 @@
                       "type": "string",
                       "enum": [
                         "textAppears",
+                        "textAppearsInArticle",
                         "elementGone",
                         "elementEnabled",
                         "valueEquals"
@@ -1935,6 +1984,10 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "postActionVerifyDelayMs": {
+            "type": "number",
+            "minimum": 0
+          },
           "actionTrace": {
             "type": "boolean"
           },
@@ -1960,6 +2013,7 @@
                       "type": "string",
                       "enum": [
                         "textAppears",
+                        "textAppearsInArticle",
                         "elementGone",
                         "elementEnabled",
                         "valueEquals"
@@ -2039,6 +2093,10 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "postActionVerifyDelayMs": {
+            "type": "number",
+            "minimum": 0
+          },
           "actionTrace": {
             "type": "boolean"
           },
@@ -2064,6 +2122,7 @@
                       "type": "string",
                       "enum": [
                         "textAppears",
+                        "textAppearsInArticle",
                         "elementGone",
                         "elementEnabled",
                         "valueEquals"
@@ -2144,6 +2203,10 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "postActionVerifyDelayMs": {
+            "type": "number",
+            "minimum": 0
+          },
           "actionTrace": {
             "type": "boolean"
           },
@@ -2169,6 +2232,7 @@
                       "type": "string",
                       "enum": [
                         "textAppears",
+                        "textAppearsInArticle",
                         "elementGone",
                         "elementEnabled",
                         "valueEquals"
@@ -2252,6 +2316,10 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "postActionVerifyDelayMs": {
+            "type": "number",
+            "minimum": 0
+          },
           "actionTrace": {
             "type": "boolean"
           },
@@ -2277,6 +2345,7 @@
                       "type": "string",
                       "enum": [
                         "textAppears",
+                        "textAppearsInArticle",
                         "elementGone",
                         "elementEnabled",
                         "valueEquals"
@@ -2358,6 +2427,10 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "postActionVerifyDelayMs": {
+            "type": "number",
+            "minimum": 0
+          },
           "actionTrace": {
             "type": "boolean"
           },
@@ -2383,6 +2456,7 @@
                       "type": "string",
                       "enum": [
                         "textAppears",
+                        "textAppearsInArticle",
                         "elementGone",
                         "elementEnabled",
                         "valueEquals"
@@ -2460,6 +2534,10 @@
           "requireVerified": {
             "type": "boolean"
           },
+          "postActionVerifyDelayMs": {
+            "type": "number",
+            "minimum": 0
+          },
           "actionTrace": {
             "type": "boolean"
           },
@@ -2485,6 +2563,7 @@
                       "type": "string",
                       "enum": [
                         "textAppears",
+                        "textAppearsInArticle",
                         "elementGone",
                         "elementEnabled",
                         "valueEquals"
