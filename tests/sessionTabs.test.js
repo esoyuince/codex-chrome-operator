@@ -19,6 +19,31 @@ function makeSession() {
   return session;
 }
 
+function saveTargetContract(handle = 'el_current_state_0') {
+  return {
+    version: 1,
+    handle,
+    tag: 'button',
+    role: 'button',
+    label: 'Save settings',
+    accessibleName: 'Save settings',
+    testid: 'save-button',
+    data: { testid: 'save-button' },
+    bbox: { x: 10, y: 20, width: 120, height: 32 },
+    context: {
+      url: 'https://example.com/account',
+      viewport: { width: 1280, height: 720 },
+      scroll: { x: 0, y: 0 },
+      devicePixelRatio: 1
+    },
+    provenance: {
+      shadowDepth: 1,
+      frameDepth: 1,
+      frameTitle: 'Checkout frame'
+    }
+  };
+}
+
 test('session tabs claim user tab from latest inventory and expose compact status', async () => {
   const session = makeSession();
   const calls = [];
@@ -450,13 +475,224 @@ test('active-tab page.click carries an active tab lock for extension-side race c
     method: 'page.click',
     params: {
       origin: 'https://example.com',
-      handle: 'el_current_state_0'
+      handle: 'el_current_state_0',
+      targetContract: saveTargetContract()
     }
   });
 
   assert.equal(clicked.ok, true);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].params.expectedActiveTabId, 7);
+  assert.deepEqual(calls[0].params.targetContract, saveTargetContract());
+});
+
+test('active-tab page.click carries relaxed policy when guarded actions are disabled', async () => {
+  const session = makeSession();
+  session.updateActiveTab({
+    id: 7,
+    title: 'Publish',
+    url: 'https://example.com/publish',
+    status: 'complete'
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+  await session.handleRpc({
+    id: 'guarded-off',
+    method: 'operator.policy.update',
+    params: { guardedActionsEnabled: false }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    return { ok: true, result: { action: 'clicked' } };
+  };
+
+  const clicked = await session.handleRpc({
+    id: 'active-click-policy-disabled',
+    method: 'page.click',
+    params: {
+      origin: 'https://example.com',
+      handle: 'el_publish'
+    }
+  });
+
+  assert.equal(clicked.ok, true);
+  assert.deepEqual(calls[0].params.approval, {
+    allowHighRisk: true,
+    allowSensitiveFormFill: true,
+    approvalKind: 'policy-disabled'
+  });
+  assert.deepEqual(calls[0].params.policy, {
+    highRiskEnabled: false,
+    sensitiveFormFillEnabled: false
+  });
+});
+
+test('active-tab page.batch carries relaxed policy when guarded actions are disabled', async () => {
+  const session = makeSession();
+  session.updateActiveTab({
+    id: 7,
+    title: 'Publish',
+    url: 'https://example.com/publish',
+    status: 'complete'
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+  await session.handleRpc({
+    id: 'guarded-off',
+    method: 'operator.policy.update',
+    params: { guardedActionsEnabled: false }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    return {
+      ok: true,
+      result: {
+        results: [{ ok: true, result: { action: 'clicked' } }],
+        stoppedOnError: false
+      }
+    };
+  };
+
+  const batched = await session.handleRpc({
+    id: 'active-batch-policy-disabled',
+    method: 'page.batch',
+    params: {
+      origin: 'https://example.com',
+      actions: [{
+        action: 'click',
+        handle: 'el_publish',
+        targetContract: saveTargetContract('el_publish')
+      }]
+    }
+  });
+
+  assert.equal(batched.ok, true);
+  assert.deepEqual(calls[0].params.actions[0].targetContract, saveTargetContract('el_publish'));
+  assert.deepEqual(calls[0].params.approval, {
+    allowHighRisk: true,
+    allowSensitiveFormFill: true,
+    approvalKind: 'policy-disabled'
+  });
+  assert.deepEqual(calls[0].params.policy, {
+    highRiskEnabled: false,
+    sensitiveFormFillEnabled: false
+  });
+});
+
+test('active-tab page.click rejects malformed target contracts before queuing', async () => {
+  const session = makeSession();
+  session.updateActiveTab({
+    id: 7,
+    title: 'Settings',
+    url: 'https://example.com/account',
+    status: 'complete'
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+  let queued = false;
+  session.enqueueExtensionCommand = async () => {
+    queued = true;
+    return { ok: true, result: {} };
+  };
+
+  const clicked = await session.handleRpc({
+    id: 'invalid-target-contract',
+    method: 'page.click',
+    params: {
+      origin: 'https://example.com',
+      handle: 'el_save',
+      targetContract: {
+        version: 1,
+        tag: 'button',
+        unsupported: true
+      }
+    }
+  });
+
+  assert.equal(clicked.ok, false);
+  assert.equal(clicked.error.code, ERROR_CODES.INVALID_SCHEMA);
+  assert.equal(clicked.error.field, 'targetContract.unsupported');
+  assert.equal(queued, false);
+});
+
+test('active-tab page.click rejects unknown verify condition type before queuing', async () => {
+  const session = makeSession();
+  let queued = false;
+  session.enqueueExtensionCommand = async () => {
+    queued = true;
+    return { ok: true, result: {} };
+  };
+
+  const clicked = await session.handleRpc({
+    id: 'invalid-verify-type',
+    method: 'page.click',
+    params: {
+      origin: 'https://example.com',
+      handle: 'el_publish',
+      postActionSnapshot: 'delta',
+      verify: {
+        oneOf: [{ type: 'unknownVerifyType', text: 'Saved' }]
+      }
+    }
+  });
+
+  assert.equal(clicked.ok, false);
+  assert.equal(clicked.error.code, ERROR_CODES.INVALID_SCHEMA);
+  assert.equal(queued, false);
+});
+
+test('page.batch rejects unknown child verify condition type', () => {
+  const session = makeSession();
+
+  const batch = session.validateBatchCommandParams({
+    actions: [{
+      action: 'click',
+      handle: 'el_publish',
+      postActionSnapshot: 'delta',
+      verify: {
+        oneOf: [{ type: 'unknownVerifyType', text: 'Saved' }]
+      }
+    }]
+  }, 'https://example.com');
+
+  assert.equal(batch.ok, false);
+  assert.equal(batch.error.code, ERROR_CODES.INVALID_SCHEMA);
+  assert.equal(batch.error.actionIndex, 0);
+  assert.equal(batch.error.field, 'verify');
+});
+
+test('page.batch rejects malformed child target contracts', () => {
+  const session = makeSession();
+
+  const batch = session.validateBatchCommandParams({
+    actions: [{
+      action: 'click',
+      handle: 'el_publish',
+      targetContract: {
+        version: 1,
+        tag: 'button',
+        unsupported: true
+      }
+    }]
+  }, 'https://example.com');
+
+  assert.equal(batch.ok, false);
+  assert.equal(batch.error.code, ERROR_CODES.INVALID_SCHEMA);
+  assert.equal(batch.error.actionIndex, 0);
+  assert.equal(batch.error.field, 'targetContract.unsupported');
 });
 
 test('download and window tab management commands route through extension bridge', async () => {
@@ -799,6 +1035,27 @@ test('guarded CDP commands require session-owned tabs and origin readiness', asy
   assert.deepEqual(auditEntry.params.paramKeys, ['expression']);
   assert.doesNotMatch(JSON.stringify(auditEntry), /document\.cookie/);
 
+  for (const [cdpMethod, cdpParams] of [
+    ['Page.captureScreenshot', { format: 'png', unexpected: true }],
+    ['Page.getLayoutMetrics', { unexpected: true }],
+    ['Target.getTargets', { unexpected: true }],
+    ['Page.handleJavaScriptDialog', { accept: true, unexpected: true }]
+  ]) {
+    const rejectedParams = await session.handleRpc({
+      id: `cdp-unknown-param-${cdpMethod}`,
+      method: 'operator.cdp.execute',
+      params: {
+        tabId: 7,
+        method: cdpMethod,
+        params: cdpParams
+      }
+    });
+    assert.equal(rejectedParams.ok, false);
+    assert.equal(rejectedParams.error.code, ERROR_CODES.INVALID_SCHEMA);
+    assert.equal(rejectedParams.error.field, 'params.unexpected');
+  }
+  assert.deepEqual(calls, []);
+
   const blocked = await session.handleRpc({
     id: 'cdp-readiness',
     method: 'operator.cdp.execute',
@@ -1107,7 +1364,8 @@ test('runtime tab locator carries relaxed policy when guarded actions are disabl
     params: {
       tabId: 7,
       selector: 'button[data-testid="publish"]',
-      action: 'click'
+      action: 'click',
+      targetContract: saveTargetContract('el_publish')
     }
   });
 
@@ -1118,6 +1376,7 @@ test('runtime tab locator carries relaxed policy when guarded actions are disabl
       tabId: 7,
       selector: 'button[data-testid="publish"]',
       action: 'click',
+      targetContract: saveTargetContract('el_publish'),
       approval: {
         allowHighRisk: true,
         allowSensitiveFormFill: true,
@@ -1129,6 +1388,92 @@ test('runtime tab locator carries relaxed policy when guarded actions are disabl
       }
     }
   }]);
+});
+
+test('runtime tab locator resolve does not carry relaxed policy when guarded actions are disabled', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Example',
+    url: 'https://example.com/app',
+    ownership: 'agent',
+    active: true,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+  await session.handleRpc({
+    id: 'guarded-off',
+    method: 'operator.policy.update',
+    params: { guardedActionsEnabled: false }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    return { ok: true, result: { target: { handle: 'el_button' } } };
+  };
+
+  const resolved = await session.handleRpc({
+    id: 'runtime-locator-resolve-policy-disabled',
+    method: 'operator.runtime.tab.locator',
+    params: {
+      tabId: 7,
+      selector: 'button[data-testid="publish"]',
+      action: 'resolve'
+    }
+  });
+
+  assert.equal(resolved.ok, true);
+  assert.equal(calls[0].params.approval, undefined);
+  assert.equal(calls[0].params.policy, undefined);
+});
+
+test('runtime tab locator rejects malformed target contracts before queuing', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Example',
+    url: 'https://example.com/app',
+    ownership: 'agent',
+    active: true,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+  let queued = false;
+  session.enqueueExtensionCommand = async () => {
+    queued = true;
+    return { ok: true, result: {} };
+  };
+
+  const clicked = await session.handleRpc({
+    id: 'runtime-locator-invalid-target-contract',
+    method: 'operator.runtime.tab.locator',
+    params: {
+      tabId: 7,
+      selector: 'button[data-testid="publish"]',
+      action: 'click',
+      targetContract: {
+        version: 1,
+        tag: 'button',
+        unsupported: true
+      }
+    }
+  });
+
+  assert.equal(clicked.ok, false);
+  assert.equal(clicked.error.code, ERROR_CODES.INVALID_SCHEMA);
+  assert.equal(clicked.error.field, 'targetContract.unsupported');
+  assert.equal(queued, false);
 });
 
 test('runtime tab locator retries extension high-risk blocks when guarded actions are disabled', async () => {

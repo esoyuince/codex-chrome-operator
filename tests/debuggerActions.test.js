@@ -75,6 +75,30 @@ test('runCdpCommand rejects non-allowlisted CDP methods before attaching', async
   assert.deepEqual(calls, []);
 });
 
+test('runCdpCommand rejects unknown params for allowlisted CDP methods before attaching', async () => {
+  const { chromeApi, calls } = makeChrome();
+
+  for (const [method, params] of [
+    ['Page.captureScreenshot', { format: 'png', unexpected: true }],
+    ['Page.getLayoutMetrics', { unexpected: true }],
+    ['Target.getTargets', { unexpected: true }],
+    ['Page.handleJavaScriptDialog', { accept: true, unexpected: true }]
+  ]) {
+    const result = await runCdpCommand({
+      chromeApi,
+      tab: { id: 7, url: 'https://example.com/app' },
+      method,
+      params
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'INVALID_SCHEMA');
+    assert.equal(result.error.field, 'params.unexpected');
+  }
+
+  assert.deepEqual(calls, []);
+});
+
 test('runCdpCommand executes allowlisted CDP method with scoped attach and detach', async () => {
   const { chromeApi, calls } = makeChrome({
     commandResults: {
@@ -721,6 +745,109 @@ test('runtime fill reports a verification failure when the value is not retained
   assert.deepEqual(events, ['input', 'change']);
 });
 
+test('runtime fill updates controlled input app state with native input semantics', () => {
+  const events = [];
+  let domValue = '';
+  let trackedValue = '';
+  let preview = '';
+  let nativeSetterCalls = 0;
+  let directSetterCalls = 0;
+  const nativeInputPrototype = {};
+  Object.defineProperty(nativeInputPrototype, 'value', {
+    configurable: true,
+    get() {
+      return domValue;
+    },
+    set(next) {
+      nativeSetterCalls += 1;
+      domValue = String(next ?? '');
+    }
+  });
+  const input = Object.create(nativeInputPrototype);
+  Object.assign(input, {
+    tagName: 'INPUT',
+    id: 'email',
+    disabled: false,
+    focus() {
+      this.focused = true;
+    },
+    dispatchEvent(event) {
+      events.push({
+        type: event.type,
+        inputType: event.inputType || '',
+        data: event.data ?? null
+      });
+      if (event.type === 'input' && domValue !== trackedValue) {
+        trackedValue = domValue;
+        preview = domValue;
+      }
+    },
+    scrollIntoView() {},
+    getAttribute(name) {
+      if (name === 'type') return 'email';
+      if (name === 'aria-label') return 'Email';
+      return '';
+    },
+    getBoundingClientRect() {
+      return { left: 20, top: 80, right: 220, bottom: 120, width: 200, height: 40 };
+    }
+  });
+  Object.defineProperty(input, 'value', {
+    configurable: true,
+    get() {
+      return domValue;
+    },
+    set(next) {
+      directSetterCalls += 1;
+      domValue = String(next ?? '');
+      trackedValue = domValue;
+    }
+  });
+  const expression = buildRuntimeActionExpression({
+    action: 'fill',
+    handle: 'el_oldstate_0',
+    target: { tag: 'input', id: 'email', type: 'email', label: 'Email' },
+    text: 'react@example.com'
+  });
+  const context = {
+    URL,
+    Event: function Event(type) {
+      this.type = type;
+    },
+    InputEvent: function InputEvent(type, options = {}) {
+      this.type = type;
+      this.inputType = options.inputType || '';
+      this.data = options.data ?? null;
+    },
+    location: { href: 'https://example.com/form' },
+    document: {
+      title: 'Form',
+      querySelectorAll() {
+        return [input];
+      }
+    },
+    window: {
+      innerWidth: 400,
+      innerHeight: 300,
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(input.value, 'react@example.com');
+  assert.equal(preview, 'react@example.com');
+  assert.equal(nativeSetterCalls, 1);
+  assert.equal(directSetterCalls, 0);
+  assert.deepEqual(events, [
+    { type: 'input', inputType: 'insertReplacementText', data: 'react@example.com' },
+    { type: 'change', inputType: '', data: null }
+  ]);
+});
+
 test('runtime contenteditable verification carries length and hash evidence for long text', () => {
   const longText = 'Live Codex Chrome Operator check on real X: clicking is only provisional. A browser agent should verify durable page state before claiming a post, form submit, checkout, or any public action.';
   const events = [];
@@ -1121,6 +1248,155 @@ test('runtime target recovery uses targetContract when unstable ids change', () 
   assert.equal(result.result.targetSnapshot.bbox.width, 140);
   assert.equal(result.result.targetSnapshot.bbox.height, 40);
   assert.equal(result.result.targetSnapshot.label, 'Save settings');
+});
+
+test('runtime click recovers stale handles with a unique targetContract', () => {
+  let saveClicked = false;
+  let archiveClicked = false;
+  const saveButton = {
+    tagName: 'BUTTON',
+    id: 'save-new',
+    innerText: 'Save settings',
+    disabled: false,
+    scrollIntoView() {},
+    click() {
+      saveClicked = true;
+    },
+    getAttribute(name) {
+      if (name === 'type') return 'button';
+      if (name === 'data-testid') return 'save-button';
+      return '';
+    },
+    getBoundingClientRect() {
+      return { left: 40, top: 80, right: 180, bottom: 120, width: 140, height: 40 };
+    }
+  };
+  const archiveButton = {
+    tagName: 'BUTTON',
+    id: 'archive-new',
+    innerText: 'Archive settings',
+    disabled: false,
+    scrollIntoView() {},
+    click() {
+      archiveClicked = true;
+    },
+    getAttribute(name) {
+      if (name === 'type') return 'button';
+      if (name === 'data-testid') return 'archive-button';
+      return '';
+    },
+    getBoundingClientRect() {
+      return { left: 200, top: 80, right: 360, bottom: 120, width: 160, height: 40 };
+    }
+  };
+  const expression = buildRuntimeActionExpression({
+    action: 'click',
+    handle: 'el_oldstate_0',
+    target: {
+      targetContract: {
+        version: 1,
+        tag: 'button',
+        role: 'button',
+        accessibleName: 'Save settings',
+        label: 'Save settings',
+        testid: 'save-button'
+      }
+    }
+  });
+  const context = {
+    URL,
+    location: { href: 'https://example.com/settings' },
+    document: {
+      title: 'Settings',
+      querySelectorAll() {
+        return [saveButton, archiveButton];
+      }
+    },
+    window: {
+      innerWidth: 400,
+      innerHeight: 300,
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.action, 'clicked');
+  assert.equal(saveClicked, true);
+  assert.equal(archiveClicked, false);
+});
+
+test('runtime targetContract recovery fails closed when candidates are not unique', () => {
+  const saveButtonA = {
+    tagName: 'BUTTON',
+    id: 'save-a',
+    innerText: 'Save settings',
+    disabled: false,
+    scrollIntoView() {},
+    getAttribute(name) {
+      if (name === 'type') return 'button';
+      if (name === 'data-testid') return 'save-button';
+      return '';
+    },
+    getBoundingClientRect() {
+      return { left: 40, top: 80, right: 180, bottom: 120, width: 140, height: 40 };
+    }
+  };
+  const saveButtonB = {
+    tagName: 'BUTTON',
+    id: 'save-b',
+    innerText: 'Save settings',
+    disabled: false,
+    scrollIntoView() {},
+    getAttribute(name) {
+      if (name === 'type') return 'button';
+      if (name === 'data-testid') return 'save-button';
+      return '';
+    },
+    getBoundingClientRect() {
+      return { left: 200, top: 80, right: 340, bottom: 120, width: 140, height: 40 };
+    }
+  };
+  const expression = buildRuntimeActionExpression({
+    action: 'resolvePointerTarget',
+    handle: 'el_oldstate_0',
+    target: {
+      targetContract: {
+        version: 1,
+        tag: 'button',
+        role: 'button',
+        accessibleName: 'Save settings',
+        label: 'Save settings',
+        testid: 'save-button'
+      }
+    }
+  });
+  const context = {
+    URL,
+    location: { href: 'https://example.com/settings' },
+    document: {
+      title: 'Settings',
+      querySelectorAll() {
+        return [saveButtonA, saveButtonB];
+      }
+    },
+    window: {
+      innerWidth: 400,
+      innerHeight: 300,
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'STALE_HANDLE');
+  assert.equal(result.error.reason, 'RECOVERY_NOT_UNIQUE');
 });
 
 test('runtime target recovery retains focused controls beyond the interactive cap', () => {

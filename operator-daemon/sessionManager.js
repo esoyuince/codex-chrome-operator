@@ -271,6 +271,7 @@ const BATCH_ACTION_FIELDS = new Set([
   'actionTrace',
   'actionTraceLabel',
   'actionTraceDurationMs',
+  'targetContract',
   'verify'
 ]);
 
@@ -299,6 +300,7 @@ const BATCH_ACTION_FIELD_TYPES = Object.freeze({
   actionTrace: 'boolean',
   actionTraceLabel: 'string',
   actionTraceDurationMs: 'number',
+  targetContract: 'object',
   verify: 'object'
 });
 
@@ -337,6 +339,13 @@ const MAX_BATCH_ACTIONS = 20;
 const WARM_SESSION_CACHE_TTL_MS = 10000;
 const RECENT_ACTION_LOG_LIMIT = 25;
 const WARM_CACHE_PRESERVING_ACTION_KINDS = new Set(['observe', 'screenshot', 'wait']);
+const VERIFY_CONDITION_TYPES = new Set([
+  'textAppears',
+  'textAppearsInArticle',
+  'elementGone',
+  'elementEnabled',
+  'valueEquals'
+]);
 
 function cloneJson(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -382,6 +391,344 @@ function isLocalMockOrigin(origin) {
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validateVerifyConditions(verify, extra = {}) {
+  if (verify === undefined) {
+    return guardOk();
+  }
+  if (!isPlainObject(verify)) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'verify must be an object.', extra);
+  }
+  if (!Array.isArray(verify.oneOf) || verify.oneOf.length === 0) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'verify.oneOf must be a non-empty array.', extra);
+  }
+  for (let conditionIndex = 0; conditionIndex < verify.oneOf.length; conditionIndex += 1) {
+    const condition = verify.oneOf[conditionIndex];
+    const details = { ...extra, conditionIndex };
+    if (!isPlainObject(condition)) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'verify.oneOf entries must be objects.', details);
+    }
+    const type = condition.type;
+    if (!VERIFY_CONDITION_TYPES.has(type)) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'Unsupported verify condition type.', {
+        ...details,
+        type: typeof type === 'string' ? type : null
+      });
+    }
+    for (const field of Object.keys(condition)) {
+      if (!['type', 'text', 'handle', 'value'].includes(field)) {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, `Verify condition does not accept field: ${field}.`, {
+          ...details,
+          field
+        });
+      }
+      if (field !== 'type' && typeof condition[field] !== 'string') {
+        return guardError(ERROR_CODES.INVALID_SCHEMA, `Verify condition field ${field} must be a string.`, {
+          ...details,
+          field
+        });
+      }
+    }
+  }
+  return guardOk();
+}
+
+function targetContractError(message, extra = {}) {
+  return guardError(ERROR_CODES.INVALID_SCHEMA, message, extra);
+}
+
+function targetContractField(prefix, field) {
+  return prefix ? `${prefix}.${field}` : field;
+}
+
+function validateTargetContractString(contract, field, maxLength, extra, prefix) {
+  if (contract[field] === undefined) {
+    return guardOk();
+  }
+  if (typeof contract[field] !== 'string') {
+    return targetContractError(`targetContract.${field} must be a string.`, {
+      ...extra,
+      field: targetContractField(prefix, field)
+    });
+  }
+  if (contract[field].length > maxLength) {
+    return targetContractError(`targetContract.${field} is too long.`, {
+      ...extra,
+      field: targetContractField(prefix, field),
+      maxLength
+    });
+  }
+  return guardOk();
+}
+
+function validateTargetContractBox(box, extra, prefix) {
+  if (box === undefined) {
+    return guardOk();
+  }
+  const boxPrefix = targetContractField(prefix, 'bbox');
+  if (!isPlainObject(box)) {
+    return targetContractError('targetContract.bbox must be an object.', {
+      ...extra,
+      field: boxPrefix
+    });
+  }
+  for (const field of Object.keys(box)) {
+    if (!['x', 'y', 'width', 'height'].includes(field)) {
+      return targetContractError(`targetContract.bbox does not accept field: ${field}.`, {
+        ...extra,
+        field: `${boxPrefix}.${field}`
+      });
+    }
+  }
+  for (const field of ['x', 'y', 'width', 'height']) {
+    if (box[field] !== undefined && !Number.isFinite(box[field])) {
+      return targetContractError(`targetContract.bbox.${field} must be a finite number.`, {
+        ...extra,
+        field: `${boxPrefix}.${field}`
+      });
+    }
+  }
+  if (box.width !== undefined && box.width <= 0) {
+    return targetContractError('targetContract.bbox.width must be positive.', {
+      ...extra,
+      field: `${boxPrefix}.width`
+    });
+  }
+  if (box.height !== undefined && box.height <= 0) {
+    return targetContractError('targetContract.bbox.height must be positive.', {
+      ...extra,
+      field: `${boxPrefix}.height`
+    });
+  }
+  return guardOk();
+}
+
+function validateTargetContractContext(context, extra, prefix) {
+  if (context === undefined) {
+    return guardOk();
+  }
+  const contextPrefix = targetContractField(prefix, 'context');
+  if (!isPlainObject(context)) {
+    return targetContractError('targetContract.context must be an object.', {
+      ...extra,
+      field: contextPrefix
+    });
+  }
+  for (const field of Object.keys(context)) {
+    if (!['url', 'viewport', 'scroll', 'devicePixelRatio'].includes(field)) {
+      return targetContractError(`targetContract.context does not accept field: ${field}.`, {
+        ...extra,
+        field: `${contextPrefix}.${field}`
+      });
+    }
+  }
+  if (context.url !== undefined && typeof context.url !== 'string') {
+    return targetContractError('targetContract.context.url must be a string.', {
+      ...extra,
+      field: `${contextPrefix}.url`
+    });
+  }
+  if (context.devicePixelRatio !== undefined && !Number.isFinite(context.devicePixelRatio)) {
+    return targetContractError('targetContract.context.devicePixelRatio must be a finite number.', {
+      ...extra,
+      field: `${contextPrefix}.devicePixelRatio`
+    });
+  }
+  for (const [field, allowedFields] of [
+    ['viewport', ['width', 'height']],
+    ['scroll', ['x', 'y']]
+  ]) {
+    const value = context[field];
+    if (value === undefined) {
+      continue;
+    }
+    const fieldPrefix = `${contextPrefix}.${field}`;
+    if (!isPlainObject(value)) {
+      return targetContractError(`targetContract.context.${field} must be an object.`, {
+        ...extra,
+        field: fieldPrefix
+      });
+    }
+    for (const nestedField of Object.keys(value)) {
+      if (!allowedFields.includes(nestedField)) {
+        return targetContractError(`targetContract.context.${field} does not accept field: ${nestedField}.`, {
+          ...extra,
+          field: `${fieldPrefix}.${nestedField}`
+        });
+      }
+      if (!Number.isFinite(value[nestedField])) {
+        return targetContractError(`targetContract.context.${field}.${nestedField} must be a finite number.`, {
+          ...extra,
+          field: `${fieldPrefix}.${nestedField}`
+        });
+      }
+    }
+  }
+  return guardOk();
+}
+
+function validateTargetContractData(data, extra, prefix) {
+  if (data === undefined) {
+    return guardOk();
+  }
+  const dataPrefix = targetContractField(prefix, 'data');
+  if (!isPlainObject(data)) {
+    return targetContractError('targetContract.data must be an object.', {
+      ...extra,
+      field: dataPrefix
+    });
+  }
+  const keys = Object.keys(data);
+  if (keys.length > 20) {
+    return targetContractError('targetContract.data has too many fields.', {
+      ...extra,
+      field: dataPrefix,
+      maxFields: 20
+    });
+  }
+  for (const key of keys) {
+    if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(key)) {
+      return targetContractError('targetContract.data field names must be short data keys.', {
+        ...extra,
+        field: `${dataPrefix}.${key}`
+      });
+    }
+    if (typeof data[key] !== 'string') {
+      return targetContractError('targetContract.data values must be strings.', {
+        ...extra,
+        field: `${dataPrefix}.${key}`
+      });
+    }
+    if (data[key].length > 200) {
+      return targetContractError('targetContract.data value is too long.', {
+        ...extra,
+        field: `${dataPrefix}.${key}`,
+        maxLength: 200
+      });
+    }
+  }
+  return guardOk();
+}
+
+function validateTargetContractProvenance(provenance, extra, prefix) {
+  if (provenance === undefined) {
+    return guardOk();
+  }
+  const provenancePrefix = targetContractField(prefix, 'provenance');
+  if (!isPlainObject(provenance)) {
+    return targetContractError('targetContract.provenance must be an object.', {
+      ...extra,
+      field: provenancePrefix
+    });
+  }
+  for (const field of Object.keys(provenance)) {
+    if (!['shadowDepth', 'frameDepth', 'frameTitle', 'frameName', 'frameSrc'].includes(field)) {
+      return targetContractError(`targetContract.provenance does not accept field: ${field}.`, {
+        ...extra,
+        field: `${provenancePrefix}.${field}`
+      });
+    }
+  }
+  for (const field of ['shadowDepth', 'frameDepth']) {
+    if (provenance[field] !== undefined && (!Number.isFinite(provenance[field]) || provenance[field] < 0)) {
+      return targetContractError(`targetContract.provenance.${field} must be a finite non-negative number.`, {
+        ...extra,
+        field: `${provenancePrefix}.${field}`
+      });
+    }
+  }
+  for (const field of ['frameTitle', 'frameName', 'frameSrc']) {
+    const validation = validateTargetContractString(provenance, field, field === 'frameSrc' ? 2000 : 300, extra, provenancePrefix);
+    if (!validation.ok) {
+      return validation;
+    }
+  }
+  return guardOk();
+}
+
+function validateTargetContract(contract, extra = {}) {
+  const prefix = extra.field || 'targetContract';
+  if (contract === undefined) {
+    return guardOk();
+  }
+  if (!isPlainObject(contract)) {
+    return targetContractError('targetContract must be an object.', {
+      ...extra,
+      field: prefix
+    });
+  }
+  const allowed = new Set([
+    'version',
+    'handle',
+    'tag',
+    'role',
+    'type',
+    'id',
+    'name',
+    'href',
+    'placeholder',
+    'title',
+    'label',
+    'accessibleName',
+    'testid',
+    'data',
+    'productId',
+    'bbox',
+    'context',
+    'provenance'
+  ]);
+  for (const field of Object.keys(contract)) {
+    if (!allowed.has(field)) {
+      return targetContractError(`targetContract does not accept field: ${field}.`, {
+        ...extra,
+        field: targetContractField(prefix, field)
+      });
+    }
+  }
+  if (contract.version !== undefined && contract.version !== 1) {
+    return targetContractError('targetContract.version must be 1.', {
+      ...extra,
+      field: targetContractField(prefix, 'version')
+    });
+  }
+  for (const [field, maxLength] of [
+    ['handle', 160],
+    ['tag', 40],
+    ['role', 80],
+    ['type', 80],
+    ['id', 200],
+    ['name', 200],
+    ['href', 2000],
+    ['placeholder', 300],
+    ['title', 300],
+    ['label', 300],
+    ['accessibleName', 300],
+    ['testid', 200],
+    ['productId', 200]
+  ]) {
+    const validation = validateTargetContractString(contract, field, maxLength, extra, prefix);
+    if (!validation.ok) {
+      return validation;
+    }
+  }
+  const dataValidation = validateTargetContractData(contract.data, extra, prefix);
+  if (!dataValidation.ok) {
+    return dataValidation;
+  }
+  const boxValidation = validateTargetContractBox(contract.bbox, extra, prefix);
+  if (!boxValidation.ok) {
+    return boxValidation;
+  }
+  const contextValidation = validateTargetContractContext(contract.context, extra, prefix);
+  if (!contextValidation.ok) {
+    return contextValidation;
+  }
+  const provenanceValidation = validateTargetContractProvenance(contract.provenance, extra, prefix);
+  if (!provenanceValidation.ok) {
+    return provenanceValidation;
+  }
+  return guardOk();
 }
 
 function makeConnectionId() {
@@ -483,6 +830,48 @@ function rejectUnknownCdpParams(params, allowedKeys) {
         field: `params.${key}`
       });
     }
+  }
+  return null;
+}
+
+function validateCdpScreenshotClip(clip) {
+  if (clip === undefined) {
+    return null;
+  }
+  if (!isPlainObject(clip)) {
+    return cdpParamError('CDP screenshot clip must be an object.', { field: 'params.clip' });
+  }
+  const unknown = rejectUnknownCdpParams(clip, new Set(['x', 'y', 'width', 'height', 'scale']));
+  if (unknown) {
+    return unknown;
+  }
+  for (const key of ['x', 'y', 'width', 'height', 'scale']) {
+    if (!Number.isFinite(clip[key])) {
+      return cdpParamError(`CDP screenshot clip.${key} must be a finite number.`, {
+        field: `params.clip.${key}`
+      });
+    }
+  }
+  if (clip.x < 0 || clip.y < 0) {
+    return cdpParamError('CDP screenshot clip origin must be non-negative.', {
+      field: 'params.clip'
+    });
+  }
+  if (clip.width <= 0 || clip.height <= 0) {
+    return cdpParamError('CDP screenshot clip dimensions must be positive.', {
+      field: 'params.clip'
+    });
+  }
+  if (clip.width > 10000 || clip.height > 10000) {
+    return cdpParamError('CDP screenshot clip dimensions are too large.', {
+      field: 'params.clip',
+      maxDimension: 10000
+    });
+  }
+  if (clip.scale <= 0 || clip.scale > 10) {
+    return cdpParamError('CDP screenshot clip scale must be within 0-10.', {
+      field: 'params.clip.scale'
+    });
   }
   return null;
 }
@@ -619,6 +1008,34 @@ function validateCdpParamsForMethod(method, params) {
     return guardOk({ params });
   }
 
+  if (method === 'Page.captureScreenshot') {
+    const unknown = rejectUnknownCdpParams(params, new Set(['format', 'quality', 'clip', 'fromSurface']));
+    if (unknown) {
+      return unknown;
+    }
+    if (params.format !== undefined && !['png', 'jpeg', 'webp'].includes(params.format)) {
+      return cdpParamError('CDP screenshot format is not allowed.', { field: 'params.format' });
+    }
+    if (
+      params.quality !== undefined &&
+      (!Number.isInteger(params.quality) || params.quality < 0 || params.quality > 100)
+    ) {
+      return cdpParamError('CDP screenshot quality must be an integer from 0 to 100.', {
+        field: 'params.quality'
+      });
+    }
+    if (params.fromSurface !== undefined && typeof params.fromSurface !== 'boolean') {
+      return cdpParamError('CDP screenshot fromSurface must be boolean.', {
+        field: 'params.fromSurface'
+      });
+    }
+    const clipError = validateCdpScreenshotClip(params.clip);
+    if (clipError) {
+      return clipError;
+    }
+    return guardOk({ params });
+  }
+
   if (method === 'Page.handleJavaScriptDialog') {
     const unknown = rejectUnknownCdpParams(params, new Set(['accept', 'promptText']));
     if (unknown) {
@@ -636,7 +1053,25 @@ function validateCdpParamsForMethod(method, params) {
     return guardOk({ params });
   }
 
-  return guardOk({ params });
+  if (method === 'Page.getLayoutMetrics') {
+    const unknown = rejectUnknownCdpParams(params, new Set());
+    if (unknown) {
+      return unknown;
+    }
+    return guardOk({ params: {} });
+  }
+
+  if (method === 'Target.getTargets') {
+    const unknown = rejectUnknownCdpParams(params, new Set());
+    if (unknown) {
+      return unknown;
+    }
+    return guardOk({ params: {} });
+  }
+
+  return cdpParamError('CDP method has no strict parameter validator.', {
+    method
+  });
 }
 
 function summarizeReadiness({
@@ -913,6 +1348,14 @@ function validateRuntimeLocatorParams(params = {}) {
   if ((action === 'type' || action === 'fill') && typeof params.textValue !== 'string') {
     return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator type/fill actions require textValue.');
   }
+  const verify = validateVerifyConditions(params.verify);
+  if (!verify.ok) {
+    return verify;
+  }
+  const targetContract = validateTargetContract(params.targetContract);
+  if (!targetContract.ok) {
+    return targetContract;
+  }
   return guardOk({
     action,
     selector: selector || undefined,
@@ -936,6 +1379,7 @@ function pickRuntimeObservationParams(params = {}) {
     'actionTrace',
     'actionTraceLabel',
     'actionTraceDurationMs',
+    'targetContract',
     'verify'
   ]);
 }
@@ -2302,13 +2746,17 @@ class SessionManager {
         if (!locator.ok) {
           return rpcError(id, locator.error);
         }
+        const runtimeOptions = pickRuntimeObservationParams(params);
+        if (locator.action === 'resolve') {
+          delete runtimeOptions.targetContract;
+        }
         commandParams = {
           tabId: tabId.tabId,
           action: locator.action,
           ...(locator.selector === undefined ? {} : { selector: locator.selector }),
           ...(locator.text === undefined ? {} : { text: locator.text }),
           ...(locator.textValue === undefined ? {} : { textValue: locator.textValue }),
-          ...pickRuntimeObservationParams(params)
+          ...runtimeOptions
         };
         policyMethod = RUNTIME_LOCATOR_MUTATION_METHODS[locator.action] || 'page.observe';
       } else if (method === 'operator.runtime.tab.showTarget') {
@@ -3448,6 +3896,21 @@ class SessionManager {
         field
       });
     }
+    if (field === 'verify') {
+      const verify = validateVerifyConditions(value, { actionIndex, field });
+      if (!verify.ok) {
+        return verify;
+      }
+    }
+    if (field === 'targetContract') {
+      const contract = validateTargetContract(value, {
+        actionIndex,
+        field: 'targetContract'
+      });
+      if (!contract.ok) {
+        return contract;
+      }
+    }
     return guardOk();
   }
 
@@ -3719,6 +4182,16 @@ class SessionManager {
       : null;
     if (batch && !batch.ok) {
       return rpcError(id, batch.error);
+    }
+    if (!batch) {
+      const verify = validateVerifyConditions(params.verify);
+      if (!verify.ok) {
+        return rpcError(id, verify.error);
+      }
+      const targetContract = validateTargetContract(params.targetContract);
+      if (!targetContract.ok) {
+        return rpcError(id, targetContract.error);
+      }
     }
     const readiness = assertReadyForRealSiteAction(this.readinessStateForOrigin(origin));
 

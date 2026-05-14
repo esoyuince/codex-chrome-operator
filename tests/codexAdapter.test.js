@@ -9,6 +9,29 @@ const {
   validateToolInput
 } = require('../codex-adapter/toolAdapter');
 
+const SAVE_TARGET_CONTRACT = Object.freeze({
+  version: 1,
+  handle: 'el_state_0',
+  tag: 'button',
+  role: 'button',
+  label: 'Save settings',
+  accessibleName: 'Save settings',
+  testid: 'save-button',
+  data: { testid: 'save-button' },
+  bbox: { x: 10, y: 20, width: 120, height: 32 },
+  context: {
+    url: 'https://example.com/form',
+    viewport: { width: 1280, height: 720 },
+    scroll: { x: 0, y: 0 },
+    devicePixelRatio: 1
+  },
+  provenance: {
+    shadowDepth: 1,
+    frameDepth: 1,
+    frameTitle: 'Checkout frame'
+  }
+});
+
 test('listTools exposes strict versioned Codex browser tool definitions', () => {
   const tools = listTools();
   const openObserve = tools.find((tool) => tool.name === 'codex_chrome_open_observe');
@@ -352,10 +375,20 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   assert.equal(validateToolInput('codex_chrome_click', {
     origin: 'https://example.com',
     handle: 'el_state_0',
+    targetContract: SAVE_TARGET_CONTRACT,
     actionTrace: true,
     actionTraceLabel: 'Clicked Save',
     actionTraceDurationMs: 1000
   }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_click', {
+    origin: 'https://example.com',
+    handle: 'el_state_0',
+    targetContract: {
+      version: 1,
+      tag: 'button',
+      unsupported: true
+    }
+  }).error.code, 'INVALID_TOOL_INPUT');
   assert.equal(validateToolInput('codex_chrome_click', {
     origin: 'https://x.com',
     handle: 'el_state_post',
@@ -534,6 +567,7 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
         action: 'fill',
         handle: 'el_state_0',
         text: 'Draft',
+        targetContract: SAVE_TARGET_CONTRACT,
         postActionSnapshot: 'delta',
         sincePageStateId: 'state_previous'
       }, {
@@ -578,6 +612,20 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     'INVALID_TOOL_INPUT'
   );
   assert.equal(
+    validateToolInput('codex_chrome_click', {
+      origin: 'https://example.com',
+      handle: 'el_state_0',
+      postActionSnapshot: 'delta',
+      verify: {
+        oneOf: [{
+          type: 'unknownVerifyType',
+          text: 'Saved'
+        }]
+      }
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
     validateToolInput('codex_chrome_batch', {
       origin: 'https://example.com',
       actions: [{
@@ -615,7 +663,11 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
         action: 'fill',
         handle: 'el_state_0',
         text: 'Draft',
-        extra: true
+        targetContract: {
+          version: 1,
+          tag: 'input',
+          extra: true
+        }
       }]
     }).error.code,
     'INVALID_TOOL_INPUT'
@@ -920,7 +972,8 @@ test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
       postActionSnapshot: 'delta',
       postActionVerifyDelayMs: 500,
       actionTrace: true,
-      actionTraceLabel: 'Save click'
+      actionTraceLabel: 'Save click',
+      targetContract: SAVE_TARGET_CONTRACT
     }
   });
   await adapter.executeTool({
@@ -943,7 +996,8 @@ test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
       postActionSnapshot: 'delta',
       postActionVerifyDelayMs: 500,
       actionTrace: true,
-      actionTraceLabel: 'Save click'
+      actionTraceLabel: 'Save click',
+      targetContract: SAVE_TARGET_CONTRACT
     }],
     ['operator.runtime.tab.indicator', {
       tabId: 7,
@@ -991,7 +1045,8 @@ test('CodexChromeToolAdapter routes compact read page and batch actions with nor
       actions: [{
         action: 'fill',
         handle: 'el_state_0',
-        text: 'Draft'
+        text: 'Draft',
+        targetContract: SAVE_TARGET_CONTRACT
       }, {
         action: 'pressKey',
         handle: 'el_state_0',
@@ -1016,7 +1071,8 @@ test('CodexChromeToolAdapter routes compact read page and batch actions with nor
     actions: [{
       action: 'fill',
       handle: 'el_state_0',
-      text: 'Draft'
+      text: 'Draft',
+      targetContract: SAVE_TARGET_CONTRACT
     }, {
       action: 'pressKey',
       handle: 'el_state_0',
@@ -1838,7 +1894,8 @@ test('CodexChromeToolAdapter exposes and routes basic DOM action tools', async (
       maxActionableHandles: 8,
       postActionVerifyDelayMs: 250,
       actionTrace: true,
-      actionTraceLabel: 'Typing hello'
+      actionTraceLabel: 'Typing hello',
+      targetContract: SAVE_TARGET_CONTRACT
     }],
     ['codex_chrome_clear', 'page.clear', { origin: 'https://example.com/form?draft=1', handle: 'el_0' }],
     ['codex_chrome_focus', 'page.focus', { origin: 'https://example.com/form?draft=1', handle: 'el_0' }],

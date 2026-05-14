@@ -160,6 +160,57 @@ function layoutContext() {
   };
 }
 
+function frameElementForDocument(rootNode) {
+  try {
+    return rootNode &&
+      rootNode.defaultView &&
+      rootNode.defaultView.frameElement
+      ? rootNode.defaultView.frameElement
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function targetProvenanceForElement(element) {
+  let shadowDepth = 0;
+  let frameDepth = 0;
+  let frameElement = null;
+  let rootNode = element && typeof element.getRootNode === 'function'
+    ? element.getRootNode()
+    : element && element.ownerDocument;
+
+  for (let guard = 0; rootNode && rootNode !== document && guard < 12; guard += 1) {
+    if (rootNode.host) {
+      shadowDepth += 1;
+      rootNode = typeof rootNode.host.getRootNode === 'function'
+        ? rootNode.host.getRootNode()
+        : rootNode.host.ownerDocument;
+      continue;
+    }
+
+    const ownerFrame = frameElementForDocument(rootNode);
+    if (ownerFrame) {
+      frameDepth += 1;
+      frameElement = frameElement || ownerFrame;
+      rootNode = typeof ownerFrame.getRootNode === 'function'
+        ? ownerFrame.getRootNode()
+        : ownerFrame.ownerDocument;
+      continue;
+    }
+
+    break;
+  }
+
+  return compactElementSummary({
+    shadowDepth: shadowDepth > 0 ? shadowDepth : null,
+    frameDepth: frameDepth > 0 ? frameDepth : null,
+    frameTitle: frameElement ? frameElement.getAttribute('title') || frameElement.getAttribute('aria-label') || null : null,
+    frameName: frameElement ? frameElement.getAttribute('name') || null : null,
+    frameSrc: frameElement ? frameElement.getAttribute('src') || frameElement.src || null : null
+  });
+}
+
 function targetContractForElement(element, handle, summary) {
   const data = summary.data || {};
   return compactElementSummary({
@@ -179,7 +230,8 @@ function targetContractForElement(element, handle, summary) {
     data,
     productId: summary.productId || null,
     bbox: summary.bbox || null,
-    context: summary.context || null
+    context: summary.context || null,
+    provenance: targetProvenanceForElement(element)
   });
 }
 
@@ -1376,9 +1428,10 @@ async function formFillExecute(message = {}) {
       };
     }
     element.focus();
-    element.value = step.text || step.value || '';
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
+    const fillResult = setEditableText(element, step.text || step.value || '', 'fill');
+    if (!fillResult.ok) {
+      return fillResult;
+    }
     executed.push({ handle: step.handle, action: 'fill' });
   }
   const invalidFields = collectFormFields()
@@ -1421,6 +1474,164 @@ function expectedActionValue(message = {}) {
   return message.text !== undefined ? message.text : message.value;
 }
 
+function isContentEditableElement(element) {
+  if (!element) {
+    return false;
+  }
+  const attrValue = typeof element.getAttribute === 'function'
+    ? String(element.getAttribute('contenteditable') || '').toLowerCase()
+    : '';
+  return element.isContentEditable === true || attrValue === 'true' || attrValue === 'plaintext-only';
+}
+
+function prototypeValueDescriptorForElement(element) {
+  if (!element) {
+    return null;
+  }
+  const ownerDocument = element.ownerDocument || document;
+  const ownerWindow = ownerDocument.defaultView || window;
+  const tag = String(element.tagName || '').toLowerCase();
+  const prototypes = [];
+  if (tag === 'input' && ownerWindow.HTMLInputElement) {
+    prototypes.push(ownerWindow.HTMLInputElement.prototype);
+  } else if (tag === 'textarea' && ownerWindow.HTMLTextAreaElement) {
+    prototypes.push(ownerWindow.HTMLTextAreaElement.prototype);
+  } else if (tag === 'select' && ownerWindow.HTMLSelectElement) {
+    prototypes.push(ownerWindow.HTMLSelectElement.prototype);
+  }
+  let prototype = Object.getPrototypeOf(element);
+  while (prototype) {
+    prototypes.push(prototype);
+    prototype = Object.getPrototypeOf(prototype);
+  }
+  for (const candidate of prototypes) {
+    const descriptor = candidate && Object.getOwnPropertyDescriptor(candidate, 'value');
+    if (descriptor && typeof descriptor.set === 'function') {
+      return descriptor;
+    }
+  }
+  return null;
+}
+
+function dispatchEditableInputEvents(element, options = {}) {
+  const inputType = options.inputType || 'insertReplacementText';
+  const data = options.data ?? null;
+  try {
+    if (typeof InputEvent === 'function') {
+      element.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        composed: true,
+        inputType,
+        data
+      }));
+    } else {
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  } catch (_error) {
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function setFormControlText(element, value, action = 'fill') {
+  const text = String(value ?? '');
+  const descriptor = prototypeValueDescriptorForElement(element);
+  if (descriptor && typeof descriptor.set === 'function') {
+    descriptor.set.call(element, text);
+  } else {
+    element.value = text;
+  }
+  const inputType = text === ''
+    ? 'deleteContentBackward'
+    : (action === 'type' ? 'insertText' : 'insertReplacementText');
+  dispatchEditableInputEvents(element, {
+    inputType,
+    data: text === '' ? null : text
+  });
+  return { ok: true };
+}
+
+function setContentEditableText(element, value, action = 'fill') {
+  const text = String(value ?? '');
+  const ownerDocument = element.ownerDocument || document;
+  const ownerWindow = ownerDocument.defaultView || window;
+  const getSelection = typeof ownerWindow.getSelection === 'function'
+    ? () => ownerWindow.getSelection()
+    : (typeof ownerDocument.getSelection === 'function' ? () => ownerDocument.getSelection() : null);
+  if (
+    typeof ownerDocument.createRange !== 'function' ||
+    typeof ownerDocument.execCommand !== 'function' ||
+    typeof getSelection !== 'function'
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: 'TARGET_EDIT_COMMAND_UNAVAILABLE',
+        message: 'The contenteditable target cannot be edited through browser editing commands.'
+      }
+    };
+  }
+  const selection = getSelection();
+  if (!selection || typeof selection.removeAllRanges !== 'function' || typeof selection.addRange !== 'function') {
+    return {
+      ok: false,
+      error: {
+        code: 'TARGET_SELECTION_UNAVAILABLE',
+        message: 'The contenteditable target cannot be selected for editing.'
+      }
+    };
+  }
+  const range = ownerDocument.createRange();
+  if (!range || typeof range.selectNodeContents !== 'function') {
+    return {
+      ok: false,
+      error: {
+        code: 'TARGET_SELECTION_UNAVAILABLE',
+        message: 'The contenteditable target cannot be selected for editing.'
+      }
+    };
+  }
+  range.selectNodeContents(element);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  const command = text === '' ? 'delete' : 'insertText';
+  const commandValue = text === '' ? null : text;
+  if (!ownerDocument.execCommand(command, false, commandValue)) {
+    return {
+      ok: false,
+      error: {
+        code: 'TARGET_EDIT_COMMAND_FAILED',
+        message: `The contenteditable target rejected the ${command} edit command.`
+      }
+    };
+  }
+  const inputType = text === ''
+    ? 'deleteContentBackward'
+    : (action === 'type' ? 'insertText' : 'insertReplacementText');
+  dispatchEditableInputEvents(element, {
+    inputType,
+    data: text === '' ? null : text
+  });
+  return { ok: true, command };
+}
+
+function setEditableText(element, value, action = 'fill') {
+  if (isContentEditableElement(element)) {
+    return setContentEditableText(element, value, action);
+  }
+  if ('value' in element) {
+    return setFormControlText(element, value, action);
+  }
+  return {
+    ok: false,
+    error: {
+      code: 'TARGET_NOT_EDITABLE',
+      message: 'The target element cannot receive text input.'
+    }
+  };
+}
+
 function currentActionValue(element, message = {}) {
   if (!element) {
     return undefined;
@@ -1428,11 +1639,11 @@ function currentActionValue(element, message = {}) {
   if (message.action === 'check') {
     return Boolean(element.checked);
   }
+  if (isContentEditableElement(element)) {
+    return element.textContent || '';
+  }
   if ('value' in element) {
     return element.value;
-  }
-  if (element.isContentEditable || element.getAttribute('contenteditable') === 'true') {
-    return element.textContent || '';
   }
   return undefined;
 }
@@ -1646,11 +1857,36 @@ function navigationHrefForElement(element) {
   }
 }
 
-function withPostActionSnapshot(response, message = {}, context = {}) {
+function sleep(ms) {
+  return new Promise((resolve) => {
+    const timer = typeof setTimeout === 'function'
+      ? setTimeout
+      : (window && typeof window.setTimeout === 'function' ? window.setTimeout.bind(window) : null);
+    if (!timer) {
+      resolve();
+      return;
+    }
+    timer(resolve, ms);
+  });
+}
+
+function postActionVerifyDelayMs(message = {}) {
+  const delay = Number(message.postActionVerifyDelayMs);
+  if (!Number.isFinite(delay) || delay <= 0) {
+    return 0;
+  }
+  return Math.min(10000, Math.floor(delay));
+}
+
+async function withPostActionSnapshot(response, message = {}, context = {}) {
   if (!response || response.ok !== true || message.postActionSnapshot !== 'delta') {
     return response;
   }
   try {
+    const verifyDelayMs = postActionVerifyDelayMs(message);
+    if (verifyDelayMs > 0) {
+      await sleep(verifyDelayMs);
+    }
     const postActionSnapshot = collectObservation({
       mode: message.mode || 'tiny',
       maxActionableHandles: message.maxActionableHandles,
@@ -1733,9 +1969,10 @@ async function runAction(message) {
 
   if (message.action === 'fill' || message.action === 'type') {
     element.focus();
-    element.value = message.text || message.value || '';
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
+    const textResult = setEditableText(element, message.text || message.value || '', message.action);
+    if (!textResult.ok) {
+      return textResult;
+    }
     const traceAction = message.action === 'type' ? 'type' : 'fill';
     return withPostActionSnapshot({
       ok: true,
@@ -1753,9 +1990,10 @@ async function runAction(message) {
 
   if (message.action === 'clear') {
     element.focus();
-    element.value = '';
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
+    const textResult = setEditableText(element, '', 'clear');
+    if (!textResult.ok) {
+      return textResult;
+    }
     return withPostActionSnapshot({
       ok: true,
       result: resultWithActionTrace({ action: 'cleared' }, 'clear', element, message.handle, message)
@@ -1775,8 +2013,10 @@ async function runAction(message) {
   }
 
   if (message.action === 'select') {
-    element.value = message.value || '';
-    element.dispatchEvent(new Event('change', { bubbles: true }));
+    const selectResult = setFormControlText(element, message.value || '', 'select');
+    if (!selectResult.ok) {
+      return selectResult;
+    }
     return withPostActionSnapshot({
       ok: true,
       result: resultWithActionTrace({ action: 'selected' }, 'select', element, message.handle, message)
@@ -1947,9 +2187,24 @@ async function runBatch(message = {}) {
   let stoppedOnError = false;
 
   for (const action of actions) {
+    const actionWithPolicy = action && typeof action === 'object'
+      ? {
+        ...action,
+        ...(action.approval === undefined && message.approval !== undefined
+          ? { approval: message.approval }
+          : {}),
+        policy: {
+          ...(message.policy && typeof message.policy === 'object' ? message.policy : {}),
+          ...(action.policy && typeof action.policy === 'object' ? action.policy : {})
+        }
+      }
+      : action;
+    if (actionWithPolicy && actionWithPolicy.policy && Object.keys(actionWithPolicy.policy).length === 0) {
+      delete actionWithPolicy.policy;
+    }
     let response;
     try {
-      response = await runBatchAction(action || {});
+      response = await runBatchAction(actionWithPolicy || {});
     } catch (error) {
       response = {
         ok: false,
@@ -2066,7 +2321,8 @@ function resolveLocator(message = {}) {
   let selectorMatches = null;
   if (selector) {
     try {
-      selectorMatches = new Set([...document.querySelectorAll(selector)]);
+      document.querySelectorAll(selector);
+      selectorMatches = new Set(querySelectorAllDeep(selector));
     } catch (error) {
       return {
         ok: false,

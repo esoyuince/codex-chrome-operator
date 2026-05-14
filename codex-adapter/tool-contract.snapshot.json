@@ -1,7 +1,7 @@
 {
   "adapterProtocolVersion": "1.0",
   "toolSchemaVersion": "2026-05-01.m1",
-  "toolDefinitionsHash": "f1220702fa50aad3a51e5fed235e45600537b1f7fa2e76da49abe459a0ab2036",
+  "toolDefinitionsHash": "4f1b9dbfcd69b6bba01922461a2d6f485e9680077b4edab6f22b5026c3dad0b9",
   "toolCount": 60,
   "toolNames": [
     "codex_chrome_status",
@@ -812,6 +812,190 @@
             "type": "number",
             "minimum": 100
           },
+          "targetContract": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": "number"
+              },
+              "handle": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "href": {
+                "type": "string"
+              },
+              "placeholder": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "accessibleName": {
+                "type": "string"
+              },
+              "testid": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "testid": {
+                    "type": "string"
+                  },
+                  "testId": {
+                    "type": "string"
+                  },
+                  "testID": {
+                    "type": "string"
+                  },
+                  "test": {
+                    "type": "string"
+                  },
+                  "risk": {
+                    "type": "string"
+                  },
+                  "productId": {
+                    "type": "string"
+                  },
+                  "visualCard": {
+                    "type": "string"
+                  },
+                  "uploadRole": {
+                    "type": "string"
+                  },
+                  "previewRole": {
+                    "type": "string"
+                  },
+                  "validationMessage": {
+                    "type": "string"
+                  },
+                  "analyzerField": {
+                    "type": "string"
+                  },
+                  "cartAction": {
+                    "type": "string"
+                  },
+                  "sensitivePage": {
+                    "type": "string"
+                  },
+                  "visualPolicy": {
+                    "type": "string"
+                  },
+                  "analysisPolicy": {
+                    "type": "string"
+                  },
+                  "rating": {
+                    "type": "string"
+                  }
+                }
+              },
+              "productId": {
+                "type": "string"
+              },
+              "bbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "minimum": 1
+                  },
+                  "height": {
+                    "type": "number",
+                    "minimum": 1
+                  }
+                }
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "viewport": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "width": {
+                        "type": "number",
+                        "minimum": 1
+                      },
+                      "height": {
+                        "type": "number",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "scroll": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "devicePixelRatio": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shadowDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameTitle": {
+                    "type": "string"
+                  },
+                  "frameName": {
+                    "type": "string"
+                  },
+                  "frameSrc": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -1206,6 +1390,190 @@
                 "actionTraceDurationMs": {
                   "type": "number",
                   "minimum": 100
+                },
+                "targetContract": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "type": "number"
+                    },
+                    "handle": {
+                      "type": "string"
+                    },
+                    "tag": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "href": {
+                      "type": "string"
+                    },
+                    "placeholder": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "accessibleName": {
+                      "type": "string"
+                    },
+                    "testid": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "testid": {
+                          "type": "string"
+                        },
+                        "testId": {
+                          "type": "string"
+                        },
+                        "testID": {
+                          "type": "string"
+                        },
+                        "test": {
+                          "type": "string"
+                        },
+                        "risk": {
+                          "type": "string"
+                        },
+                        "productId": {
+                          "type": "string"
+                        },
+                        "visualCard": {
+                          "type": "string"
+                        },
+                        "uploadRole": {
+                          "type": "string"
+                        },
+                        "previewRole": {
+                          "type": "string"
+                        },
+                        "validationMessage": {
+                          "type": "string"
+                        },
+                        "analyzerField": {
+                          "type": "string"
+                        },
+                        "cartAction": {
+                          "type": "string"
+                        },
+                        "sensitivePage": {
+                          "type": "string"
+                        },
+                        "visualPolicy": {
+                          "type": "string"
+                        },
+                        "analysisPolicy": {
+                          "type": "string"
+                        },
+                        "rating": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "productId": {
+                      "type": "string"
+                    },
+                    "bbox": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "x": {
+                          "type": "number"
+                        },
+                        "y": {
+                          "type": "number"
+                        },
+                        "width": {
+                          "type": "number",
+                          "minimum": 1
+                        },
+                        "height": {
+                          "type": "number",
+                          "minimum": 1
+                        }
+                      }
+                    },
+                    "context": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "url": {
+                          "type": "string"
+                        },
+                        "viewport": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "width": {
+                              "type": "number",
+                              "minimum": 1
+                            },
+                            "height": {
+                              "type": "number",
+                              "minimum": 1
+                            }
+                          }
+                        },
+                        "scroll": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          }
+                        },
+                        "devicePixelRatio": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      }
+                    },
+                    "provenance": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "shadowDepth": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "frameDepth": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "frameTitle": {
+                          "type": "string"
+                        },
+                        "frameName": {
+                          "type": "string"
+                        },
+                        "frameSrc": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
                 },
                 "verify": {
                   "type": "object",
@@ -1675,6 +2043,190 @@
             "type": "number",
             "minimum": 100
           },
+          "targetContract": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": "number"
+              },
+              "handle": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "href": {
+                "type": "string"
+              },
+              "placeholder": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "accessibleName": {
+                "type": "string"
+              },
+              "testid": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "testid": {
+                    "type": "string"
+                  },
+                  "testId": {
+                    "type": "string"
+                  },
+                  "testID": {
+                    "type": "string"
+                  },
+                  "test": {
+                    "type": "string"
+                  },
+                  "risk": {
+                    "type": "string"
+                  },
+                  "productId": {
+                    "type": "string"
+                  },
+                  "visualCard": {
+                    "type": "string"
+                  },
+                  "uploadRole": {
+                    "type": "string"
+                  },
+                  "previewRole": {
+                    "type": "string"
+                  },
+                  "validationMessage": {
+                    "type": "string"
+                  },
+                  "analyzerField": {
+                    "type": "string"
+                  },
+                  "cartAction": {
+                    "type": "string"
+                  },
+                  "sensitivePage": {
+                    "type": "string"
+                  },
+                  "visualPolicy": {
+                    "type": "string"
+                  },
+                  "analysisPolicy": {
+                    "type": "string"
+                  },
+                  "rating": {
+                    "type": "string"
+                  }
+                }
+              },
+              "productId": {
+                "type": "string"
+              },
+              "bbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "minimum": 1
+                  },
+                  "height": {
+                    "type": "number",
+                    "minimum": 1
+                  }
+                }
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "viewport": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "width": {
+                        "type": "number",
+                        "minimum": 1
+                      },
+                      "height": {
+                        "type": "number",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "scroll": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "devicePixelRatio": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shadowDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameTitle": {
+                    "type": "string"
+                  },
+                  "frameName": {
+                    "type": "string"
+                  },
+                  "frameSrc": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -1785,6 +2337,190 @@
             "type": "number",
             "minimum": 100
           },
+          "targetContract": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": "number"
+              },
+              "handle": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "href": {
+                "type": "string"
+              },
+              "placeholder": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "accessibleName": {
+                "type": "string"
+              },
+              "testid": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "testid": {
+                    "type": "string"
+                  },
+                  "testId": {
+                    "type": "string"
+                  },
+                  "testID": {
+                    "type": "string"
+                  },
+                  "test": {
+                    "type": "string"
+                  },
+                  "risk": {
+                    "type": "string"
+                  },
+                  "productId": {
+                    "type": "string"
+                  },
+                  "visualCard": {
+                    "type": "string"
+                  },
+                  "uploadRole": {
+                    "type": "string"
+                  },
+                  "previewRole": {
+                    "type": "string"
+                  },
+                  "validationMessage": {
+                    "type": "string"
+                  },
+                  "analyzerField": {
+                    "type": "string"
+                  },
+                  "cartAction": {
+                    "type": "string"
+                  },
+                  "sensitivePage": {
+                    "type": "string"
+                  },
+                  "visualPolicy": {
+                    "type": "string"
+                  },
+                  "analysisPolicy": {
+                    "type": "string"
+                  },
+                  "rating": {
+                    "type": "string"
+                  }
+                }
+              },
+              "productId": {
+                "type": "string"
+              },
+              "bbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "minimum": 1
+                  },
+                  "height": {
+                    "type": "number",
+                    "minimum": 1
+                  }
+                }
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "viewport": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "width": {
+                        "type": "number",
+                        "minimum": 1
+                      },
+                      "height": {
+                        "type": "number",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "scroll": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "devicePixelRatio": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shadowDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameTitle": {
+                    "type": "string"
+                  },
+                  "frameName": {
+                    "type": "string"
+                  },
+                  "frameSrc": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -1892,6 +2628,190 @@
             "type": "number",
             "minimum": 100
           },
+          "targetContract": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": "number"
+              },
+              "handle": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "href": {
+                "type": "string"
+              },
+              "placeholder": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "accessibleName": {
+                "type": "string"
+              },
+              "testid": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "testid": {
+                    "type": "string"
+                  },
+                  "testId": {
+                    "type": "string"
+                  },
+                  "testID": {
+                    "type": "string"
+                  },
+                  "test": {
+                    "type": "string"
+                  },
+                  "risk": {
+                    "type": "string"
+                  },
+                  "productId": {
+                    "type": "string"
+                  },
+                  "visualCard": {
+                    "type": "string"
+                  },
+                  "uploadRole": {
+                    "type": "string"
+                  },
+                  "previewRole": {
+                    "type": "string"
+                  },
+                  "validationMessage": {
+                    "type": "string"
+                  },
+                  "analyzerField": {
+                    "type": "string"
+                  },
+                  "cartAction": {
+                    "type": "string"
+                  },
+                  "sensitivePage": {
+                    "type": "string"
+                  },
+                  "visualPolicy": {
+                    "type": "string"
+                  },
+                  "analysisPolicy": {
+                    "type": "string"
+                  },
+                  "rating": {
+                    "type": "string"
+                  }
+                }
+              },
+              "productId": {
+                "type": "string"
+              },
+              "bbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "minimum": 1
+                  },
+                  "height": {
+                    "type": "number",
+                    "minimum": 1
+                  }
+                }
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "viewport": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "width": {
+                        "type": "number",
+                        "minimum": 1
+                      },
+                      "height": {
+                        "type": "number",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "scroll": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "devicePixelRatio": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shadowDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameTitle": {
+                    "type": "string"
+                  },
+                  "frameName": {
+                    "type": "string"
+                  },
+                  "frameSrc": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -1997,6 +2917,190 @@
           "actionTraceDurationMs": {
             "type": "number",
             "minimum": 100
+          },
+          "targetContract": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": "number"
+              },
+              "handle": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "href": {
+                "type": "string"
+              },
+              "placeholder": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "accessibleName": {
+                "type": "string"
+              },
+              "testid": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "testid": {
+                    "type": "string"
+                  },
+                  "testId": {
+                    "type": "string"
+                  },
+                  "testID": {
+                    "type": "string"
+                  },
+                  "test": {
+                    "type": "string"
+                  },
+                  "risk": {
+                    "type": "string"
+                  },
+                  "productId": {
+                    "type": "string"
+                  },
+                  "visualCard": {
+                    "type": "string"
+                  },
+                  "uploadRole": {
+                    "type": "string"
+                  },
+                  "previewRole": {
+                    "type": "string"
+                  },
+                  "validationMessage": {
+                    "type": "string"
+                  },
+                  "analyzerField": {
+                    "type": "string"
+                  },
+                  "cartAction": {
+                    "type": "string"
+                  },
+                  "sensitivePage": {
+                    "type": "string"
+                  },
+                  "visualPolicy": {
+                    "type": "string"
+                  },
+                  "analysisPolicy": {
+                    "type": "string"
+                  },
+                  "rating": {
+                    "type": "string"
+                  }
+                }
+              },
+              "productId": {
+                "type": "string"
+              },
+              "bbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "minimum": 1
+                  },
+                  "height": {
+                    "type": "number",
+                    "minimum": 1
+                  }
+                }
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "viewport": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "width": {
+                        "type": "number",
+                        "minimum": 1
+                      },
+                      "height": {
+                        "type": "number",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "scroll": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "devicePixelRatio": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shadowDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameTitle": {
+                    "type": "string"
+                  },
+                  "frameName": {
+                    "type": "string"
+                  },
+                  "frameSrc": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
           },
           "verify": {
             "type": "object",
@@ -2107,6 +3211,190 @@
             "type": "number",
             "minimum": 100
           },
+          "targetContract": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": "number"
+              },
+              "handle": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "href": {
+                "type": "string"
+              },
+              "placeholder": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "accessibleName": {
+                "type": "string"
+              },
+              "testid": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "testid": {
+                    "type": "string"
+                  },
+                  "testId": {
+                    "type": "string"
+                  },
+                  "testID": {
+                    "type": "string"
+                  },
+                  "test": {
+                    "type": "string"
+                  },
+                  "risk": {
+                    "type": "string"
+                  },
+                  "productId": {
+                    "type": "string"
+                  },
+                  "visualCard": {
+                    "type": "string"
+                  },
+                  "uploadRole": {
+                    "type": "string"
+                  },
+                  "previewRole": {
+                    "type": "string"
+                  },
+                  "validationMessage": {
+                    "type": "string"
+                  },
+                  "analyzerField": {
+                    "type": "string"
+                  },
+                  "cartAction": {
+                    "type": "string"
+                  },
+                  "sensitivePage": {
+                    "type": "string"
+                  },
+                  "visualPolicy": {
+                    "type": "string"
+                  },
+                  "analysisPolicy": {
+                    "type": "string"
+                  },
+                  "rating": {
+                    "type": "string"
+                  }
+                }
+              },
+              "productId": {
+                "type": "string"
+              },
+              "bbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "minimum": 1
+                  },
+                  "height": {
+                    "type": "number",
+                    "minimum": 1
+                  }
+                }
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "viewport": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "width": {
+                        "type": "number",
+                        "minimum": 1
+                      },
+                      "height": {
+                        "type": "number",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "scroll": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "devicePixelRatio": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shadowDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameTitle": {
+                    "type": "string"
+                  },
+                  "frameName": {
+                    "type": "string"
+                  },
+                  "frameSrc": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -2216,6 +3504,190 @@
           "actionTraceDurationMs": {
             "type": "number",
             "minimum": 100
+          },
+          "targetContract": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": "number"
+              },
+              "handle": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "href": {
+                "type": "string"
+              },
+              "placeholder": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "accessibleName": {
+                "type": "string"
+              },
+              "testid": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "testid": {
+                    "type": "string"
+                  },
+                  "testId": {
+                    "type": "string"
+                  },
+                  "testID": {
+                    "type": "string"
+                  },
+                  "test": {
+                    "type": "string"
+                  },
+                  "risk": {
+                    "type": "string"
+                  },
+                  "productId": {
+                    "type": "string"
+                  },
+                  "visualCard": {
+                    "type": "string"
+                  },
+                  "uploadRole": {
+                    "type": "string"
+                  },
+                  "previewRole": {
+                    "type": "string"
+                  },
+                  "validationMessage": {
+                    "type": "string"
+                  },
+                  "analyzerField": {
+                    "type": "string"
+                  },
+                  "cartAction": {
+                    "type": "string"
+                  },
+                  "sensitivePage": {
+                    "type": "string"
+                  },
+                  "visualPolicy": {
+                    "type": "string"
+                  },
+                  "analysisPolicy": {
+                    "type": "string"
+                  },
+                  "rating": {
+                    "type": "string"
+                  }
+                }
+              },
+              "productId": {
+                "type": "string"
+              },
+              "bbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "minimum": 1
+                  },
+                  "height": {
+                    "type": "number",
+                    "minimum": 1
+                  }
+                }
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "viewport": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "width": {
+                        "type": "number",
+                        "minimum": 1
+                      },
+                      "height": {
+                        "type": "number",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "scroll": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "devicePixelRatio": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shadowDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameTitle": {
+                    "type": "string"
+                  },
+                  "frameName": {
+                    "type": "string"
+                  },
+                  "frameSrc": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
           },
           "verify": {
             "type": "object",
@@ -2330,6 +3802,190 @@
             "type": "number",
             "minimum": 100
           },
+          "targetContract": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": "number"
+              },
+              "handle": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "href": {
+                "type": "string"
+              },
+              "placeholder": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "accessibleName": {
+                "type": "string"
+              },
+              "testid": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "testid": {
+                    "type": "string"
+                  },
+                  "testId": {
+                    "type": "string"
+                  },
+                  "testID": {
+                    "type": "string"
+                  },
+                  "test": {
+                    "type": "string"
+                  },
+                  "risk": {
+                    "type": "string"
+                  },
+                  "productId": {
+                    "type": "string"
+                  },
+                  "visualCard": {
+                    "type": "string"
+                  },
+                  "uploadRole": {
+                    "type": "string"
+                  },
+                  "previewRole": {
+                    "type": "string"
+                  },
+                  "validationMessage": {
+                    "type": "string"
+                  },
+                  "analyzerField": {
+                    "type": "string"
+                  },
+                  "cartAction": {
+                    "type": "string"
+                  },
+                  "sensitivePage": {
+                    "type": "string"
+                  },
+                  "visualPolicy": {
+                    "type": "string"
+                  },
+                  "analysisPolicy": {
+                    "type": "string"
+                  },
+                  "rating": {
+                    "type": "string"
+                  }
+                }
+              },
+              "productId": {
+                "type": "string"
+              },
+              "bbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "minimum": 1
+                  },
+                  "height": {
+                    "type": "number",
+                    "minimum": 1
+                  }
+                }
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "viewport": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "width": {
+                        "type": "number",
+                        "minimum": 1
+                      },
+                      "height": {
+                        "type": "number",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "scroll": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "devicePixelRatio": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shadowDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameTitle": {
+                    "type": "string"
+                  },
+                  "frameName": {
+                    "type": "string"
+                  },
+                  "frameSrc": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -2441,6 +4097,190 @@
             "type": "number",
             "minimum": 100
           },
+          "targetContract": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": "number"
+              },
+              "handle": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "href": {
+                "type": "string"
+              },
+              "placeholder": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "accessibleName": {
+                "type": "string"
+              },
+              "testid": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "testid": {
+                    "type": "string"
+                  },
+                  "testId": {
+                    "type": "string"
+                  },
+                  "testID": {
+                    "type": "string"
+                  },
+                  "test": {
+                    "type": "string"
+                  },
+                  "risk": {
+                    "type": "string"
+                  },
+                  "productId": {
+                    "type": "string"
+                  },
+                  "visualCard": {
+                    "type": "string"
+                  },
+                  "uploadRole": {
+                    "type": "string"
+                  },
+                  "previewRole": {
+                    "type": "string"
+                  },
+                  "validationMessage": {
+                    "type": "string"
+                  },
+                  "analyzerField": {
+                    "type": "string"
+                  },
+                  "cartAction": {
+                    "type": "string"
+                  },
+                  "sensitivePage": {
+                    "type": "string"
+                  },
+                  "visualPolicy": {
+                    "type": "string"
+                  },
+                  "analysisPolicy": {
+                    "type": "string"
+                  },
+                  "rating": {
+                    "type": "string"
+                  }
+                }
+              },
+              "productId": {
+                "type": "string"
+              },
+              "bbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "minimum": 1
+                  },
+                  "height": {
+                    "type": "number",
+                    "minimum": 1
+                  }
+                }
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "viewport": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "width": {
+                        "type": "number",
+                        "minimum": 1
+                      },
+                      "height": {
+                        "type": "number",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "scroll": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "devicePixelRatio": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shadowDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameTitle": {
+                    "type": "string"
+                  },
+                  "frameName": {
+                    "type": "string"
+                  },
+                  "frameSrc": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
           "verify": {
             "type": "object",
             "additionalProperties": false,
@@ -2547,6 +4387,190 @@
           "actionTraceDurationMs": {
             "type": "number",
             "minimum": 100
+          },
+          "targetContract": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "version": {
+                "type": "number"
+              },
+              "handle": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "href": {
+                "type": "string"
+              },
+              "placeholder": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "accessibleName": {
+                "type": "string"
+              },
+              "testid": {
+                "type": "string"
+              },
+              "data": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "testid": {
+                    "type": "string"
+                  },
+                  "testId": {
+                    "type": "string"
+                  },
+                  "testID": {
+                    "type": "string"
+                  },
+                  "test": {
+                    "type": "string"
+                  },
+                  "risk": {
+                    "type": "string"
+                  },
+                  "productId": {
+                    "type": "string"
+                  },
+                  "visualCard": {
+                    "type": "string"
+                  },
+                  "uploadRole": {
+                    "type": "string"
+                  },
+                  "previewRole": {
+                    "type": "string"
+                  },
+                  "validationMessage": {
+                    "type": "string"
+                  },
+                  "analyzerField": {
+                    "type": "string"
+                  },
+                  "cartAction": {
+                    "type": "string"
+                  },
+                  "sensitivePage": {
+                    "type": "string"
+                  },
+                  "visualPolicy": {
+                    "type": "string"
+                  },
+                  "analysisPolicy": {
+                    "type": "string"
+                  },
+                  "rating": {
+                    "type": "string"
+                  }
+                }
+              },
+              "productId": {
+                "type": "string"
+              },
+              "bbox": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "minimum": 1
+                  },
+                  "height": {
+                    "type": "number",
+                    "minimum": 1
+                  }
+                }
+              },
+              "context": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "viewport": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "width": {
+                        "type": "number",
+                        "minimum": 1
+                      },
+                      "height": {
+                        "type": "number",
+                        "minimum": 1
+                      }
+                    }
+                  },
+                  "scroll": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "x": {
+                        "type": "number"
+                      },
+                      "y": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "devicePixelRatio": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "shadowDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameDepth": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "frameTitle": {
+                    "type": "string"
+                  },
+                  "frameName": {
+                    "type": "string"
+                  },
+                  "frameSrc": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
           },
           "verify": {
             "type": "object",

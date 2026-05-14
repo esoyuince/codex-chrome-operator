@@ -1038,6 +1038,7 @@
       if (inputOptions && typeof InputEvent === 'function') {
         element.dispatchEvent(new InputEvent('input', {
           bubbles: true,
+          composed: true,
           inputType: inputOptions.inputType,
           data: inputOptions.data ?? null
         }));
@@ -1045,6 +1046,63 @@
         element.dispatchEvent(new Event('input', { bubbles: true }));
       }
       element.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function isContentEditableElement(element) {
+      if (!element) {
+        return false;
+      }
+      const attrValue = typeof element.getAttribute === 'function'
+        ? String(element.getAttribute('contenteditable') || '').toLowerCase()
+        : '';
+      return element.isContentEditable === true || attrValue === 'true' || attrValue === 'plaintext-only';
+    }
+
+    function prototypeValueDescriptorForElement(element) {
+      if (!element) {
+        return null;
+      }
+      const ownerDocument = element.ownerDocument || document;
+      const ownerWindow = ownerDocument.defaultView || window;
+      const tag = String(element.tagName || '').toLowerCase();
+      const prototypes = [];
+      if (tag === 'input' && ownerWindow.HTMLInputElement) {
+        prototypes.push(ownerWindow.HTMLInputElement.prototype);
+      } else if (tag === 'textarea' && ownerWindow.HTMLTextAreaElement) {
+        prototypes.push(ownerWindow.HTMLTextAreaElement.prototype);
+      } else if (tag === 'select' && ownerWindow.HTMLSelectElement) {
+        prototypes.push(ownerWindow.HTMLSelectElement.prototype);
+      }
+      let prototype = Object.getPrototypeOf(element);
+      while (prototype) {
+        prototypes.push(prototype);
+        prototype = Object.getPrototypeOf(prototype);
+      }
+      for (const candidate of prototypes) {
+        const descriptor = candidate && Object.getOwnPropertyDescriptor(candidate, 'value');
+        if (descriptor && typeof descriptor.set === 'function') {
+          return descriptor;
+        }
+      }
+      return null;
+    }
+
+    function setFormControlText(element, value, action) {
+      const text = String(value ?? '');
+      const descriptor = prototypeValueDescriptorForElement(element);
+      if (descriptor && typeof descriptor.set === 'function') {
+        descriptor.set.call(element, text);
+      } else {
+        element.value = text;
+      }
+      const inputType = text === ''
+        ? 'deleteContentBackward'
+        : (action === 'type' ? 'insertText' : 'insertReplacementText');
+      dispatchValueEvents(element, {
+        inputType,
+        data: text === '' ? null : text
+      });
+      return { ok: true };
     }
 
     function setContentEditableText(element, text, action) {
@@ -1094,7 +1152,9 @@
       selection.addRange(range);
 
       const command = text === '' ? 'delete' : 'insertText';
-      const inputType = text === '' ? 'deleteContentBackward' : 'insertText';
+      const inputType = text === ''
+        ? 'deleteContentBackward'
+        : (action === 'type' ? 'insertText' : 'insertReplacementText');
       const commandValue = text === '' ? null : text;
       const commandSucceeded = ownerDocument.execCommand(command, false, commandValue);
       if (!commandSucceeded) {
@@ -1131,11 +1191,11 @@
     }
 
     function elementTextValue(element) {
+      if (isContentEditableElement(element)) {
+        return String(element.textContent ?? '');
+      }
       if ('value' in element) {
         return String(element.value ?? '');
-      }
-      if (element.isContentEditable) {
-        return String(element.textContent ?? '');
       }
       return null;
     }
@@ -1255,13 +1315,15 @@
     function setElementText(element, value, action) {
       const text = String(value ?? '');
       element.focus();
-      if ('value' in element) {
-        element.value = text;
-        dispatchValueEvents(element);
-      } else if (element.isContentEditable) {
+      if (isContentEditableElement(element)) {
         const editResult = setContentEditableText(element, text, action);
         if (!editResult.ok) {
           return editResult;
+        }
+      } else if ('value' in element) {
+        const valueResult = setFormControlText(element, text, action);
+        if (!valueResult.ok) {
+          return valueResult;
         }
       } else {
         return {
@@ -1408,8 +1470,10 @@
         };
       }
       const expectedValue = String(payload.value ?? '');
-      element.value = expectedValue;
-      dispatchValueEvents(element);
+      const selected = setFormControlText(element, expectedValue, 'select');
+      if (!selected.ok) {
+        return selected;
+      }
       const verification = verifyElementText(element, expectedValue, { action: 'select', mode: 'exact' });
       if (!verification.ok) {
         return verification;
@@ -1611,6 +1675,279 @@
     return value !== null && typeof value === 'object' && !Array.isArray(value);
   }
 
+  function cdpParamError(message, extra = {}) {
+    return {
+      ok: false,
+      error: {
+        code: 'INVALID_SCHEMA',
+        message,
+        ...extra
+      }
+    };
+  }
+
+  function rejectUnknownCdpParams(params, allowedKeys) {
+    for (const key of Object.keys(params)) {
+      if (!allowedKeys.has(key)) {
+        return cdpParamError(`CDP params do not accept field: ${key}.`, {
+          field: `params.${key}`
+        });
+      }
+    }
+    return null;
+  }
+
+  function requireStringLength(params, key, maxLength) {
+    if (params[key] === undefined) {
+      return null;
+    }
+    if (typeof params[key] !== 'string') {
+      return cdpParamError(`CDP ${key} must be a string.`, { field: `params.${key}` });
+    }
+    if (params[key].length > maxLength) {
+      return cdpParamError(`CDP ${key} is too long.`, {
+        field: `params.${key}`,
+        maxLength
+      });
+    }
+    return null;
+  }
+
+  function validateCdpScreenshotClip(clip) {
+    if (clip === undefined) {
+      return null;
+    }
+    if (!isPlainObject(clip)) {
+      return cdpParamError('CDP screenshot clip must be an object.', { field: 'params.clip' });
+    }
+    const unknown = rejectUnknownCdpParams(clip, new Set(['x', 'y', 'width', 'height', 'scale']));
+    if (unknown) {
+      return unknown;
+    }
+    for (const key of ['x', 'y', 'width', 'height', 'scale']) {
+      if (!Number.isFinite(clip[key])) {
+        return cdpParamError(`CDP screenshot clip.${key} must be a finite number.`, {
+          field: `params.clip.${key}`
+        });
+      }
+    }
+    if (clip.x < 0 || clip.y < 0) {
+      return cdpParamError('CDP screenshot clip origin must be non-negative.', {
+        field: 'params.clip'
+      });
+    }
+    if (clip.width <= 0 || clip.height <= 0) {
+      return cdpParamError('CDP screenshot clip dimensions must be positive.', {
+        field: 'params.clip'
+      });
+    }
+    if (clip.width > 10000 || clip.height > 10000) {
+      return cdpParamError('CDP screenshot clip dimensions are too large.', {
+        field: 'params.clip',
+        maxDimension: 10000
+      });
+    }
+    if (clip.scale <= 0 || clip.scale > 10) {
+      return cdpParamError('CDP screenshot clip scale must be within 0-10.', {
+        field: 'params.clip.scale'
+      });
+    }
+    return null;
+  }
+
+  function validateCdpParamsForMethod(method, params) {
+    if (!isPlainObject(params)) {
+      return cdpParamError('CDP params must be an object.');
+    }
+
+    if (method === 'Input.insertText') {
+      const unknown = rejectUnknownCdpParams(params, new Set(['text']));
+      if (unknown) {
+        return unknown;
+      }
+      if (typeof params.text !== 'string' || params.text.length === 0) {
+        return cdpParamError('CDP Input.insertText requires non-empty text.', { field: 'params.text' });
+      }
+      if (params.text.length > 2000) {
+        return cdpParamError('CDP Input.insertText text is too long.', {
+          field: 'params.text',
+          maxLength: 2000
+        });
+      }
+      return { ok: true, params };
+    }
+
+    if (method === 'Input.dispatchMouseEvent') {
+      const allowed = new Set(['type', 'x', 'y', 'button', 'buttons', 'clickCount', 'modifiers', 'deltaX', 'deltaY']);
+      const unknown = rejectUnknownCdpParams(params, allowed);
+      if (unknown) {
+        return unknown;
+      }
+      if (!['mouseMoved', 'mousePressed', 'mouseReleased', 'mouseWheel'].includes(params.type)) {
+        return cdpParamError('CDP mouse event type is not allowed.', { field: 'params.type' });
+      }
+      for (const key of ['x', 'y']) {
+        if (!Number.isFinite(params[key])) {
+          return cdpParamError(`CDP ${key} must be a finite number.`, { field: `params.${key}` });
+        }
+      }
+      if (params.button !== undefined && !['none', 'left', 'middle', 'right', 'back', 'forward'].includes(params.button)) {
+        return cdpParamError('CDP mouse button is not allowed.', { field: 'params.button' });
+      }
+      for (const key of ['buttons', 'clickCount', 'modifiers', 'deltaX', 'deltaY']) {
+        if (params[key] !== undefined && !Number.isFinite(params[key])) {
+          return cdpParamError(`CDP ${key} must be a finite number.`, { field: `params.${key}` });
+        }
+      }
+      return { ok: true, params };
+    }
+
+    if (method === 'Input.dispatchKeyEvent') {
+      const allowed = new Set([
+        'type',
+        'modifiers',
+        'timestamp',
+        'text',
+        'unmodifiedText',
+        'keyIdentifier',
+        'code',
+        'key',
+        'windowsVirtualKeyCode',
+        'nativeVirtualKeyCode',
+        'autoRepeat',
+        'isKeypad',
+        'isSystemKey',
+        'location',
+        'commands'
+      ]);
+      const unknown = rejectUnknownCdpParams(params, allowed);
+      if (unknown) {
+        return unknown;
+      }
+      if (!['keyDown', 'keyUp', 'rawKeyDown', 'char'].includes(params.type)) {
+        return cdpParamError('CDP key event type is not allowed.', { field: 'params.type' });
+      }
+      for (const key of ['text', 'unmodifiedText', 'keyIdentifier', 'code', 'key']) {
+        const stringError = requireStringLength(params, key, 120);
+        if (stringError) {
+          return stringError;
+        }
+      }
+      for (const key of ['modifiers', 'timestamp', 'windowsVirtualKeyCode', 'nativeVirtualKeyCode', 'location']) {
+        if (params[key] !== undefined && !Number.isFinite(params[key])) {
+          return cdpParamError(`CDP ${key} must be a finite number.`, { field: `params.${key}` });
+        }
+      }
+      for (const key of ['autoRepeat', 'isKeypad', 'isSystemKey']) {
+        if (params[key] !== undefined && typeof params[key] !== 'boolean') {
+          return cdpParamError(`CDP ${key} must be boolean.`, { field: `params.${key}` });
+        }
+      }
+      if (params.commands !== undefined) {
+        if (!Array.isArray(params.commands) || params.commands.some((command) => typeof command !== 'string' || command.length > 80)) {
+          return cdpParamError('CDP commands must be an array of short strings.', { field: 'params.commands' });
+        }
+      }
+      return { ok: true, params };
+    }
+
+    if (method === 'DOM.scrollIntoViewIfNeeded') {
+      const allowed = new Set(['nodeId', 'backendNodeId', 'objectId', 'rect']);
+      const unknown = rejectUnknownCdpParams(params, allowed);
+      if (unknown) {
+        return unknown;
+      }
+      const hasNodeRef = Number.isInteger(params.nodeId) ||
+        Number.isInteger(params.backendNodeId) ||
+        (typeof params.objectId === 'string' && params.objectId.length > 0);
+      if (!hasNodeRef) {
+        return cdpParamError('CDP DOM.scrollIntoViewIfNeeded requires nodeId, backendNodeId, or objectId.', {
+          field: 'params'
+        });
+      }
+      if (params.rect !== undefined) {
+        if (!isPlainObject(params.rect)) {
+          return cdpParamError('CDP rect must be an object.', { field: 'params.rect' });
+        }
+        const rectUnknown = rejectUnknownCdpParams(params.rect, new Set(['x', 'y', 'width', 'height']));
+        if (rectUnknown) {
+          return rectUnknown;
+        }
+        for (const key of ['x', 'y', 'width', 'height']) {
+          if (params.rect[key] !== undefined && !Number.isFinite(params.rect[key])) {
+            return cdpParamError(`CDP rect.${key} must be a finite number.`, {
+              field: `params.rect.${key}`
+            });
+          }
+        }
+      }
+      return { ok: true, params };
+    }
+
+    if (method === 'Page.captureScreenshot') {
+      const unknown = rejectUnknownCdpParams(params, new Set(['format', 'quality', 'clip', 'fromSurface']));
+      if (unknown) {
+        return unknown;
+      }
+      if (params.format !== undefined && !['png', 'jpeg', 'webp'].includes(params.format)) {
+        return cdpParamError('CDP screenshot format is not allowed.', { field: 'params.format' });
+      }
+      if (
+        params.quality !== undefined &&
+        (!Number.isInteger(params.quality) || params.quality < 0 || params.quality > 100)
+      ) {
+        return cdpParamError('CDP screenshot quality must be an integer from 0 to 100.', {
+          field: 'params.quality'
+        });
+      }
+      if (params.fromSurface !== undefined && typeof params.fromSurface !== 'boolean') {
+        return cdpParamError('CDP screenshot fromSurface must be boolean.', {
+          field: 'params.fromSurface'
+        });
+      }
+      const clipError = validateCdpScreenshotClip(params.clip);
+      if (clipError) {
+        return clipError;
+      }
+      return { ok: true, params };
+    }
+
+    if (method === 'Page.handleJavaScriptDialog') {
+      const unknown = rejectUnknownCdpParams(params, new Set(['accept', 'promptText']));
+      if (unknown) {
+        return unknown;
+      }
+      if (typeof params.accept !== 'boolean') {
+        return cdpParamError('CDP Page.handleJavaScriptDialog requires boolean accept.', {
+          field: 'params.accept'
+        });
+      }
+      const promptTextError = requireStringLength(params, 'promptText', 500);
+      if (promptTextError) {
+        return promptTextError;
+      }
+      return { ok: true, params };
+    }
+
+    if (method === 'Page.getLayoutMetrics') {
+      const unknown = rejectUnknownCdpParams(params, new Set());
+      if (unknown) {
+        return unknown;
+      }
+      return { ok: true, params: {} };
+    }
+
+    if (method === 'Target.getTargets') {
+      const unknown = rejectUnknownCdpParams(params, new Set());
+      if (unknown) {
+        return unknown;
+      }
+      return { ok: true, params: {} };
+    }
+
+    return cdpParamError('CDP method has no strict parameter validator.', { method });
+  }
+
   function mimeTypeForCaptureFormat(format) {
     if (format === 'jpeg') {
       return 'image/jpeg';
@@ -1652,6 +1989,10 @@
         }
       };
     }
+    const cdpParams = validateCdpParamsForMethod(method, params);
+    if (!cdpParams.ok) {
+      return cdpParams;
+    }
     if (!tab || !tab.id) {
       return { ok: false, error: { code: 'NO_ACTIVE_TAB' } };
     }
@@ -1667,7 +2008,7 @@
         await attachDebugger(chromeApi, target, timeoutMs);
         attached = true;
       }
-      const response = await sendCommand(chromeApi, target, method, params, timeoutMs);
+      const response = await sendCommand(chromeApi, target, method, cdpParams.params, timeoutMs);
       if (method === 'Page.captureScreenshot') {
         const data = response && typeof response.data === 'string' ? response.data : '';
         if (!data) {
@@ -1680,7 +2021,7 @@
             }
           };
         }
-        const mimeType = mimeTypeForCaptureFormat(params.format);
+        const mimeType = mimeTypeForCaptureFormat(cdpParams.params.format);
         return {
           ok: true,
           result: {

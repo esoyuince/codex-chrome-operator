@@ -1238,14 +1238,19 @@ async function resolveRuntimeTabLocator(tabId, params = {}, { includeTargetContr
 
 async function dispatchRuntimeTabLocatorAction(tab, action, params, locator) {
   const target = locator.result && locator.result.target;
-  const preflight = await preflightDebuggerAction({ tab }, action, {
+  const requestedTarget = targetForActionParams({
+    ...params,
     handle: target && target.handle,
-    target,
+    target
+  });
+  const runtimePreflight = await preflightDebuggerAction({ tab }, action, {
+    handle: target && target.handle,
+    target: requestedTarget,
     approval: params.approval,
     policy: params.policy
   });
-  if (!preflight.ok) {
-    return preflight;
+  if (!runtimePreflight.ok) {
+    return runtimePreflight;
   }
   const actionResponse = await runDebuggerAction({
     chromeApi: chrome,
@@ -1253,7 +1258,7 @@ async function dispatchRuntimeTabLocatorAction(tab, action, params, locator) {
     action,
     params: {
       handle: target.handle,
-      target,
+      target: requestedTarget,
       text: params.textValue,
       value: params.textValue,
       approval: params.approval,
@@ -1264,14 +1269,14 @@ async function dispatchRuntimeTabLocatorAction(tab, action, params, locator) {
     ...params,
     action,
     handle: target.handle,
-    target,
+    target: requestedTarget,
     label: params.actionTraceLabel
   });
   return attachPostActionSnapshot(tab.id, tracedResponse, {
     ...params,
     action,
     handle: target.handle,
-    target,
+    target: requestedTarget,
     text: params.textValue,
     value: params.textValue,
     preActionUrl: tab.url
@@ -1699,6 +1704,10 @@ async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
     return actionResponse;
   }
   try {
+    const verifyDelayMs = postActionVerifyDelayMs(params);
+    if (verifyDelayMs > 0) {
+      await sleep(verifyDelayMs);
+    }
     let snapshot = await chrome.tabs.sendMessage(tabId, {
       type: 'content.observe',
       mode: params.mode || 'tiny',
@@ -1707,16 +1716,6 @@ async function attachPostActionSnapshot(tabId, actionResponse, params = {}) {
     let verification = verifyBackgroundAction(actionResponse, snapshot, params);
     if (shouldRetryPostActionVerification(verification, params)) {
       await sleep(Number.isFinite(params.postActionRetryDelayMs) ? params.postActionRetryDelayMs : 1000);
-      snapshot = await chrome.tabs.sendMessage(tabId, {
-        type: 'content.observe',
-        mode: params.mode || 'tiny',
-        ...observeOptions(params)
-      });
-      verification = verifyBackgroundAction(actionResponse, snapshot, params);
-    }
-    const verifyDelayMs = postActionVerifyDelayMs(params);
-    if (verifyDelayMs > 0) {
-      await sleep(verifyDelayMs);
       snapshot = await chrome.tabs.sendMessage(tabId, {
         type: 'content.observe',
         mode: params.mode || 'tiny',
@@ -1976,6 +1975,77 @@ async function requireActiveTabForOrigin(origin, options = {}) {
   return { ok: true, tab, origin: activeOrigin };
 }
 
+function firstTargetValue(...values) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== '') {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function compactTarget(target) {
+  return Object.fromEntries(
+    Object.entries(target).filter(([, value]) => value !== undefined && value !== null)
+  );
+}
+
+function targetForActionParams(params = {}) {
+  const suppliedTarget = params.target && typeof params.target === 'object' && !Array.isArray(params.target)
+    ? params.target
+    : null;
+  const targetContract = params.targetContract && typeof params.targetContract === 'object' && !Array.isArray(params.targetContract)
+    ? params.targetContract
+    : suppliedTarget &&
+        suppliedTarget.targetContract &&
+        typeof suppliedTarget.targetContract === 'object' &&
+        !Array.isArray(suppliedTarget.targetContract)
+      ? suppliedTarget.targetContract
+      : null;
+
+  if (!suppliedTarget && !targetContract) {
+    return undefined;
+  }
+
+  const data = targetContract && targetContract.data && typeof targetContract.data === 'object' && !Array.isArray(targetContract.data)
+    ? targetContract.data
+    : {};
+  return compactTarget({
+    ...(suppliedTarget || {}),
+    handle: firstTargetValue(suppliedTarget && suppliedTarget.handle, params.handle, targetContract && targetContract.handle),
+    tag: firstTargetValue(suppliedTarget && suppliedTarget.tag, targetContract && targetContract.tag),
+    role: firstTargetValue(suppliedTarget && suppliedTarget.role, targetContract && targetContract.role),
+    type: firstTargetValue(suppliedTarget && suppliedTarget.type, targetContract && targetContract.type),
+    id: firstTargetValue(suppliedTarget && suppliedTarget.id, targetContract && targetContract.id),
+    name: firstTargetValue(suppliedTarget && suppliedTarget.name, targetContract && targetContract.name),
+    href: firstTargetValue(suppliedTarget && suppliedTarget.href, targetContract && targetContract.href),
+    placeholder: firstTargetValue(suppliedTarget && suppliedTarget.placeholder, targetContract && targetContract.placeholder),
+    title: firstTargetValue(suppliedTarget && suppliedTarget.title, targetContract && targetContract.title),
+    label: firstTargetValue(
+      suppliedTarget && suppliedTarget.label,
+      targetContract && targetContract.label,
+      targetContract && targetContract.accessibleName
+    ),
+    accessibleName: firstTargetValue(
+      suppliedTarget && suppliedTarget.accessibleName,
+      targetContract && targetContract.accessibleName,
+      targetContract && targetContract.label
+    ),
+    testid: firstTargetValue(
+      suppliedTarget && suppliedTarget.testid,
+      targetContract && targetContract.testid,
+      data.testid,
+      data.testId,
+      data.testID,
+      data.test
+    ),
+    productId: firstTargetValue(suppliedTarget && suppliedTarget.productId, targetContract && targetContract.productId),
+    bbox: firstTargetValue(suppliedTarget && suppliedTarget.bbox, targetContract && targetContract.bbox),
+    context: firstTargetValue(suppliedTarget && suppliedTarget.context, targetContract && targetContract.context),
+    targetContract: targetContract || undefined
+  });
+}
+
 async function preflightDebuggerAction(ready, action, params) {
   const highRiskPolicyEnabled = !(params.policy && params.policy.highRiskEnabled === false);
   if (action === 'scroll' && !params.handle) {
@@ -2210,6 +2280,8 @@ async function handleOperatorCommand(command) {
         type: 'content.batch',
         origin: params.origin,
         stopOnError: params.stopOnError,
+        approval: params.approval,
+        policy: params.policy,
         actions: params.actions
       });
     }
@@ -2295,11 +2367,18 @@ async function handleOperatorCommand(command) {
       return { ok: false, error: { code: 'UNKNOWN_METHOD' } };
     }
 
-    const preflight = await preflightDebuggerAction(ready, action, params);
+    const requestedTarget = targetForActionParams(params);
+    const preflight = await preflightDebuggerAction(ready, action, {
+      ...params,
+      target: requestedTarget
+    });
     if (!preflight.ok) {
       return preflight;
     }
-    const observedTarget = params.target || (preflight.result && preflight.result.target);
+    const observedTarget = targetForActionParams({
+      ...params,
+      target: (preflight.result && preflight.result.target) || requestedTarget
+    });
 
     const actionResponse = await runDebuggerAction({
       chromeApi: chrome,

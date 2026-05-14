@@ -79,11 +79,10 @@ function element(tagName, attrs = {}, children = []) {
       });
     },
     querySelector(selector) {
-      return flattenElements(this).find((node) => node !== this && selectorMatchesElement(selector, node)) || null;
+      return querySelectorAllLight(this, selector)[0] || null;
     },
     querySelectorAll(selector) {
-      const selectors = selector.split(',').map((item) => item.trim());
-      return flattenElements(this).filter((node) => node !== this && selectors.some((part) => selectorMatchesElement(part, node)));
+      return querySelectorAllLight(this, selector);
     },
     getBoundingClientRect() {
       return { x: 10, y: 20, width: 160, height: 32 };
@@ -104,6 +103,16 @@ function element(tagName, attrs = {}, children = []) {
       this.scrollLeft += deltaX;
       this.scrollTop += deltaY;
     },
+    getRootNode() {
+      let current = this;
+      while (current.parentElement) {
+        current = current.parentElement;
+      }
+      if (current.host) {
+        return current;
+      }
+      return current.ownerDocument || this.ownerDocument || current;
+    },
     dispatchEvent(event) {
       this.events.push(event.type);
     },
@@ -121,24 +130,27 @@ function element(tagName, attrs = {}, children = []) {
       return null;
     }
   };
+  if (node.shadowRoot) {
+    node.shadowRoot.host = node;
+  }
   for (const child of children) {
     child.parentElement = node;
   }
   return node;
 }
 
-function flattenElements(rootElement) {
+function flattenElements(rootElement, { includeShadowAndFrames = true } = {}) {
   const results = [];
   function visit(node) {
     if (!node || !node.tagName) {
       return;
     }
     results.push(node);
-    if (node.shadowRoot) {
+    if (includeShadowAndFrames && node.shadowRoot) {
       visit(node.shadowRoot);
     }
     try {
-      if (node.contentDocument && node.contentDocument.body) {
+      if (includeShadowAndFrames && node.contentDocument && node.contentDocument.body) {
         visit(node.contentDocument.body);
       }
     } catch {
@@ -152,9 +164,82 @@ function flattenElements(rootElement) {
   return results;
 }
 
+function flattenLightElements(rootElement) {
+  return flattenElements(rootElement, { includeShadowAndFrames: false });
+}
+
+function matchesAnySelector(selector, node) {
+  const selectors = selector.split(',').map((item) => item.trim());
+  return selectors.some((part) => selectorMatchesElement(part, node));
+}
+
+function querySelectorAllLight(rootElement, selector, { includeRoot = false } = {}) {
+  return flattenLightElements(rootElement)
+    .filter((node) => (includeRoot || node !== rootElement) && matchesAnySelector(selector, node));
+}
+
+function ensureFrameDocument(documentLike, frameElement) {
+  if (!documentLike || !documentLike.body) {
+    return documentLike || null;
+  }
+  if (!documentLike.defaultView) {
+    documentLike.defaultView = { frameElement };
+  } else if (!documentLike.defaultView.frameElement) {
+    documentLike.defaultView.frameElement = frameElement;
+  }
+  if (!documentLike.querySelectorAll) {
+    documentLike.querySelectorAll = (selector) => querySelectorAllLight(documentLike.body, selector, { includeRoot: true });
+  }
+  if (!documentLike.querySelector) {
+    documentLike.querySelector = (selector) => documentLike.querySelectorAll(selector)[0] || null;
+  }
+  if (!documentLike.getElementById) {
+    documentLike.getElementById = (id) => flattenLightElements(documentLike.body).find((node) => node.id === id) || null;
+  }
+  documentLike.body.ownerDocument = documentLike;
+  return documentLike;
+}
+
+function wireOwnerDocument(node, ownerDocument) {
+  if (!node || !node.tagName) {
+    return;
+  }
+  if (!node.ownerDocument) {
+    node.ownerDocument = ownerDocument;
+  }
+  if (node.shadowRoot) {
+    node.shadowRoot.host = node;
+    wireOwnerDocument(node.shadowRoot, ownerDocument);
+  }
+  try {
+    const frameDocument = ensureFrameDocument(node.contentDocument, node);
+    if (frameDocument && frameDocument.body) {
+      wireOwnerDocument(frameDocument.body, frameDocument);
+    }
+  } catch {
+    // Cross-origin iframe fixture.
+  }
+  for (const child of node.children || []) {
+    wireOwnerDocument(child, ownerDocument);
+  }
+}
+
 function selectorMatchesElement(selector, node) {
   if (selector === '*') {
     return true;
+  }
+  const idMatch = /^#([A-Za-z0-9_-]+)$/.exec(selector);
+  if (idMatch) {
+    return node.id === idMatch[1];
+  }
+  const attrEqualsMatch = /^\[([A-Za-z0-9_-]+)="([^"]*)"\]$/.exec(selector);
+  if (attrEqualsMatch) {
+    return node.getAttribute(attrEqualsMatch[1]) === attrEqualsMatch[2];
+  }
+  const tagAttrEqualsMatch = /^([A-Za-z0-9_-]+)\[([A-Za-z0-9_-]+)="([^"]*)"\]$/.exec(selector);
+  if (tagAttrEqualsMatch) {
+    return node.tagName.toLowerCase() === tagAttrEqualsMatch[1].toLowerCase() &&
+      node.getAttribute(tagAttrEqualsMatch[2]) === tagAttrEqualsMatch[3];
   }
   if (selector === 'a') {
     return node.tagName === 'A';
@@ -292,13 +377,19 @@ function loadContentScript(rootElement) {
   let removeCount = 0;
   const runtimeMessages = [];
   const activeListeners = new Set();
-  const allElements = flattenElements(rootElement);
   const documentElement = element('html', {}, [rootElement]);
+  const allElements = flattenElements(rootElement);
   const context = {
     console,
     location: { href: 'https://example.com/form', origin: 'https://example.com' },
     Event: function Event(type) {
       this.type = type;
+    },
+    InputEvent: function InputEvent(type, options = {}) {
+      this.type = type;
+      this.bubbles = options.bubbles === true;
+      this.inputType = options.inputType || '';
+      this.data = options.data ?? null;
     },
     KeyboardEvent: function KeyboardEvent(type, options = {}) {
       this.type = type;
@@ -332,8 +423,7 @@ function loadContentScript(rootElement) {
       },
       activeElement: null,
       querySelectorAll(selector) {
-        const selectors = selector.split(',').map((item) => item.trim());
-        return allElements.filter((node) => selectors.some((part) => selectorMatchesElement(part, node)));
+        return querySelectorAllLight(documentElement, selector, { includeRoot: true });
       },
       elementFromPoint(x, y) {
         return [...allElements].reverse().find((node) => {
@@ -342,8 +432,7 @@ function loadContentScript(rootElement) {
         }) || null;
       },
       querySelector(selector) {
-        const selectors = selector.split(',').map((item) => item.trim());
-        return allElements.find((node) => selectors.some((part) => selectorMatchesElement(part, node))) || null;
+        return this.querySelectorAll(selector)[0] || null;
       },
       getElementById(id) {
         return flattenElements(documentElement).find((node) => node.id === id) || null;
@@ -376,6 +465,7 @@ function loadContentScript(rootElement) {
       }
     }
   };
+  wireOwnerDocument(documentElement, context.document);
   context.globalThis = context;
   vm.createContext(context);
   for (const relativePath of [
@@ -424,6 +514,61 @@ function loadContentScript(rootElement) {
   };
 }
 
+function reactControlledInput(attrs = {}) {
+  let domValue = String(attrs.value || '');
+  let trackedValue = domValue;
+  let preview = domValue;
+  let nativeSetterCalls = 0;
+  let directSetterCalls = 0;
+  const nativeInputPrototype = {};
+  Object.defineProperty(nativeInputPrototype, 'value', {
+    configurable: true,
+    get() {
+      return domValue;
+    },
+    set(next) {
+      nativeSetterCalls += 1;
+      domValue = String(next ?? '');
+    }
+  });
+  const input = element('input', attrs);
+  Object.setPrototypeOf(input, nativeInputPrototype);
+  Object.defineProperty(input, 'value', {
+    configurable: true,
+    get() {
+      return domValue;
+    },
+    set(next) {
+      directSetterCalls += 1;
+      domValue = String(next ?? '');
+      trackedValue = domValue;
+    }
+  });
+  input.dispatchEvent = (event) => {
+    input.events.push({
+      type: event.type,
+      inputType: event.inputType || '',
+      data: event.data ?? null
+    });
+    if (event.type === 'input' && domValue !== trackedValue) {
+      trackedValue = domValue;
+      preview = domValue;
+    }
+  };
+  return {
+    input,
+    get preview() {
+      return preview;
+    },
+    get nativeSetterCalls() {
+      return nativeSetterCalls;
+    },
+    get directSetterCalls() {
+      return directSetterCalls;
+    }
+  };
+}
+
 test('content script can use compact read_page handles for follow-up DOM actions', async () => {
   const input = element('input', {
     id: 'email',
@@ -454,6 +599,56 @@ test('content script can use compact read_page handles for follow-up DOM actions
   assert.equal(filled.ok, true);
   assert.equal(input.value, 'captain@example.com');
   assert.deepEqual(input.events, ['input', 'change']);
+});
+
+test('content fill and type update controlled input app state with native input semantics', async () => {
+  const controlled = reactControlledInput({
+    id: 'controlled-email',
+    type: 'email',
+    'aria-label': 'Email'
+  });
+  const root = element('main', {}, [controlled.input]);
+  const content = loadContentScript(root);
+  const observed = await content.send({
+    type: 'content.observe',
+    maxActionableHandles: 5
+  });
+  const handle = observed.elements.find((entry) => entry.id === 'controlled-email').handle;
+
+  const filled = await content.send({
+    type: 'content.action',
+    action: 'fill',
+    handle,
+    text: 'captain@example.com'
+  });
+
+  assert.equal(filled.ok, true);
+  assert.equal(controlled.input.value, 'captain@example.com');
+  assert.equal(controlled.preview, 'captain@example.com');
+  assert.equal(controlled.nativeSetterCalls, 1);
+  assert.equal(controlled.directSetterCalls, 0);
+  assert.deepEqual(controlled.input.events, [
+    { type: 'input', inputType: 'insertReplacementText', data: 'captain@example.com' },
+    { type: 'change', inputType: '', data: null }
+  ]);
+
+  controlled.input.events.length = 0;
+  const typed = await content.send({
+    type: 'content.action',
+    action: 'type',
+    handle,
+    text: 'crew@example.com'
+  });
+
+  assert.equal(typed.ok, true);
+  assert.equal(controlled.input.value, 'crew@example.com');
+  assert.equal(controlled.preview, 'crew@example.com');
+  assert.equal(controlled.nativeSetterCalls, 2);
+  assert.equal(controlled.directSetterCalls, 0);
+  assert.deepEqual(controlled.input.events, [
+    { type: 'input', inputType: 'insertText', data: 'crew@example.com' },
+    { type: 'change', inputType: '', data: null }
+  ]);
 });
 
 test('content script shows active operator indicator and routes stop requests to the background', async () => {
@@ -575,6 +770,110 @@ test('content observe includes ARIA and rich editable controls as actionable ele
   assert.ok(observed.elements.some((entry) => entry.id === 'keyboard-panel'));
 });
 
+test('content fill updates contenteditable editor through selection and input events', async () => {
+  const events = [];
+  const commands = [];
+  let text = '';
+  let preview = '';
+  let textContentAssigned = false;
+  let selectedNode = null;
+  const selection = {
+    removeAllRanges() {
+      selectedNode = null;
+    },
+    addRange(range) {
+      selectedNode = range.node;
+    }
+  };
+  const ownerDocument = {
+    createRange() {
+      return {
+        node: null,
+        selectNodeContents(node) {
+          this.node = node;
+        }
+      };
+    },
+    execCommand(command, _showUi, value) {
+      commands.push({ command, value });
+      if (command === 'insertText' && selectedNode === editor) {
+        text = String(value ?? '');
+        return true;
+      }
+      return false;
+    },
+    defaultView: {
+      getSelection() {
+        return selection;
+      }
+    }
+  };
+  const editor = element('div', {
+    id: 'rich-editor',
+    role: 'textbox',
+    'aria-label': 'Editor',
+    contenteditable: 'true'
+  });
+  delete editor.value;
+  editor.isContentEditable = true;
+  editor.ownerDocument = ownerDocument;
+  Object.defineProperty(editor, 'textContent', {
+    configurable: true,
+    get() {
+      return text;
+    },
+    set(next) {
+      textContentAssigned = true;
+      text = String(next ?? '');
+    }
+  });
+  Object.defineProperty(editor, 'innerText', {
+    configurable: true,
+    get() {
+      return text;
+    },
+    set(next) {
+      textContentAssigned = true;
+      text = String(next ?? '');
+    }
+  });
+  editor.dispatchEvent = (event) => {
+    events.push({
+      type: event.type,
+      inputType: event.inputType || '',
+      data: event.data ?? null
+    });
+    if (event.type === 'input') {
+      preview = text;
+    }
+  };
+  const root = element('main', {}, [editor]);
+  const content = loadContentScript(root);
+  const observed = await content.send({
+    type: 'content.observe',
+    mode: 'medium',
+    maxActionableHandles: 5
+  });
+  const handle = observed.elements.find((entry) => entry.id === 'rich-editor').handle;
+
+  const filled = await content.send({
+    type: 'content.action',
+    action: 'fill',
+    handle,
+    text: 'Draft from operator'
+  });
+
+  assert.equal(filled.ok, true);
+  assert.equal(text, 'Draft from operator');
+  assert.equal(preview, 'Draft from operator');
+  assert.equal(textContentAssigned, false);
+  assert.deepEqual(commands, [{ command: 'insertText', value: 'Draft from operator' }]);
+  assert.deepEqual(events, [
+    { type: 'input', inputType: 'insertReplacementText', data: 'Draft from operator' },
+    { type: 'change', inputType: '', data: null }
+  ]);
+});
+
 test('content observe attaches target contracts to actionable summaries', async () => {
   const root = element('main', {}, [
     element('button', {
@@ -629,6 +928,16 @@ test('content observe and locator retain focused controls beyond the interactive
 
   assert.ok(observedQuickSearch);
   assert.equal(observed.focusedElement.handle, observedQuickSearch.handle);
+
+  const typed = await content.send({
+    type: 'content.action',
+    action: 'type',
+    handle: observed.focusedElement.handle,
+    text: 'quartermaster'
+  });
+
+  assert.equal(typed.ok, true);
+  assert.equal(quickSearch.value, 'quartermaster');
 
   const resolved = await content.send({
     type: 'content.resolveLocator',
@@ -849,6 +1158,73 @@ test('content observe includes controls from open shadow roots and same-origin i
   assert.ok(observed.elements.some((entry) => entry.label === 'Frame submit'));
   assert.ok(observed.uiGraph.nodes.some((node) => node.name === 'Shadow save'));
   assert.ok(observed.uiGraph.nodes.some((node) => node.name === 'Frame submit'));
+});
+
+test('content selector locator resolves observed controls inside open shadow roots', async () => {
+  const shadowButton = element('button', {
+    id: 'shadow-save',
+    'data-testid': 'shadow-save',
+    'aria-label': 'Shadow save'
+  });
+  const host = element('section', {
+    id: 'shadow-host',
+    shadowRoot: element('div', {}, [shadowButton])
+  });
+  const root = element('main', { text: 'Shell' }, [host]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    mode: 'medium'
+  });
+  const observedTarget = observed.elements.find((entry) => entry.id === 'shadow-save');
+  const resolved = await content.send({
+    type: 'content.resolveLocator',
+    selector: 'button[data-testid="shadow-save"]',
+    action: 'resolve',
+    includeTargetContract: true
+  });
+
+  assert.ok(observedTarget);
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.result.target.handle, observedTarget.handle);
+  assert.equal(resolved.result.target.targetContract.provenance.shadowDepth, 1);
+  assert.equal(resolved.result.target.targetContract.provenance.frameDepth, undefined);
+});
+
+test('content selector locator resolves observed controls inside same-origin iframes', async () => {
+  const frameButton = element('button', {
+    id: 'frame-submit',
+    'data-testid': 'frame-submit',
+    'aria-label': 'Frame submit'
+  });
+  const iframe = element('iframe', {
+    id: 'checkout-frame',
+    title: 'Checkout frame',
+    contentDocument: {
+      body: element('main', {}, [frameButton])
+    }
+  });
+  const root = element('main', { text: 'Shell' }, [iframe]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    mode: 'medium'
+  });
+  const observedTarget = observed.elements.find((entry) => entry.id === 'frame-submit');
+  const resolved = await content.send({
+    type: 'content.resolveLocator',
+    selector: 'button[data-testid="frame-submit"]',
+    action: 'resolve',
+    includeTargetContract: true
+  });
+
+  assert.ok(observedTarget);
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.result.target.handle, observedTarget.handle);
+  assert.equal(resolved.result.target.targetContract.provenance.frameDepth, 1);
+  assert.equal(resolved.result.target.targetContract.provenance.frameTitle, 'Checkout frame');
 });
 
 test('content observe does not mark a control occluded when alternate hit-test points reach it', async () => {
@@ -1175,6 +1551,41 @@ test('content action verifies explicit textAppearsInArticle post-condition', asy
   assert.ok(clicked.result.verification.evidence.includes('article text appeared: Live Codex Chrome Operator check'));
 });
 
+test('content action delays first verification for async article text', async () => {
+  const article = element('article', { text: '' });
+  const button = element('button', {
+    text: 'Load article',
+    onClick() {
+      setTimeout(() => {
+        article.innerText = 'Async article text loaded after hydration';
+        article.textContent = 'Async article text loaded after hydration';
+      }, 300);
+    }
+  });
+  const root = element('main', { text: 'Article loader' }, [button, article]);
+  const content = loadContentScript(root);
+  const observed = await content.send({ type: 'content.observe' });
+  const handle = observed.elements.find((entry) => entry.tag === 'button').handle;
+
+  const clicked = await content.send({
+    type: 'content.action',
+    action: 'click',
+    handle,
+    postActionSnapshot: 'delta',
+    postActionVerifyDelayMs: 500,
+    verify: {
+      oneOf: [{
+        type: 'textAppearsInArticle',
+        text: 'Async article text loaded after hydration'
+      }]
+    }
+  });
+
+  assert.equal(clicked.ok, true);
+  assert.equal(clicked.result.verification.status, 'succeeded');
+  assert.ok(clicked.result.verification.evidence.includes('article text appeared: Async article text loaded after hydration'));
+});
+
 test('content action verifies explicit textAppears post-condition', async () => {
   const status = element('div', { text: '' });
   const button = element('button', {
@@ -1264,6 +1675,42 @@ test('content batch propagates child action failures to the outer response', asy
   assert.equal(batch.result.results.length, 1);
   assert.equal(batch.result.results[0].ok, false);
   assert.equal(batch.result.stoppedOnError, true);
+});
+
+test('content batch applies top-level relaxed policy to mutation children', async () => {
+  const publish = element('button', {
+    text: 'Publish',
+    'data-risk': 'publish',
+    onClick() {
+      clicked = true;
+    }
+  });
+  let clicked = false;
+  const root = element('main', { text: 'Release controls' }, [publish]);
+  const content = loadContentScript(root);
+  const observed = await content.send({ type: 'content.observe' });
+  const handle = observed.elements.find((entry) => entry.tag === 'button').handle;
+
+  const batch = await content.send({
+    type: 'content.batch',
+    approval: {
+      allowHighRisk: true,
+      allowSensitiveFormFill: true,
+      approvalKind: 'policy-disabled'
+    },
+    policy: {
+      highRiskEnabled: false,
+      sensitiveFormFillEnabled: false
+    },
+    actions: [{
+      action: 'click',
+      handle
+    }]
+  });
+
+  assert.equal(batch.ok, true);
+  assert.equal(batch.result.results[0].ok, true);
+  assert.equal(clicked, true);
 });
 
 test('content click allows high-risk targets when policy-disabled approval is attached', async () => {
@@ -1518,6 +1965,42 @@ test('content form extract plan and execute returns validation state without lea
   assert.equal(executed.ok, true);
   assert.equal(email.value, 'captain@example.com');
   assert.equal(executed.result.invalidFields.length, 0);
+});
+
+test('content form fill execute updates controlled input app state with native input semantics', async () => {
+  const controlled = reactControlledInput({
+    id: 'react-email',
+    name: 'email',
+    type: 'email',
+    'aria-label': 'Email address'
+  });
+  const form = element('form', { id: 'profile' }, [controlled.input]);
+  const root = element('main', {}, [form]);
+  const content = loadContentScript(root);
+
+  const extracted = await content.send({
+    type: 'content.formExtract',
+    includeValues: false
+  });
+  const handle = extracted.result.forms[0].fields[0].handle;
+  const plan = await content.send({
+    type: 'content.formFillPlan',
+    fields: [{ handle, text: 'state@example.com' }]
+  });
+  const executed = await content.send({
+    type: 'content.formFillExecute',
+    steps: plan.result.steps
+  });
+
+  assert.equal(executed.ok, true);
+  assert.equal(controlled.input.value, 'state@example.com');
+  assert.equal(controlled.preview, 'state@example.com');
+  assert.equal(controlled.nativeSetterCalls, 1);
+  assert.equal(controlled.directSetterCalls, 0);
+  assert.deepEqual(controlled.input.events, [
+    { type: 'input', inputType: 'insertReplacementText', data: 'state@example.com' },
+    { type: 'change', inputType: '', data: null }
+  ]);
 });
 
 test('content form fill requires explicit approval for sensitive fields', async () => {

@@ -662,6 +662,19 @@ test('background fails closed when required click verification is inconclusive',
   assert.match(background, /articleTextAppearsInSnapshot/);
 });
 
+test('background waits before the first post-action verification snapshot when requested', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const start = background.indexOf('async function attachPostActionSnapshot');
+  const end = background.indexOf('async function attachActionTraceCue', start);
+  const block = background.slice(start, end);
+
+  assert.ok(start !== -1 && end !== -1, 'attachPostActionSnapshot should be present');
+  assert.ok(
+    block.indexOf('await sleep(verifyDelayMs)') < block.indexOf("type: 'content.observe'"),
+    'postActionVerifyDelayMs should delay before the first observation/verification pass'
+  );
+});
+
 test('background preserves debugger runtime verification for input actions', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 
@@ -679,7 +692,8 @@ test('background verifies debugger link clicks with observed navigation targets'
 
   assert.match(background, /navigationHrefForTarget/);
   assert.match(background, /preActionUrl:\s*ready\.tab\.url/);
-  assert.match(background, /const observedTarget = params\.target \|\|/);
+  assert.match(background, /const requestedTarget = targetForActionParams\(params\);/);
+  assert.match(background, /const observedTarget = targetForActionParams\(/);
   assert.match(background, /target:\s*observedTarget/);
 });
 
@@ -764,6 +778,33 @@ test('background forwards runtime locator policy to debugger preflight', () => {
   assert.match(block, /runLocatorActionWithRetry/);
   assert.match(block, /resolveRuntimeTabLocator\(tab\.id,\s*params,\s*\{\s*includeTargetContract:\s*true\s*\}\)/);
   assert.match(helperBlock, /preflightDebuggerAction\(\{ tab \}, action,/);
+});
+
+test('background forwards batch policy to the content script', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const start = background.indexOf("if (command.method === 'page.batch')");
+  const end = background.indexOf("if (command.method === 'page.visualObserve')", start);
+  const block = background.slice(start, end);
+
+  assert.ok(start !== -1 && end !== -1, 'page.batch handler should be present');
+  assert.match(block, /approval:\s*params\.approval/);
+  assert.match(block, /policy:\s*params\.policy/);
+});
+
+test('background forwards targetContract into debugger stale-handle recovery target', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const helperStart = background.indexOf('function targetForActionParams');
+  const helperEnd = background.indexOf('async function preflightDebuggerAction', helperStart);
+  const helperBlock = background.slice(helperStart, helperEnd);
+  const actionStart = background.indexOf('const requestedTarget = targetForActionParams(params);');
+  const actionEnd = background.indexOf('const tracedResponse = await attachActionTraceCue', actionStart);
+  const actionBlock = background.slice(actionStart, actionEnd);
+
+  assert.ok(helperStart !== -1 && helperEnd !== -1, 'targetForActionParams helper should be present');
+  assert.match(helperBlock, /targetContract/);
+  assert.match(helperBlock, /accessibleName/);
+  assert.match(actionBlock, /targetForActionParams\(params\)/);
+  assert.match(actionBlock, /target:\s*requestedTarget/);
 });
 
 test('background exposes guarded CDP commands without arbitrary runtime evaluation', () => {

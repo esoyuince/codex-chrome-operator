@@ -36,6 +36,102 @@ const BATCH_OBSERVE_OPTION_PROPERTIES = {
   maxFieldValueChars: OBSERVE_OPTION_PROPERTIES.maxFieldValueChars
 };
 
+const TARGET_CONTRACT_BOX_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    x: { type: 'number' },
+    y: { type: 'number' },
+    width: { type: 'number', minimum: 1 },
+    height: { type: 'number', minimum: 1 }
+  }
+};
+
+const TARGET_CONTRACT_CONTEXT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    url: { type: 'string' },
+    viewport: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        width: { type: 'number', minimum: 1 },
+        height: { type: 'number', minimum: 1 }
+      }
+    },
+    scroll: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        x: { type: 'number' },
+        y: { type: 'number' }
+      }
+    },
+    devicePixelRatio: { type: 'number', minimum: 0 }
+  }
+};
+
+const TARGET_CONTRACT_DATA_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    testid: { type: 'string' },
+    testId: { type: 'string' },
+    testID: { type: 'string' },
+    test: { type: 'string' },
+    risk: { type: 'string' },
+    productId: { type: 'string' },
+    visualCard: { type: 'string' },
+    uploadRole: { type: 'string' },
+    previewRole: { type: 'string' },
+    validationMessage: { type: 'string' },
+    analyzerField: { type: 'string' },
+    cartAction: { type: 'string' },
+    sensitivePage: { type: 'string' },
+    visualPolicy: { type: 'string' },
+    analysisPolicy: { type: 'string' },
+    rating: { type: 'string' }
+  }
+};
+
+const TARGET_CONTRACT_PROVENANCE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    shadowDepth: { type: 'number', minimum: 0 },
+    frameDepth: { type: 'number', minimum: 0 },
+    frameTitle: { type: 'string' },
+    frameName: { type: 'string' },
+    frameSrc: { type: 'string' }
+  }
+};
+
+const TARGET_CONTRACT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    version: { type: 'number' },
+    handle: { type: 'string' },
+    tag: { type: 'string' },
+    role: { type: 'string' },
+    type: { type: 'string' },
+    id: { type: 'string' },
+    name: { type: 'string' },
+    href: { type: 'string' },
+    placeholder: { type: 'string' },
+    title: { type: 'string' },
+    label: { type: 'string' },
+    accessibleName: { type: 'string' },
+    testid: { type: 'string' },
+    data: TARGET_CONTRACT_DATA_SCHEMA,
+    productId: { type: 'string' },
+    bbox: TARGET_CONTRACT_BOX_SCHEMA,
+    context: TARGET_CONTRACT_CONTEXT_SCHEMA,
+    provenance: TARGET_CONTRACT_PROVENANCE_SCHEMA
+  }
+};
+
 const POST_ACTION_SNAPSHOT_PROPERTIES = {
   postActionSnapshot: {
     type: 'string',
@@ -50,6 +146,7 @@ const POST_ACTION_SNAPSHOT_PROPERTIES = {
   actionTrace: { type: 'boolean' },
   actionTraceLabel: { type: 'string' },
   actionTraceDurationMs: { type: 'number', minimum: 100 },
+  targetContract: TARGET_CONTRACT_SCHEMA,
   verify: {
     type: 'object',
     additionalProperties: false,
@@ -141,6 +238,7 @@ const BATCH_ACTION_SCHEMA = {
     actionTrace: POST_ACTION_SNAPSHOT_PROPERTIES.actionTrace,
     actionTraceLabel: POST_ACTION_SNAPSHOT_PROPERTIES.actionTraceLabel,
     actionTraceDurationMs: POST_ACTION_SNAPSHOT_PROPERTIES.actionTraceDurationMs,
+    targetContract: POST_ACTION_SNAPSHOT_PROPERTIES.targetContract,
     verify: POST_ACTION_SNAPSHOT_PROPERTIES.verify
   },
   required: ['action']

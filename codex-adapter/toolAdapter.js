@@ -346,6 +346,7 @@ function postActionSnapshotOptions(input) {
     'actionTrace',
     'actionTraceLabel',
     'actionTraceDurationMs',
+    'targetContract',
     'verify'
   ]);
 }
@@ -554,6 +555,7 @@ class CodexChromeToolAdapter {
             'actionTrace',
             'actionTraceLabel',
             'actionTraceDurationMs',
+            'targetContract',
             'verify'
           ])
         });
