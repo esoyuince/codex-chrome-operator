@@ -215,3 +215,79 @@ test('local-basic correlates DOM handles to screenshot coordinates using viewpor
     confidence: 0.9
   });
 });
+
+test('local-basic detects tables, charts, images, badges, and primary actions', () => {
+  const result = localBasicAnalyze(normalizeVisualAnalyzeRequest({
+    screenshot: screenshot(),
+    observation: observation({
+      elements: [
+        {
+          handle: 'table_1',
+          bbox: { x: 20, y: 40, width: 420, height: 180 },
+          tagName: 'table',
+          labels: ['Revenue table']
+        },
+        {
+          handle: 'chart_1',
+          bbox: { x: 480, y: 40, width: 320, height: 200 },
+          labels: ['Monthly trend chart'],
+          data: { visualRole: 'chart' }
+        },
+        {
+          handle: 'image_1',
+          bbox: { x: 20, y: 260, width: 140, height: 90 },
+          tagName: 'img',
+          labels: ['Product photo']
+        },
+        {
+          handle: 'badge_1',
+          bbox: { x: 180, y: 260, width: 76, height: 24 },
+          labels: ['Best seller badge']
+        },
+        {
+          handle: 'button_1',
+          bbox: { x: 280, y: 260, width: 130, height: 40 },
+          role: 'button',
+          labels: ['Add to cart'],
+          data: { cartAction: 'add-to-cart' }
+        }
+      ]
+    })
+  }));
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.regions.map((region) => region.kind), [
+    'table',
+    'chart',
+    'image',
+    'badge',
+    'primary-action'
+  ]);
+  assert.deepEqual(result.summary.regionCounts, {
+    badge: 1,
+    chart: 1,
+    image: 1,
+    'primary-action': 1,
+    table: 1
+  });
+  assert.equal(result.summary.viewport.width, 1000);
+  assert.equal(result.summary.screenshot.width, 1000);
+});
+
+test('local-basic does not classify plain form label elements as badges', () => {
+  const result = localBasicAnalyze(normalizeVisualAnalyzeRequest({
+    screenshot: screenshot(),
+    observation: observation({
+      elements: [{
+        handle: 'label_1',
+        tagName: 'label',
+        bbox: { x: 20, y: 40, width: 120, height: 24 },
+        labels: ['Email']
+      }]
+    })
+  }));
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.regions, []);
+  assert.equal(result.summary.regionCount, 0);
+});

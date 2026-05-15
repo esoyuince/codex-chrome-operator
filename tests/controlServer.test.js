@@ -110,6 +110,30 @@ async function connectAndAuthorize(baseUrl, origin = 'https://example.com') {
   await postJson(baseUrl, 'extension.hostPermissionGranted', { origin });
 }
 
+function activeTabDiagnostic(tabId = 7) {
+  return {
+    expectedActiveTabId: tabId,
+    diagnosticActiveTab: true
+  };
+}
+
+async function setActiveTab(baseUrl, {
+  tabId = 7,
+  url = 'https://example.com/basic',
+  title = 'Fixture',
+  status = 'complete'
+} = {}) {
+  await postJson(baseUrl, 'extension.activeTabUpdated', {
+    activeTab: {
+      id: tabId,
+      windowId: 1,
+      url,
+      title,
+      status
+    }
+  });
+}
+
 async function deliverNextCommand(baseUrl, response) {
   const command = await postJson(baseUrl, 'bridge.poll');
   assert.equal(command.body.ok, true);
@@ -991,8 +1015,10 @@ test('bounded full auto enforces action and browser limits', async () => {
         }
       })
     });
+    await setActiveTab(baseUrl);
     const screenshotLimited = await postJson(baseUrl, 'page.visualObserve', {
-      origin: 'https://example.com'
+      origin: 'https://example.com',
+      ...activeTabDiagnostic()
     });
     assert.equal(screenshotLimited.body.ok, false);
     assert.equal(screenshotLimited.body.error.code, ERROR_CODES.BOUNDED_FULL_AUTO_LIMIT_EXCEEDED);
@@ -1326,10 +1352,12 @@ test('page.mediaInspect queues bounded media inspection for approved origins', a
 test('page.visualInspectTarget stores screenshot and returns target region artifact reference', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await connectAndAuthorize(baseUrl);
+    await setActiveTab(baseUrl);
 
     const inspectPromise = postJson(baseUrl, 'page.visualInspectTarget', {
       origin: 'https://example.com',
       handle: 'el_state_0',
+      ...activeTabDiagnostic(),
       maxBytes: 200000,
       reason: 'inspect target'
     });
@@ -1592,7 +1620,7 @@ test('page.type fails closed for user blocked sites before queueing browser work
 });
 
 test('page.visualObserve queues once profile and domain are ready without per-site host permission', async () => {
-  await withServer(makeSession(), async (baseUrl) => {
+  await withServer(makeSession(), async (baseUrl, session) => {
     await postJson(baseUrl, 'extension.hello', {
       hello: {
         type: 'HELLO',
@@ -1611,9 +1639,19 @@ test('page.visualObserve queues once profile and domain are ready without per-si
     await postJson(baseUrl, 'operator.approveDomain', {
       origin: 'https://example.com'
     });
+    await setActiveTab(baseUrl);
+
+    const missingDiagnostic = await postJson(baseUrl, 'page.visualObserve', {
+      origin: 'https://example.com'
+    });
+    assert.equal(missingDiagnostic.body.ok, false);
+    assert.equal(missingDiagnostic.body.error.code, ERROR_CODES.INVALID_SCHEMA);
+    assert.equal(missingDiagnostic.body.error.reason, 'ACTIVE_TAB_DIAGNOSTIC_REQUIRED');
+    assert.equal(session.pendingCommands.size, 0);
 
     const observePromise = postJson(baseUrl, 'page.visualObserve', {
-      origin: 'https://example.com'
+      origin: 'https://example.com',
+      ...activeTabDiagnostic()
     });
 
     const command = await deliverNextCommand(baseUrl, {
@@ -1630,6 +1668,8 @@ test('page.visualObserve queues once profile and domain are ready without per-si
     });
     assert.equal(command.method, 'page.visualObserve');
     assert.equal(command.params.origin, 'https://example.com');
+    assert.equal(command.params.expectedActiveTabId, 7);
+    assert.equal(command.params.diagnosticActiveTab, true);
 
     const result = await observePromise;
     assert.equal(result.status, 200);
@@ -1981,15 +2021,18 @@ test('page.visualObserve queues extension command and resolves from bridge deliv
     await postJson(baseUrl, 'extension.hostPermissionGranted', {
       origin: 'https://example.com'
     });
+    await setActiveTab(baseUrl);
 
     const observePromise = postJson(baseUrl, 'page.visualObserve', {
-      origin: 'https://example.com'
+      origin: 'https://example.com',
+      ...activeTabDiagnostic()
     });
 
     const command = await postJson(baseUrl, 'bridge.poll');
     assert.equal(command.body.ok, true);
     assert.equal(command.body.result.command.method, 'page.visualObserve');
     assert.equal(command.body.result.command.params.origin, 'https://example.com');
+    assert.equal(command.body.result.command.params.expectedActiveTabId, 7);
 
     await postJson(baseUrl, 'bridge.deliver', {
       commandId: command.body.result.command.commandId,
@@ -2019,9 +2062,11 @@ test('page.visualObserve queues extension command and resolves from bridge deliv
 test('page.visualAnalyze stores screenshot artifact and returns local-basic analysis', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await connectAndAuthorize(baseUrl);
+    await setActiveTab(baseUrl);
 
     const analyzePromise = postJson(baseUrl, 'page.visualAnalyze', {
       origin: 'https://example.com',
+      ...activeTabDiagnostic(),
       provider: 'local-basic',
       policy: {
         maxBytes: 4096
@@ -2093,9 +2138,11 @@ test('page.visualAnalyze stores screenshot artifact and returns local-basic anal
 test('page.visualAnalyze blocks sensitive visual observations before provider analysis', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await connectAndAuthorize(baseUrl);
+    await setActiveTab(baseUrl);
 
     const analyzePromise = postJson(baseUrl, 'page.visualAnalyze', {
-      origin: 'https://example.com'
+      origin: 'https://example.com',
+      ...activeTabDiagnostic()
     });
     const command = await postJson(baseUrl, 'bridge.poll');
     await postJson(baseUrl, 'bridge.deliver', {
@@ -2144,9 +2191,11 @@ test('operator.screenshots.cleanup removes stored visual artifacts', async () =>
     await postJson(baseUrl, 'extension.hostPermissionGranted', {
       origin: 'https://example.com'
     });
+    await setActiveTab(baseUrl);
 
     const observePromise = postJson(baseUrl, 'page.visualObserve', {
       origin: 'https://example.com',
+      ...activeTabDiagnostic(),
       mode: 'medium',
       maxActionableHandles: 12,
       summaryMaxChars: 400,
@@ -2157,6 +2206,8 @@ test('operator.screenshots.cleanup removes stored visual artifacts', async () =>
     assert.equal(command.body.result.command.method, 'page.visualObserve');
     assert.deepEqual(command.body.result.command.params, {
       origin: 'https://example.com',
+      expectedActiveTabId: 7,
+      diagnosticActiveTab: true,
       mode: 'medium',
       maxActionableHandles: 12,
       summaryMaxChars: 400,

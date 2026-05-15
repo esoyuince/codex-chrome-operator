@@ -225,8 +225,8 @@ npm run operator:cli -- ensure-started https://example.com
 npm run operator:cli -- readiness https://example.com
 npm run operator:cli -- wait-ready https://example.com
 npm run operator:cli -- observe https://example.com
-npm run operator:cli -- visual-observe https://example.com
-npm run operator:cli -- visual-analyze https://example.com
+npm run operator:cli -- visual-observe https://example.com <expectedActiveTabId>
+npm run operator:cli -- visual-analyze https://example.com <expectedActiveTabId>
 npm run operator:cli -- approvals
 npm run operator:cli -- approval-approve <approvalId>
 npm run operator:cli -- approval-reject <approvalId>
@@ -357,9 +357,11 @@ handle actions such as `codex_chrome_click`, `codex_chrome_fill`, and
 `codex_chrome_type`. Tab navigation updates the owned tab URL without activating
 it. Tab visual tools use a tab-scoped CDP screenshot backend and return
 artifact metadata instead of `captureVisibleTab` bytes. The daemon still retains
-guarded active-tab `page.*` commands for CLI/internal diagnostics, but they
-reject known same-origin session-tab mismatches and multi-tab ambiguity instead
-of silently reading or mutating the focused tab.
+guarded active-tab `page.*` commands for CLI/internal diagnostics, but MCP
+visual diagnostic tools must now name `expectedActiveTabId` and set
+`diagnosticActiveTab: true`. Those commands reject expected-tab drift, known
+same-origin session-tab mismatches, and multi-tab ambiguity instead of silently
+reading or mutating the focused tab.
 
 ## Optional Codex Skill
 
@@ -378,27 +380,19 @@ Codex skills directory, for example:
 Copy-Item -Recurse docs\skills\chrome-operator-performance "$env:USERPROFILE\.codex\skills\chrome-operator-performance"
 ```
 
-## Future TODO: Multi-Agent Browser Isolation
+## Multi-Agent Browser Isolation Status
 
 Current MCP tools avoid the legacy active-tab path for core reads and DOM
-actions by requiring session-owned `tabId` values. That supports coordinated
-multi-tab work from one controller, but it is still not a guarantee of fully
-independent parallel browser agents. True multi-agent support should add:
+actions by requiring session-owned `tabId` values. The daemon now propagates
+agent context through tab leases, approval/audit metadata, tab-scoped warm
+caches, per-tab command locks, scoped finalization, and tab-scoped visual CDP
+screenshots. Regression tests and clean smoke exercise two simulated agents on
+separate same-origin tabs and verify that observe/read/fill/click/dialog/scroll
+flows do not bleed across tabs.
 
-- `agentId` / task `sessionId` propagation through MCP, daemon, extension
-  commands, approvals, audit records, and status output.
-- Per-agent tab ownership or tab leases so two agents cannot claim or finalize
-  the same tab accidentally.
-- Per-tab mutexing for debugger/CDP/runtime actions, especially focus, typing,
-  screenshots, and action-trace overlays.
-- Remaining page-state and transient runtime caches keyed by `tabId` plus
-  agent/session identity, matching the per-tab warm-session cache shape.
-- Approval, emergency-stop, and policy records that show which agent requested
-  the action and which tab it targeted.
-- Finalize/cleanup behavior scoped to the owning agent, with shared-user tabs
-  released rather than closed unless explicitly requested.
-- Regression tests with two simulated agents operating on separate tabs,
-  proving no active-tab, warm-cache, stale-handle, approval, or cleanup bleed.
+Remaining isolation work is mostly operational: keep active-tab APIs limited to
+CLI/internal diagnostics, grow long-running multi-controller stress tests, and
+prefer record/replay traces for any future same-origin race report.
 
 ## Extension Surface
 
@@ -443,7 +437,9 @@ only on session-owned tabs whose origin is configured in the daemon
 `chatWatcherAllowedOrigins` allowlist and whose domain has already been
 approved. Polling resolves an unread selector through tab-scoped runtime
 observation; optional screenshots are artifact-backed and still use the guarded
-CDP screenshot path.
+CDP screenshot path. Repeated polls dedupe unchanged unread targets, and status
+surfaces the last unread summary/event so the side panel can show watcher state
+without reading unrelated chat content.
 
 ## Testing
 
@@ -506,6 +502,12 @@ npm run release:m6 -- --skip-clean-smoke
 - Treat page observations as untrusted.
 - Keep warm-session cache entries short-lived, keyed by session/agent/tab URL
   context, and invalidate the affected tab entry on navigation or mutation.
+- Keep active-tab visual diagnostics explicit: callers must pass
+  `expectedActiveTabId` and `diagnosticActiveTab: true`, then re-observe if that
+  tab is no longer active.
+- Use record/replay context drift (`pageStateId`, visual region kinds, artifact
+  metadata, and focus disturbance) when turning live browser failures into
+  deterministic regressions.
 - Use fresh handles after every observe when a page is dynamic.
 - Keep Chrome extension updates followed by an extension reload or Chrome
   restart.

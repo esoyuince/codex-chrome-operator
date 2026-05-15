@@ -189,3 +189,133 @@ test('chat watcher poll records unread events and artifact-backed screenshots on
   assert.equal(calls[0].params.selector, '[data-unread]');
   assert.equal(calls[1].params.method, 'Page.captureScreenshot');
 });
+
+test('chat watcher poll deduplicates unchanged unread targets and exposes last-event state', async () => {
+  const session = makeSession();
+  seedChatTab(session);
+  session.enqueueExtensionCommand = async () => ({
+    ok: true,
+    result: {
+      target: {
+        handle: 'unread_1',
+        tag: 'button',
+        role: 'button',
+        label: '1 unread message'
+      }
+    }
+  });
+
+  const started = await session.handleRpc({
+    id: 'watcher-start',
+    method: 'operator.chatWatcher.start',
+    params: {
+      agentId: 'agent-alpha',
+      tabId: 42,
+      origin: 'https://chat.example',
+      unreadSelector: '[data-unread]',
+      label: 'Support chat'
+    }
+  });
+  const watcherId = started.result.watcher.watcherId;
+
+  const first = await session.handleRpc({
+    id: 'watcher-poll-1',
+    method: 'operator.chatWatcher.poll',
+    params: { watcherId }
+  });
+  const second = await session.handleRpc({
+    id: 'watcher-poll-2',
+    method: 'operator.chatWatcher.poll',
+    params: { watcherId }
+  });
+  const status = session.chatWatcherStatus();
+
+  assert.equal(first.ok, true);
+  assert.equal(first.result.unread, true);
+  assert.equal(first.result.duplicate, false);
+  assert.equal(second.ok, true);
+  assert.equal(second.result.unread, true);
+  assert.equal(second.result.duplicate, true);
+  assert.equal(second.result.event, null);
+  assert.equal(status.events.length, 1);
+  assert.equal(status.watchers[0].unreadEventCount, 1);
+  assert.equal(status.watchers[0].lastUnreadSummary, 'button: 1 unread message');
+  assert.equal(status.watchers[0].lastEventId, status.events[0].id);
+  assert.equal(status.watchers[0].label, 'Support chat');
+});
+
+test('chat watcher emits a fresh event when unread disappears and returns', async () => {
+  const session = makeSession();
+  seedChatTab(session);
+  const locatorResults = [{
+    ok: true,
+    result: {
+      target: {
+        handle: 'unread_1',
+        tag: 'button',
+        role: 'button',
+        label: '1 unread message'
+      }
+    }
+  }, {
+    ok: false,
+    error: {
+      code: 'LOCATOR_NOT_FOUND',
+      message: 'No unread target'
+    }
+  }, {
+    ok: true,
+    result: {
+      target: {
+        handle: 'unread_1',
+        tag: 'button',
+        role: 'button',
+        label: '1 unread message'
+      }
+    }
+  }];
+  session.enqueueExtensionCommand = async () => locatorResults.shift();
+
+  const started = await session.handleRpc({
+    id: 'watcher-start',
+    method: 'operator.chatWatcher.start',
+    params: {
+      agentId: 'agent-alpha',
+      tabId: 42,
+      origin: 'https://chat.example',
+      unreadSelector: '[data-unread]'
+    }
+  });
+  const watcherId = started.result.watcher.watcherId;
+
+  const first = await session.handleRpc({
+    id: 'watcher-poll-1',
+    method: 'operator.chatWatcher.poll',
+    params: { watcherId }
+  });
+  const none = await session.handleRpc({
+    id: 'watcher-poll-2',
+    method: 'operator.chatWatcher.poll',
+    params: { watcherId }
+  });
+  const third = await session.handleRpc({
+    id: 'watcher-poll-3',
+    method: 'operator.chatWatcher.poll',
+    params: { watcherId }
+  });
+  const status = session.chatWatcherStatus();
+
+  assert.equal(first.ok, true);
+  assert.equal(first.result.unread, true);
+  assert.equal(first.result.duplicate, false);
+  assert.equal(none.ok, true);
+  assert.equal(none.result.unread, false);
+  assert.equal(none.result.event, null);
+  assert.equal(third.ok, true);
+  assert.equal(third.result.unread, true);
+  assert.equal(third.result.duplicate, false);
+  assert.equal(third.result.event.type, 'unread');
+  assert.equal(status.events.length, 2);
+  assert.equal(status.watchers[0].unreadEventCount, 2);
+  assert.equal(status.watchers[0].lastUnreadSummary, 'button: 1 unread message');
+});

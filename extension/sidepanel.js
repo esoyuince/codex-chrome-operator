@@ -23,6 +23,7 @@ const els = {
   tokenOutput: document.getElementById('token-output'),
   tokenCommandCount: document.getElementById('token-command-count'),
   tokenLastCommand: document.getElementById('token-last-command'),
+  auditTimeline: document.getElementById('audit-timeline'),
   pendingApprovals: document.getElementById('pending-approvals'),
   blockedSites: document.getElementById('blocked-sites'),
   blockedSitesDetail: document.getElementById('blocked-sites-detail'),
@@ -124,6 +125,20 @@ async function readApprovals() {
 async function readPolicyStatus() {
   try {
     return await chrome.runtime.sendMessage({ type: 'operator.policy.status' });
+  } catch (error) {
+    return {
+      ok: false,
+      statusError: formatError(error)
+    };
+  }
+}
+
+async function readAuditTimeline() {
+  try {
+    return await chrome.runtime.sendMessage({
+      type: 'operator.audit.timeline',
+      limit: 8
+    });
   } catch (error) {
     return {
       ok: false,
@@ -335,6 +350,7 @@ function renderChatWatcher(chatWatcher) {
   const watcherCount = Number(state.watcherCount || 0);
   const pausedCount = Number(state.pausedCount || 0);
   const eventCount = Number(state.eventCount || 0);
+  const lastEvent = state.lastEvent && typeof state.lastEvent === 'object' ? state.lastEvent : null;
   if (allowlistedOriginCount <= 0) {
     setText(els.chatWatchStatus, 'No allowlisted origins');
     return;
@@ -345,8 +361,48 @@ function renderChatWatcher(chatWatcher) {
   }
   setText(
     els.chatWatchStatus,
-    `${watcherCount} active, ${pausedCount} paused, ${eventCount} unread event${eventCount === 1 ? '' : 's'}`
+    `${watcherCount} active, ${pausedCount} paused, ${eventCount} unread event${eventCount === 1 ? '' : 's'}${
+      lastEvent && lastEvent.targetSummary ? `, last: ${lastEvent.targetSummary}` : ''
+    }`
   );
+}
+
+function renderAuditTimeline(response) {
+  els.auditTimeline.innerHTML = '';
+  if (!response || response.ok !== true) {
+    const detail = document.createElement('div');
+    detail.className = 'detail';
+    detail.textContent = `Timeline unavailable: ${formatError(response && response.error) || response.statusError || 'unknown error'}`;
+    els.auditTimeline.append(detail);
+    return;
+  }
+  const entries = response.result && Array.isArray(response.result.timeline)
+    ? response.result.timeline
+    : [];
+  if (entries.length === 0) {
+    els.auditTimeline.textContent = 'No recent actions.';
+    return;
+  }
+  for (const entry of entries.slice(-8).reverse()) {
+    const article = document.createElement('article');
+    article.className = `timeline-entry ${entry.errorCode ? 'error' : 'ok'}`;
+    const title = document.createElement('div');
+    title.className = 'timeline-title';
+    title.textContent = [entry.method || 'unknown method', entry.result || null]
+      .filter(Boolean)
+      .join(' | ');
+    const meta = document.createElement('div');
+    meta.className = 'detail';
+    meta.textContent = [
+      entry.origin || null,
+      Number.isInteger(entry.tabId) ? `tab ${entry.tabId}` : null,
+      entry.actionKind || null,
+      entry.errorCode || null,
+      entry.targetSummary || null
+    ].filter(Boolean).join(' | ');
+    article.append(title, meta);
+    els.auditTimeline.append(article);
+  }
 }
 
 async function refresh() {
@@ -372,6 +428,7 @@ async function refreshNow() {
   const daemonStatus = await readDaemonStatus();
   const approvalsStatus = await readApprovals();
   const policyStatus = await readPolicyStatus();
+  const auditTimeline = await readAuditTimeline();
   const fallbackTab = status.ok ? null : await readActiveTabFallback();
   const daemonResult = daemonStatus && daemonStatus.ok ? daemonStatus.result : null;
   const tab = (status && status.activeTab) || (daemonResult && daemonResult.activeTab) || fallbackTab;
@@ -421,6 +478,7 @@ async function refreshNow() {
   setText(els.lastCommand, recentEvent && recentEvent.method ? recentEvent.method : 'none');
   setText(els.downloadWatchStatus, 'Available via codex_chrome_download_wait');
   renderChatWatcher(daemonResult && daemonResult.chatWatcher);
+  renderAuditTimeline(auditTimeline);
   renderTokenUsage(daemonResult && daemonResult.tokenUsage ? daemonResult.tokenUsage : status && status.tokenUsage);
   renderApprovals(approvals, approvalsStatus.statusError || null);
   els.blockedSites.value = blockedStatus.blockedOrigins.join('\n');

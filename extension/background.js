@@ -640,6 +640,7 @@ function tabInfo(tab) {
     id: tab.id,
     windowId: tab.windowId,
     url: tab.url || null,
+    pendingUrl: tab.pendingUrl || null,
     origin,
     title: tab.title || null,
     favIconUrl: tab.favIconUrl || null,
@@ -995,6 +996,7 @@ async function handleSessionTabCommand(method, params = {}) {
     const kept = [];
     const closed = [];
     const released = [];
+    const closeFailed = [];
     for (const [tabId, record] of [...operatorSessionTabs.entries()]) {
       if (ownerAgentId && record.ownerAgentId !== ownerAgentId) {
         continue;
@@ -1007,15 +1009,19 @@ async function handleSessionTabCommand(method, params = {}) {
         kept.push({ tabId, status });
         continue;
       }
-      operatorSessionTabs.delete(tabId);
       if (record.ownership === 'agent') {
         try {
           await chrome.tabs.remove(tabId);
+          operatorSessionTabs.delete(tabId);
           closed.push(tabId);
-        } catch {
-          closed.push(tabId);
+        } catch (error) {
+          closeFailed.push({
+            tabId,
+            message: error && error.message ? error.message : String(error || 'Unknown close failure')
+          });
         }
       } else {
+        operatorSessionTabs.delete(tabId);
         released.push(tabId);
       }
     }
@@ -1025,7 +1031,7 @@ async function handleSessionTabCommand(method, params = {}) {
     await groupTabsBestEffort(deliverableIds, DELIVERABLE_SESSION_GROUP_TITLE);
     await syncSessionGroupMetadataFromChrome();
     await saveSessionTabState();
-    return { ok: true, result: { kept, closed, released } };
+    return { ok: true, result: { kept, closed, released, closeFailed } };
   }
 
   if (method === 'operator.session.name') {
@@ -1461,10 +1467,7 @@ async function handleRuntimeCommand(method, params = {}) {
     const targetTab = await chrome.tabs.update(tab.id, {
       url: params.url
     });
-    const nextTab = {
-      ...tabInfo(targetTab),
-      url: params.url
-    };
+    const nextTab = tabInfo(targetTab);
     if (operatorSessionTabs.has(tab.id)) {
       const previous = operatorSessionTabs.get(tab.id);
       operatorSessionTabs.set(tab.id, {
@@ -1480,6 +1483,7 @@ async function handleRuntimeCommand(method, params = {}) {
       ok: true,
       result: {
         action: 'navigate',
+        requestedUrl: params.url,
         tab: nextTab
       }
     };
@@ -2695,6 +2699,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message && message.type === 'operator.policy.status') {
       await connectNative();
       sendResponse(await requestNativeRpc('operator.policy.status'));
+      return;
+    }
+
+    if (message && message.type === 'operator.audit.timeline') {
+      await connectNative();
+      sendResponse(await requestNativeRpc('operator.audit.timeline', {
+        ...(Number.isFinite(Number(message.limit)) ? { limit: Number(message.limit) } : {})
+      }));
       return;
     }
 

@@ -60,7 +60,7 @@ test('buildMcpSmokeReport summarizes required adapter tool availability', () => 
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_policy_status'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_policy_update'));
 
-  const toolSchemaVersion = '2026-05-15.tab-visual-backends';
+  const toolSchemaVersion = '2026-05-15.operator-maturity';
   const responses = [
     {
       jsonrpc: '2.0',

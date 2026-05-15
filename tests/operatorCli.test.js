@@ -1135,14 +1135,20 @@ test('buildRpcRequest maps approval and page commands', () => {
       maxFieldValueChars: 4000
     }
   });
-  assert.deepEqual(buildRpcRequest(['visual-observe', 'https://example.com']), {
+  assert.deepEqual(buildRpcRequest(['visual-observe', 'https://example.com', '42']), {
     method: 'page.visualObserve',
-    params: { origin: 'https://example.com' }
+    params: {
+      origin: 'https://example.com',
+      expectedActiveTabId: 42,
+      diagnosticActiveTab: true
+    }
   });
-  assert.deepEqual(buildRpcRequest(['visual-analyze', 'https://example.com', 'local-basic']), {
+  assert.deepEqual(buildRpcRequest(['visual-analyze', 'https://example.com', '42', 'local-basic']), {
     method: 'page.visualAnalyze',
     params: {
       origin: 'https://example.com',
+      expectedActiveTabId: 42,
+      diagnosticActiveTab: true,
       provider: 'local-basic'
     }
   });
@@ -1508,6 +1514,10 @@ test('buildRpcRequest rejects incomplete commands with usage error', () => {
   assert.throws(() => buildRpcRequest(['full-auto-start']), /Usage:/);
   assert.throws(() => buildRpcRequest(['audit-tail', 'nope']), /Usage:/);
   assert.throws(() => buildRpcRequest(['audit-timeline', 'nope']), /Usage:/);
+  assert.throws(() => buildRpcRequest(['visual-observe', 'https://example.com']), /Usage:/);
+  assert.throws(() => buildRpcRequest(['visual-observe', 'https://example.com', 'nope']), /expectedActiveTabId/);
+  assert.throws(() => buildRpcRequest(['visual-analyze', 'https://example.com']), /Usage:/);
+  assert.throws(() => buildRpcRequest(['visual-analyze', 'https://example.com', '-1']), /expectedActiveTabId/);
   assert.throws(() => buildRpcRequest(['wat']), /Usage:/);
 });
 

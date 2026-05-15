@@ -180,12 +180,16 @@ session tab, `codex_chrome_name_session` labels the session, and
 panel policy toggles for guarded actions and purchase approvals.
 `codex_chrome_audit_timeline` returns a compact, redacted local timeline of
 observe, action, policy, approval, and session-tab events without raw params or
-page text.
+page text. The side panel also renders this same redacted timeline for local
+debugging, including method, tab, action kind, result, target summary, and error
+code when present.
 `codex_chrome_chat_watcher_start`, `codex_chrome_chat_watcher_status`,
 `codex_chrome_chat_watcher_poll`, and `codex_chrome_chat_watcher_control` expose
 an experimental observe-only watcher for allowlisted chat origins. Watchers are
 session-tab leased, never perform chat mutations, and optional unread
 screenshots are artifact-backed through the guarded CDP screenshot path.
+Unchanged unread targets are deduped across polls, and watcher status reports
+last-event metadata without reading non-allowlisted chats.
 When `guardedActionsEnabled` is `false`, ordinary browser actions are not
 globally blocked just because they are action commands. Purchase, checkout,
 payment, and final order placement remain governed by the separate purchase
@@ -284,15 +288,19 @@ the packaged extension uses broad required host access.
 Visual tools return screenshot artifact references, metadata, or structured
 analysis. Prefer the `codex_chrome_tab_visual_*` variants for session-owned MCP
 work because they are tab-scoped and CDP-backed. `codex_chrome_visual_observe`
-stays available for explicit active-tab diagnostics and accepts optional observe
-scope, `maxBytes`, and `reason` inputs so callers can avoid screenshots unless
-DOM confidence is low or visual proof is required.
+stays available only for explicit active-tab diagnostics. It requires
+`expectedActiveTabId` plus `diagnosticActiveTab: true`, and accepts optional
+observe scope, `maxBytes`, and `reason` inputs so callers can avoid screenshots
+unless DOM confidence is low or visual proof is required.
 `codex_chrome_visual_analyze` routes to `page.visualAnalyze` with a
-required `origin` plus optional `provider`, `maxBytes`, and `allowSensitive`
-arguments; the adapter normalizes URL-like origin inputs to an origin before the
-daemon call. Raw screenshot bytes and `dataUrl` fields are redacted before the
-result reaches Codex unless a future policy explicitly allows a different
-handoff.
+required `origin`, `expectedActiveTabId`, and `diagnosticActiveTab: true` plus
+optional `provider`, `maxBytes`, and `allowSensitive` arguments; the adapter
+normalizes URL-like origin inputs to an origin before the daemon call. Raw
+screenshot bytes and `dataUrl` fields are redacted before the result reaches
+Codex unless a future policy explicitly allows a different handoff. The
+local-basic analyzer currently extracts DOM-correlated regions for product
+cards, rating stars, prices, tables, charts, images, badges, and primary action
+buttons.
 
 `codex_chrome_media_inspect` routes to `page.mediaInspect` and returns bounded,
 untrusted state for visible video/audio elements such as `paused`,
@@ -300,8 +308,10 @@ untrusted state for visible video/audio elements such as `paused`,
 raw media bytes.
 
 `codex_chrome_visual_inspect_target` routes to `page.visualInspectTarget` and
-captures screenshot-backed evidence for one observed handle. The daemon stores
-the screenshot as an artifact and returns a target region reference with
+captures screenshot-backed evidence for one observed handle. Like the other
+active-tab visual diagnostics, it requires `expectedActiveTabId` and
+`diagnosticActiveTab: true`. The daemon stores the screenshot as an artifact and
+returns a target region reference with
 `sourceArtifactId`, `regionArtifactId`, and bbox metadata instead of raw image
 bytes or local file paths.
 

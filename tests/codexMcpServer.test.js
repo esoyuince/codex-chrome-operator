@@ -74,9 +74,12 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   assert.equal(openObserve.adapterProtocolVersion, '1.0');
   assert.ok(visualAnalyze);
   assert.equal(visualAnalyze.inputSchema.additionalProperties, false);
-  assert.deepEqual(visualAnalyze.inputSchema.required, ['origin']);
+  assert.deepEqual(visualAnalyze.inputSchema.required, ['origin', 'expectedActiveTabId', 'diagnosticActiveTab']);
   assert.deepEqual(visualAnalyze.inputSchema.properties, {
     origin: { type: 'string' },
+    expectedActiveTabId: { type: 'number', minimum: 0 },
+    diagnosticActiveTab: { type: 'boolean', enum: [true] },
+    diagnosticReason: { type: 'string' },
     provider: { type: 'string' },
     maxBytes: { type: 'number' },
     allowSensitive: { type: 'boolean' }
@@ -346,7 +349,9 @@ test('MCP handler calls adapter tools and returns minimal text without raw visua
     params: {
       name: 'codex_chrome_visual_observe',
       arguments: {
-        origin: 'https://example.com'
+        origin: 'https://example.com',
+        expectedActiveTabId: 7,
+        diagnosticActiveTab: true
       }
     }
   });
@@ -354,7 +359,9 @@ test('MCP handler calls adapter tools and returns minimal text without raw visua
   assert.deepEqual(calls, [{
     toolName: 'codex_chrome_visual_observe',
     input: {
-      origin: 'https://example.com'
+      origin: 'https://example.com',
+      expectedActiveTabId: 7,
+      diagnosticActiveTab: true
     }
   }]);
   assert.equal(response.result.isError, false);

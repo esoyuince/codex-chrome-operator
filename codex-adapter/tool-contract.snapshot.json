@@ -1,7 +1,7 @@
 {
   "adapterProtocolVersion": "1.0",
-  "toolSchemaVersion": "2026-05-15.tab-visual-backends",
-  "toolDefinitionsHash": "c79b747149ac27f5f46431c21da3d9cd061ba8c1e03a4b64d7fd4aa9a4cad2d9",
+  "toolSchemaVersion": "2026-05-15.operator-maturity",
+  "toolDefinitionsHash": "1e0fcb138348955ff93bd347c2bed9f5604f751ab8046423ec3530019aad4ab6",
   "toolCount": 68,
   "toolNames": [
     "codex_chrome_status",
@@ -2048,6 +2048,19 @@
           "origin": {
             "type": "string"
           },
+          "expectedActiveTabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "diagnosticActiveTab": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "diagnosticReason": {
+            "type": "string"
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -2086,7 +2099,9 @@
           }
         },
         "required": [
-          "origin"
+          "origin",
+          "expectedActiveTabId",
+          "diagnosticActiveTab"
         ]
       },
       "outputContract": {
@@ -2103,6 +2118,19 @@
           "origin": {
             "type": "string"
           },
+          "expectedActiveTabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "diagnosticActiveTab": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "diagnosticReason": {
+            "type": "string"
+          },
           "provider": {
             "type": "string"
           },
@@ -2114,7 +2142,9 @@
           }
         },
         "required": [
-          "origin"
+          "origin",
+          "expectedActiveTabId",
+          "diagnosticActiveTab"
         ]
       },
       "outputContract": {
@@ -2154,6 +2184,19 @@
           "origin": {
             "type": "string"
           },
+          "expectedActiveTabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "diagnosticActiveTab": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "diagnosticReason": {
+            "type": "string"
+          },
           "handle": {
             "type": "string"
           },
@@ -2167,7 +2210,9 @@
         },
         "required": [
           "origin",
-          "handle"
+          "handle",
+          "expectedActiveTabId",
+          "diagnosticActiveTab"
         ]
       },
       "outputContract": {

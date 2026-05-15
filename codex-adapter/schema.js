@@ -1,7 +1,7 @@
 'use strict';
 
 const ADAPTER_PROTOCOL_VERSION = '1.0';
-const TOOL_SCHEMA_VERSION = '2026-05-15.tab-visual-backends';
+const TOOL_SCHEMA_VERSION = '2026-05-15.operator-maturity';
 
 const READ_PAGE_PROPERTIES = {
   origin: { type: 'string' },
@@ -227,9 +227,32 @@ const SESSION_TAB_KEEP_SCHEMA = {
   required: ['tabId', 'status']
 };
 
+const ACTIVE_TAB_DIAGNOSTIC_PROPERTIES = {
+  expectedActiveTabId: { type: 'number', minimum: 0 },
+  diagnosticActiveTab: { type: 'boolean', enum: [true] },
+  diagnosticReason: { type: 'string' }
+};
+
 const VISUAL_OBSERVE_PROPERTIES = {
   origin: { type: 'string' },
+  ...ACTIVE_TAB_DIAGNOSTIC_PROPERTIES,
   ...OBSERVE_OPTION_PROPERTIES,
+  maxBytes: { type: 'number', minimum: 1 },
+  reason: { type: 'string' }
+};
+
+const VISUAL_ANALYZE_PROPERTIES = {
+  origin: { type: 'string' },
+  ...ACTIVE_TAB_DIAGNOSTIC_PROPERTIES,
+  provider: { type: 'string' },
+  maxBytes: { type: 'number' },
+  allowSensitive: { type: 'boolean' }
+};
+
+const VISUAL_INSPECT_TARGET_PROPERTIES = {
+  origin: { type: 'string' },
+  ...ACTIVE_TAB_DIAGNOSTIC_PROPERTIES,
+  handle: { type: 'string' },
   maxBytes: { type: 'number', minimum: 1 },
   reason: { type: 'string' }
 };
@@ -1064,7 +1087,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: VISUAL_OBSERVE_PROPERTIES,
-      required: ['origin']
+      required: ['origin', 'expectedActiveTabId', 'diagnosticActiveTab']
     },
     outputContract: {
       untrusted: true,
@@ -1077,13 +1100,8 @@ const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: {
-        origin: { type: 'string' },
-        provider: { type: 'string' },
-        maxBytes: { type: 'number' },
-        allowSensitive: { type: 'boolean' }
-      },
-      required: ['origin']
+      properties: VISUAL_ANALYZE_PROPERTIES,
+      required: ['origin', 'expectedActiveTabId', 'diagnosticActiveTab']
     },
     outputContract: {
       untrusted: true,
@@ -1113,13 +1131,8 @@ const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: {
-        origin: { type: 'string' },
-        handle: { type: 'string' },
-        maxBytes: { type: 'number', minimum: 1 },
-        reason: { type: 'string' }
-      },
-      required: ['origin', 'handle']
+      properties: VISUAL_INSPECT_TARGET_PROPERTIES,
+      required: ['origin', 'handle', 'expectedActiveTabId', 'diagnosticActiveTab']
     },
     outputContract: {
       untrusted: true,

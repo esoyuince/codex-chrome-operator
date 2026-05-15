@@ -505,6 +505,57 @@ function includesPrice(element, text) {
   );
 }
 
+function includesTable(element, text) {
+  return (
+    element.tagName === 'table' ||
+    element.role === 'table' ||
+    element.role === 'grid' ||
+    element.data.visualRole === 'table' ||
+    element.data.role === 'table' ||
+    /\b(table|grid|spreadsheet)\b/.test(text)
+  );
+}
+
+function includesChart(element, text) {
+  return (
+    element.data.visualRole === 'chart' ||
+    element.data.role === 'chart' ||
+    element.data.chartType !== undefined ||
+    /\b(chart|graph|trend|sparkline|plot)\b/.test(text)
+  );
+}
+
+function includesImage(element, text) {
+  return (
+    element.tagName === 'img' ||
+    element.role === 'img' ||
+    element.data.visualRole === 'image' ||
+    element.data.role === 'image' ||
+    /\b(image|photo|thumbnail|preview)\b/.test(text)
+  );
+}
+
+function includesBadge(element, text) {
+  return (
+    element.data.visualRole === 'badge' ||
+    element.data.role === 'badge' ||
+    /\b(badge|chip|pill|tag)\b/.test(text)
+  );
+}
+
+function includesPrimaryAction(element, text) {
+  return (
+    element.data.cartAction !== undefined ||
+    element.data.actionKind !== undefined ||
+    /\b(add to cart|buy now|save|submit|publish|continue|checkout)\b/.test(text)
+  ) && (
+    element.role === 'button' ||
+    element.tagName === 'button' ||
+    element.data.role === 'button' ||
+    element.data.visualRole === 'button'
+  );
+}
+
 function firstFiniteNumber(values) {
   for (const value of values) {
     const parsed = Number(String(value).replace(',', '.').match(/\d+(?:\.\d+)?/)?.[0]);
@@ -544,7 +595,22 @@ function regionForElement(element, artifactId) {
   let confidence = 0.6;
   const extra = {};
 
-  if (includesProductCard(element, text)) {
+  if (includesTable(element, text)) {
+    kind = 'table';
+    confidence = 0.82;
+  } else if (includesChart(element, text)) {
+    kind = 'chart';
+    confidence = 0.8;
+  } else if (includesImage(element, text)) {
+    kind = 'image';
+    confidence = 0.76;
+  } else if (includesBadge(element, text)) {
+    kind = 'badge';
+    confidence = 0.72;
+  } else if (includesPrimaryAction(element, text)) {
+    kind = 'primary-action';
+    confidence = 0.8;
+  } else if (includesProductCard(element, text)) {
     kind = 'product-card';
     confidence = 0.78;
   } else if (includesRatingStars(element, text)) {
@@ -636,6 +702,28 @@ function averageConfidence(regions, handleCorrelations) {
   return 0.55;
 }
 
+function regionSummary(normalized, regions, handleCorrelations) {
+  const regionCounts = regions.reduce((counts, region) => {
+    counts[region.kind] = (counts[region.kind] || 0) + 1;
+    return counts;
+  }, {});
+  return {
+    regionCounts: Object.keys(regionCounts).sort().reduce((ordered, key) => {
+      ordered[key] = regionCounts[key];
+      return ordered;
+    }, {}),
+    regionCount: regions.length,
+    handleCorrelationCount: handleCorrelations.length,
+    viewport: { ...normalized.observation.viewport },
+    screenshot: {
+      artifactId: normalized.screenshot.artifactId,
+      mimeType: normalized.screenshot.mimeType,
+      width: normalized.screenshot.width,
+      height: normalized.screenshot.height
+    }
+  };
+}
+
 function localBasicAnalyze(request = {}) {
   const normalized = normalizeVisualAnalyzeRequest(request);
   const policyBlock = evaluatePolicy(normalized);
@@ -663,6 +751,7 @@ function localBasicAnalyze(request = {}) {
     artifactId: normalized.screenshot.artifactId,
     regions,
     handleCorrelations,
+    summary: regionSummary(normalized, regions, handleCorrelations),
     policy: normalized.policy,
     warnings: [],
     confidence: averageConfidence(regions, handleCorrelations)

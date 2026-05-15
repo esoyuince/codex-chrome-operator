@@ -46,8 +46,8 @@ function usage() {
   node scripts/operator-cli.js disconnect [reason]
   node scripts/operator-cli.js observe <origin>
   node scripts/operator-cli.js read-page <origin> [filter] [maxChars] [includeFormValues] [maxFieldValueChars]
-  node scripts/operator-cli.js visual-observe <origin>
-  node scripts/operator-cli.js visual-analyze <origin> [provider]
+  node scripts/operator-cli.js visual-observe <origin> <expectedActiveTabId>
+  node scripts/operator-cli.js visual-analyze <origin> <expectedActiveTabId> [provider]
   node scripts/operator-cli.js upload-file <origin> <handle> <ruleset> <files-json> [verifyPreview]
   node scripts/operator-cli.js cart-prepare <origin-or-url> <query> <criteria-json> <cartActionAllowed> [profileId]
   node scripts/operator-cli.js navigate <url>
@@ -144,6 +144,14 @@ function parseBooleanArg(value, defaultValue = true) {
     return false;
   }
   throw usageError();
+}
+
+function parseNonNegativeIntegerArg(value, label) {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 0) {
+    throw new Error(`${label} must be a non-negative integer.\n\n${usage()}`);
+  }
+  return number;
 }
 
 function buildRpcRequest(argv) {
@@ -325,15 +333,24 @@ function buildRpcRequest(argv) {
         }
       };
     case 'visual-observe':
-      requireArgs(args, 1);
-      return { method: 'page.visualObserve', params: { origin: args[0] } };
+      requireArgs(args, 2);
+      return {
+        method: 'page.visualObserve',
+        params: {
+          origin: args[0],
+          expectedActiveTabId: parseNonNegativeIntegerArg(args[1], 'expectedActiveTabId'),
+          diagnosticActiveTab: true
+        }
+      };
     case 'visual-analyze':
-      requireArgs(args, 1);
+      requireArgs(args, 2);
       return {
         method: 'page.visualAnalyze',
         params: {
           origin: args[0],
-          ...(args[1] === undefined ? {} : { provider: args[1] })
+          expectedActiveTabId: parseNonNegativeIntegerArg(args[1], 'expectedActiveTabId'),
+          diagnosticActiveTab: true,
+          ...(args[2] === undefined ? {} : { provider: args[2] })
         }
       };
     case 'upload-file':

@@ -70,9 +70,10 @@ status/readiness -> open or observe target -> verify target -> draft action -> a
 
 Use the MCP surface by intent, and keep payloads small:
 
-- Status, policy, audit, and watcher diagnostics: `codex_chrome_status`, `codex_chrome_approvals_list`, policy tools, `codex_chrome_audit_timeline`, and chat watcher tools when exposed. The audit timeline is redacted local metadata; use it for debugging flow, not for reading page content. Chat watchers are observe-only, allowlisted, and session-tab leased.
+- Status, policy, audit, and watcher diagnostics: `codex_chrome_status`, `codex_chrome_approvals_list`, policy tools, `codex_chrome_audit_timeline`, and chat watcher tools when exposed. The audit timeline is redacted local metadata and also appears in the side panel; use it for debugging flow, not for reading page content. Chat watchers are observe-only, allowlisted, session-tab leased, and dedupe unchanged unread targets.
 - Session tabs: `codex_chrome_session_tabs`, `codex_chrome_claim_tab`, `codex_chrome_tab_focus`, `codex_chrome_new_tab`, `codex_chrome_finalize_tabs`, `codex_chrome_name_session`. Use tab-scoped tools for live smoke so grouped or background tabs do not confuse the run.
 - Observation: `codex_chrome_tab_observe`, `codex_chrome_tab_read_page`, `codex_chrome_tab_visual_observe`, `codex_chrome_tab_visual_analyze`, and `codex_chrome_tab_visual_inspect_target`. Prefer `tiny` or `medium`, `summaryMaxChars`, `maxActionableHandles`, and targeted `read_page` filters. Use tab-scoped visual tools for session tabs; they use CDP screenshot artifacts instead of active-tab capture. Warm-cache hits are tab-scoped; still re-observe after navigation or mutation.
+- Active-tab visual diagnostics: `codex_chrome_visual_observe`, `codex_chrome_visual_analyze`, and `codex_chrome_visual_inspect_target` are for CLI/internal diagnostics only. They require `expectedActiveTabId` and `diagnosticActiveTab: true`; prefer tab visual tools for all agent work.
 - Narrow actions: prefer `codex_chrome_tab_locator` for handle, selector, or text-based resolve/action in session tabs. Use direct handle tools (`codex_chrome_fill`, `codex_chrome_type`, `codex_chrome_clear`, `codex_chrome_click`, `codex_chrome_focus`, `codex_chrome_check`) with a session-owned `tabId` when a fresh handle is already proven.
 - Verification: for mutating actions, use `requireVerified`, explicit `verify` conditions such as `valueEquals` or `textAppears`, `postActionSnapshot: "delta"`, and `actionTrace` labels. Report provider, verification evidence, focused element value, gates, and content script version.
 - Discovery: if a needed tool is not callable in the current context, call `tool_search` for the exact `codex_chrome_*` tool before switching to CLI or another browser layer.
@@ -98,7 +99,7 @@ Use the CLI equivalents only when the MCP tool is unavailable:
 ```powershell
 node scripts\operator-cli.js status
 node scripts\operator-cli.js observe <origin>
-node scripts\operator-cli.js visual-observe <origin> --max-bytes 2000000
+node scripts\operator-cli.js visual-observe <origin> <expectedActiveTabId>
 ```
 
 When handles fail, re-observe and narrow by label, role, href, stable app
@@ -131,6 +132,8 @@ Patch for measured failure modes:
 - `targetContract` data should improve recovery without bloating observations. Keep contracts compact and prefer stable attributes over repeated full DOM dumps.
 - `smoke:dynamic-dom` is helper-level DOM quiet coverage. For live dynamic page proof, run `smoke:clean`; it drives the dynamic fixture through Chrome, the extension, native messaging, and `operator.runtime.tab.*`.
 - Fill/check/select/type hardening should remain fail-closed: a mutation is not successful unless the runtime can verify the requested value or state.
+- Record/replay traces should preserve context drift signals such as `pageStateId`, visual region kinds, screenshot artifact metadata, and focus disturbance without storing raw `dataUrl` screenshot payloads.
+- Local-basic visual analysis currently recognizes product cards, rating stars, prices, tables, charts, images, badges, and primary action buttons. Treat this as a local heuristic layer, not full OCR.
 
 ## Verification Set
 

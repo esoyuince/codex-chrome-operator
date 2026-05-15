@@ -1048,6 +1048,69 @@ test('agent-scoped tab leases reject cross-agent runtime access and scoped final
   }]);
 });
 
+test('agent-scoped listSession pruning does not remove tabs leased to other agents', async () => {
+  const session = makeSession();
+  for (const tab of [{
+    id: 7,
+    title: 'Alpha',
+    url: 'https://example.com/alpha',
+    ownership: 'agent',
+    ownerAgentId: 'agent-alpha',
+    finalizedStatus: null
+  }, {
+    id: 8,
+    title: 'Beta',
+    url: 'https://example.com/beta',
+    ownership: 'agent',
+    ownerAgentId: 'agent-beta',
+    finalizedStatus: null
+  }, {
+    id: 9,
+    title: 'Unowned',
+    url: 'https://example.com/unowned',
+    ownership: 'agent',
+    ownerAgentId: null,
+    finalizedStatus: null
+  }]) {
+    session.sessionTabs.set(tab.id, tab);
+  }
+  session.enqueueExtensionCommand = async (method, params) => {
+    assert.equal(method, 'operator.tabs.listSession');
+    assert.deepEqual(params, { agentId: 'agent-alpha' });
+    return {
+      ok: true,
+      result: {
+        tabs: [{
+          id: 7,
+          title: 'Alpha',
+          url: 'https://example.com/alpha',
+          ownership: 'agent',
+          ownerAgentId: 'agent-alpha'
+        }]
+      }
+    };
+  };
+
+  const listed = await session.handleRpc({
+    id: 'list-session-alpha',
+    method: 'operator.tabs.listSession',
+    params: { agentId: 'agent-alpha' }
+  });
+
+  assert.equal(listed.ok, true);
+  assert.deepEqual(listed.result.tabs.map((tab) => tab.id), [7]);
+  assert.deepEqual(session.listSessionTabRecords().map((tab) => ({
+    id: tab.id,
+    ownerAgentId: tab.ownerAgentId
+  })), [{
+    id: 7,
+    ownerAgentId: 'agent-alpha'
+  }, {
+    id: 8,
+    ownerAgentId: 'agent-beta'
+  }]);
+});
+
 test('finalize removes closed and released tabs from daemon session state', async () => {
   const session = makeSession();
   session.sessionTabs.set(11, {
@@ -1096,6 +1159,55 @@ test('finalize removes closed and released tabs from daemon session state', asyn
       finalizedStatus: tab.finalizedStatus
     })),
     [{ id: 11, finalizedStatus: 'deliverable' }]
+  );
+});
+
+test('finalize keeps close-failed tabs in daemon session state', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(11, {
+    id: 11,
+    title: 'Kept',
+    url: 'https://example.com/kept',
+    ownership: 'agent',
+    finalizedStatus: null
+  });
+  session.sessionTabs.set(12, {
+    id: 12,
+    title: 'Close failed',
+    url: 'https://example.com/close-failed',
+    ownership: 'agent',
+    finalizedStatus: null
+  });
+  session.enqueueExtensionCommand = async (method) => {
+    assert.equal(method, 'operator.tabs.finalize');
+    return {
+      ok: true,
+      result: {
+        kept: [{ tabId: 11, status: 'deliverable' }],
+        closed: [],
+        released: [],
+        closeFailed: [{ tabId: 12, message: 'Cannot close tab' }]
+      }
+    };
+  };
+
+  const finalized = await session.handleRpc({
+    id: 'finalize',
+    method: 'operator.tabs.finalize',
+    params: { keep: [{ tabId: 11, status: 'deliverable' }] }
+  });
+
+  assert.equal(finalized.ok, true);
+  assert.deepEqual(finalized.result.closeFailed, [{ tabId: 12, message: 'Cannot close tab' }]);
+  assert.deepEqual(
+    session.status({ detail: 'compact' }).sessionTabs.map((tab) => ({
+      id: tab.id,
+      finalizedStatus: tab.finalizedStatus
+    })),
+    [
+      { id: 11, finalizedStatus: 'deliverable' },
+      { id: 12, finalizedStatus: null }
+    ]
   );
 });
 
@@ -1759,6 +1871,97 @@ test('runtime tab commands route through session-owned tabs and fail closed for 
     'operator.runtime.tab.locator'
   ]);
   assert.equal(calls[2].params.postActionVerifyDelayMs, 3000);
+});
+
+test('runtime tab commands fail closed while navigation is still pending on the previous URL', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Old',
+    url: 'https://old.example/app',
+    ownership: 'agent',
+    active: true,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-old',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://old.example' }
+  });
+  await session.handleRpc({
+    id: 'approve-new',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://new.example' }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    if (method === 'operator.runtime.tab.goto') {
+      return {
+        ok: true,
+        result: {
+          action: 'navigate',
+          requestedUrl: params.url,
+          tab: {
+            id: 7,
+            title: 'Old',
+            url: 'https://old.example/app',
+            pendingUrl: params.url,
+            ownership: 'agent',
+            status: 'loading',
+            loadingState: 'loading'
+          }
+        }
+      };
+    }
+    if (method === 'operator.tabs.listSession') {
+      return {
+        ok: true,
+        result: {
+          tabs: [{
+            id: 7,
+            title: 'Old',
+            url: 'https://old.example/app',
+            pendingUrl: 'https://new.example/page',
+            ownership: 'agent',
+            status: 'loading',
+            loadingState: 'loading'
+          }]
+        }
+      };
+    }
+    throw new Error(`Unexpected method ${method}`);
+  };
+
+  const navigated = await session.handleRpc({
+    id: 'runtime-goto-pending',
+    method: 'operator.runtime.tab.goto',
+    params: {
+      tabId: 7,
+      url: 'https://new.example/page'
+    }
+  });
+  assert.equal(navigated.ok, true);
+  assert.equal(session.sessionTabs.get(7).url, 'https://old.example/app');
+  assert.equal(session.sessionTabs.get(7).pendingUrl, 'https://new.example/page');
+
+  const observed = await session.handleRpc({
+    id: 'runtime-observe-pending',
+    method: 'operator.runtime.tab.observe',
+    params: { tabId: 7 }
+  });
+
+  assert.equal(observed.ok, false);
+  assert.equal(observed.error.code, ERROR_CODES.NAVIGATION_NOT_SETTLED);
+  assert.equal(observed.error.tabId, 7);
+  assert.equal(observed.error.currentUrl, 'https://old.example/app');
+  assert.equal(observed.error.pendingUrl, 'https://new.example/page');
+  assert.deepEqual(calls.map((call) => call.method), [
+    'operator.runtime.tab.goto',
+    'operator.tabs.listSession'
+  ]);
 });
 
 test('runtime tab debugger focus disturbance is preserved in audit timeline', async () => {

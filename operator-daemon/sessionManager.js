@@ -187,6 +187,12 @@ const ACTIVE_TAB_READ_METHODS = new Set([
   'page.waitFor'
 ]);
 
+const ACTIVE_TAB_VISUAL_DIAGNOSTIC_METHODS = new Set([
+  'page.visualObserve',
+  'page.visualAnalyze',
+  'page.visualInspectTarget'
+]);
+
 const BATCH_ACTION_KINDS = Object.freeze({
   observe: 'observe',
   readPage: 'observe',
@@ -1394,6 +1400,7 @@ function normalizeActiveTab(tab) {
     id: tab.id ?? null,
     windowId: tab.windowId ?? null,
     url: typeof tab.url === 'string' ? tab.url : null,
+    pendingUrl: typeof tab.pendingUrl === 'string' ? tab.pendingUrl : null,
     origin,
     title: typeof tab.title === 'string' ? tab.title : null,
     status: typeof tab.status === 'string' ? tab.status : null,
@@ -1404,6 +1411,22 @@ function normalizeActiveTab(tab) {
 
 function tabOrigin(tab) {
   return (tab && tab.origin) || originFromUrl(tab && tab.url);
+}
+
+function pendingNavigationErrorForTab(tab) {
+  if (!tab || !tab.pendingUrl || tab.url === tab.pendingUrl) {
+    return null;
+  }
+  return {
+    code: ERROR_CODES.NAVIGATION_NOT_SETTLED,
+    message: 'Session tab navigation is still pending; wait for the tab URL to settle before issuing runtime commands.',
+    tabId: tab.id,
+    currentUrl: tab.url || null,
+    pendingUrl: tab.pendingUrl,
+    currentOrigin: originFromUrl(tab.url),
+    pendingOrigin: originFromUrl(tab.pendingUrl),
+    loadingState: tab.loadingState || null
+  };
 }
 
 function tabIdentitySummary(tab, source) {
@@ -1435,6 +1458,23 @@ function requiresActiveTabTargetGuard(method, batch) {
     return guardedActiveTabBatch(batch);
   }
   return ACTIVE_TAB_MUTATION_METHODS.has(method) || ACTIVE_TAB_READ_METHODS.has(method);
+}
+
+function validateActiveTabDiagnosticParams(method, params = {}) {
+  if (!ACTIVE_TAB_VISUAL_DIAGNOSTIC_METHODS.has(method)) {
+    return guardOk();
+  }
+  if (params.diagnosticActiveTab !== true || !Number.isInteger(params.expectedActiveTabId) || params.expectedActiveTabId < 0) {
+    return guardError(
+      ERROR_CODES.INVALID_SCHEMA,
+      'Active-tab visual diagnostics require diagnosticActiveTab=true and expectedActiveTabId.',
+      {
+        reason: 'ACTIVE_TAB_DIAGNOSTIC_REQUIRED',
+        method
+      }
+    );
+  }
+  return guardOk();
 }
 
 function summarizeActiveTabForEvent(tab) {
@@ -1498,6 +1538,8 @@ function normalizeSessionTab(tab, fallbackOwnership = null) {
     id: tabId.tabId,
     title: typeof tab.title === 'string' ? tab.title : null,
     url: typeof tab.url === 'string' ? tab.url : null,
+    pendingUrl: typeof tab.pendingUrl === 'string' && tab.pendingUrl ? tab.pendingUrl : null,
+    requestedUrl: typeof tab.requestedUrl === 'string' && tab.requestedUrl ? tab.requestedUrl : null,
     windowId: typeof tab.windowId === 'number' ? tab.windowId : null,
     groupId: typeof tab.groupId === 'number' ? tab.groupId : null,
     favIconUrl: typeof tab.favIconUrl === 'string' ? tab.favIconUrl : null,
@@ -1998,7 +2040,10 @@ class SessionManager {
         allowlistedOriginCount: fullStatus.chatWatcher.allowlistedOrigins.length,
         watcherCount: fullStatus.chatWatcher.watchers.length,
         eventCount: fullStatus.chatWatcher.events.length,
-        pausedCount: fullStatus.chatWatcher.watchers.filter((watcher) => watcher.paused).length
+        pausedCount: fullStatus.chatWatcher.watchers.filter((watcher) => watcher.paused).length,
+        lastEvent: fullStatus.chatWatcher.events.length
+          ? { ...fullStatus.chatWatcher.events[fullStatus.chatWatcher.events.length - 1] }
+          : null
       },
       tokenUsage: { ...fullStatus.tokenUsage },
       pendingApprovalCount: fullStatus.pendingApprovals.length,
@@ -2662,6 +2707,19 @@ class SessionManager {
       leaseId,
       finalizedStatus: normalized.finalizedStatus || previous.finalizedStatus || null
     };
+    const explicitPendingUrl = normalized.pendingUrl || normalized.requestedUrl || null;
+    let pendingUrl = explicitPendingUrl || previous.pendingUrl || null;
+    if (pendingUrl && merged.url) {
+      const urlChanged = previous.url && merged.url !== previous.url;
+      const loadingComplete = merged.loadingState === 'complete' || merged.status === 'complete';
+      if (merged.url === pendingUrl || urlChanged || (!explicitPendingUrl && loadingComplete)) {
+        pendingUrl = null;
+      }
+    }
+    merged.pendingUrl = pendingUrl;
+    merged.requestedUrl = pendingUrl
+      ? (normalized.requestedUrl || previous.requestedUrl || pendingUrl)
+      : null;
     this.sessionTabs.set(merged.id, merged);
     if (previous.url && merged.url && previous.url !== merged.url) {
       this.clearWarmSessionCache('tab-navigated', {
@@ -2681,6 +2739,7 @@ class SessionManager {
     if (!Array.isArray(tabs)) {
       return this.listSessionTabRecords();
     }
+    const pruneAgentId = normalizeAgentId(options.agentId).agentId || null;
     const seenTabIds = new Set();
     for (const tab of tabs) {
       const updated = this.updateSessionTab(tab, tab && tab.ownership);
@@ -2692,6 +2751,9 @@ class SessionManager {
       for (const tabId of [...this.sessionTabs.keys()]) {
         if (!seenTabIds.has(tabId)) {
           const previous = this.sessionTabs.get(tabId);
+          if (pruneAgentId && previous && previous.ownerAgentId && previous.ownerAgentId !== pruneAgentId) {
+            continue;
+          }
           this.clearWarmSessionCache('tab-closed', this.warmCacheContextForTab(previous, { tabId }));
           this.invalidateApprovalsForTab(tabId, 'tab-closed');
           this.sessionTabs.delete(tabId);
@@ -2722,7 +2784,7 @@ class SessionManager {
     if (!tab) {
       return null;
     }
-    if (tab && originFromUrl(tab.url)) {
+    if (tab && originFromUrl(tab.url) && !tab.pendingUrl) {
       return tab;
     }
     if (this.connectionState !== 'EXTENSION_CONNECTED') {
@@ -2812,7 +2874,10 @@ class SessionManager {
       if (!extensionResponse.ok) {
         return rpcError(id, extensionResponse.error);
       }
-      const tabs = this.updateSessionTabs(extensionResponse.result && extensionResponse.result.tabs, { pruneMissing: true });
+      const tabs = this.updateSessionTabs(extensionResponse.result && extensionResponse.result.tabs, {
+        pruneMissing: true,
+        agentId
+      });
       return rpcOk(id, { tabs: this.listSessionTabRecordsForAgent(agentId) });
     }
 
@@ -2835,12 +2900,25 @@ class SessionManager {
         return rpcError(id, extensionResponse.error);
       }
       const finalizedResult = extensionResponse.result || {};
+      const closeFailedTabIds = new Set(
+        (Array.isArray(finalizedResult.closeFailed) ? finalizedResult.closeFailed : [])
+          .map((entry) => {
+            if (Number.isInteger(entry)) {
+              return entry;
+            }
+            return entry && Number.isInteger(entry.tabId) ? entry.tabId : null;
+          })
+          .filter(Number.isInteger)
+      );
       const removedTabIds = [
         ...(Array.isArray(finalizedResult.closed) ? finalizedResult.closed : []),
         ...(Array.isArray(finalizedResult.released) ? finalizedResult.released : [])
       ];
       for (const tabId of removedTabIds) {
         if (Number.isInteger(tabId)) {
+          if (closeFailedTabIds.has(tabId)) {
+            continue;
+          }
           const previous = this.sessionTabs.get(tabId);
           if (agentId && previous && previous.ownerAgentId !== agentId) {
             continue;
@@ -2854,6 +2932,9 @@ class SessionManager {
       for (const tabId of [...this.sessionTabs.keys()]) {
         const tab = this.sessionTabs.get(tabId);
         if (agentId && tab && tab.ownerAgentId !== agentId) {
+          continue;
+        }
+        if (closeFailedTabIds.has(tabId)) {
           continue;
         }
         if (!keepTabIds.has(tabId)) {
@@ -3373,6 +3454,9 @@ class SessionManager {
         updatedAt: now,
         lastPollAt: null,
         lastUnreadAt: null,
+        lastUnreadSummary: null,
+        lastUnreadDedupeKey: null,
+        lastEventId: null,
         unreadEventCount: 0
       };
       this.chatWatchers.set(watcherId, watcher);
@@ -3430,12 +3514,36 @@ class SessionManager {
     watcher.lastPollAt = new Date().toISOString();
     watcher.updatedAt = watcher.lastPollAt;
     if (!locator.ok && locator.error && locator.error.code === 'LOCATOR_NOT_FOUND') {
+      watcher.lastUnreadDedupeKey = null;
+      watcher.lastUnreadSummary = null;
       return rpcOk(id, { origin: watcher.origin, watcher: { ...watcher }, event: null, unread: false });
     }
     if (!locator.ok) {
       return rpcError(id, locator.error);
     }
 
+    const target = locator.result && locator.result.target;
+    const targetSummary = target && target.label
+      ? `${target.tag || target.role || 'element'}: ${target.label}`
+      : null;
+    const dedupeKey = stableHash({
+      selector: watcher.unreadSelector,
+      handle: target && target.handle ? target.handle : null,
+      summary: targetSummary
+    });
+    watcher.lastUnreadAt = new Date().toISOString();
+    watcher.lastUnreadSummary = targetSummary;
+    if (watcher.lastUnreadDedupeKey === dedupeKey) {
+      return rpcOk(id, {
+        origin: watcher.origin,
+        watcher: { ...watcher },
+        event: null,
+        unread: true,
+        duplicate: true
+      });
+    }
+    watcher.lastUnreadDedupeKey = dedupeKey;
+    watcher.unreadEventCount += 1;
     let screenshot = null;
     if (watcher.screenshotOnUnread) {
       const screenshotResponse = await this.routeCdpCommand(`${id}:screenshot`, 'operator.cdp.execute', {
@@ -3449,10 +3557,6 @@ class SessionManager {
       }
       screenshot = screenshotResponse.result || null;
     }
-
-    watcher.lastUnreadAt = new Date().toISOString();
-    watcher.unreadEventCount += 1;
-    const target = locator.result && locator.result.target;
     const event = this.recordChatWatcherEvent({
       watcherId: watcher.watcherId,
       agentId: watcher.agentId,
@@ -3460,9 +3564,7 @@ class SessionManager {
       origin: watcher.origin,
       type: 'unread',
       selector: watcher.unreadSelector,
-      targetSummary: target && target.label
-        ? `${target.tag || target.role || 'element'}: ${target.label}`
-        : null,
+      targetSummary,
       screenshot: screenshot
         ? {
           artifactId: screenshot.screenshot && screenshot.screenshot.artifactId
@@ -3480,11 +3582,13 @@ class SessionManager {
         }
         : null
     });
+    watcher.lastEventId = event.id;
     return rpcOk(id, {
       origin: watcher.origin,
       watcher: { ...watcher },
       event,
-      unread: true
+      unread: true,
+      duplicate: false
     });
   }
 
@@ -3691,6 +3795,12 @@ class SessionManager {
     if (!lease.ok) {
       return rpcError(id, lease.error);
     }
+    if (method !== 'operator.runtime.tab.goto') {
+      const pendingNavigation = pendingNavigationErrorForTab(tab);
+      if (pendingNavigation) {
+        return rpcError(id, pendingNavigation);
+      }
+    }
 
     let origin = originFromUrl(tab.url);
     let commandParams = { ...params, tabId: tabId.tabId };
@@ -3885,7 +3995,13 @@ class SessionManager {
         url: tab.url,
         origin: originFromUrl(tab.url)
       });
-      const updatedTab = this.updateSessionTab(extensionResponse.result && extensionResponse.result.tab, tab.ownership);
+      const rawUpdatedTab = extensionResponse.result && extensionResponse.result.tab;
+      const updatedTab = this.updateSessionTab(
+        rawUpdatedTab && extensionResponse.result && extensionResponse.result.requestedUrl
+          ? { ...rawUpdatedTab, requestedUrl: extensionResponse.result.requestedUrl }
+          : rawUpdatedTab,
+        tab.ownership
+      );
       return rpcOk(id, {
         ...(extensionResponse.result || {}),
         tab: updatedTab || (extensionResponse.result && extensionResponse.result.tab) || null,
@@ -4151,14 +4267,38 @@ class SessionManager {
     return [...tabsById.values()].sort((left, right) => left.id - right.id);
   }
 
-  guardActiveTabTarget(method, origin, batch) {
+  guardActiveTabTarget(method, origin, batch, expectedActiveTabId = null) {
     if (!origin || !requiresActiveTabTargetGuard(method, batch)) {
       return guardOk();
     }
 
     const activeTab = this.activeTab;
+    const hasExpectedActiveTab = Number.isInteger(expectedActiveTabId);
     if (!activeTab || !Number.isInteger(activeTab.id) || tabOrigin(activeTab) !== origin) {
+      if (hasExpectedActiveTab) {
+        return guardError(
+          ERROR_CODES.TAB_MISMATCH,
+          'Active-tab diagnostic target is no longer active on the requested origin.',
+          {
+            origin,
+            expectedActiveTabId,
+            activeTabId: activeTab && Number.isInteger(activeTab.id) ? activeTab.id : null,
+            activeTabOrigin: activeTab ? tabOrigin(activeTab) : null
+          }
+        );
+      }
       return guardOk();
+    }
+    if (hasExpectedActiveTab && activeTab.id !== expectedActiveTabId) {
+      return guardError(
+        ERROR_CODES.TAB_MISMATCH,
+        'Active-tab diagnostic expected a different active tab. Re-observe the active tab before retrying.',
+        {
+          origin,
+          expectedActiveTabId,
+          activeTabId: activeTab.id
+        }
+      );
     }
 
     const sameOriginTabs = this.knownSameOriginTabs(origin);
@@ -5497,6 +5637,10 @@ class SessionManager {
         return rpcError(id, targetContract.error);
       }
     }
+    const activeTabDiagnostic = validateActiveTabDiagnosticParams(method, params);
+    if (!activeTabDiagnostic.ok) {
+      return rpcError(id, activeTabDiagnostic.error);
+    }
     const readiness = assertReadyForRealSiteAction(this.readinessStateForOrigin(origin));
 
     if (!readiness.ok) {
@@ -5510,7 +5654,10 @@ class SessionManager {
       return rpcError(id, boundedFullAuto.error);
     }
 
-    const activeTabGuard = this.guardActiveTabTarget(method, origin, batch);
+    const expectedActiveTabId = Number.isInteger(params.expectedActiveTabId)
+      ? params.expectedActiveTabId
+      : null;
+    const activeTabGuard = this.guardActiveTabTarget(method, origin, batch, expectedActiveTabId);
     if (!activeTabGuard.ok) {
       return rpcError(id, activeTabGuard.error);
     }

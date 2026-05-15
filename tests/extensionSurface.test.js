@@ -85,15 +85,20 @@ test('side panel exposes action permissions, purchase approval, and blocked-site
   assert.match(html, /purchase-approvals-toggle/);
   assert.match(html, /Operational status/);
   assert.match(html, /Token usage/);
+  assert.match(html, /Action timeline/);
   assert.match(html, /session-tabs-count/);
   assert.match(html, /last-command/);
   assert.match(html, /download-watch-status/);
   assert.match(html, /chat-watch-status/);
+  assert.match(html, /audit-timeline/);
   assert.match(html, /token-total/);
   assert.match(html, /token-input/);
   assert.match(html, /token-output/);
   assert.match(js, /renderTokenUsage/);
   assert.match(js, /renderChatWatcher/);
+  assert.match(js, /readAuditTimeline/);
+  assert.match(js, /renderAuditTimeline/);
+  assert.match(js, /operator\.audit\.timeline/);
   assert.match(html, /pending-approvals/);
   assert.match(js, /operator\.blockedOriginsStatus/);
   assert.match(js, /operator\.daemonStatus/);
@@ -126,6 +131,9 @@ test('side panel treats daemon EXTENSION_CONNECTED status as connected', async (
       value: '',
       append(...children) {
         this.children.push(...children);
+        this.textContent = this.children
+          .map((child) => child && child.textContent ? child.textContent : '')
+          .join('');
       },
       addEventListener() {},
       closest() {
@@ -189,6 +197,20 @@ test('side panel treats daemon EXTENSION_CONNECTED status as connected', async (
         if (message.type === 'operator.approvals.list') {
           return { ok: true, result: { approvals: [] } };
         }
+        if (message.type === 'operator.audit.timeline') {
+          return {
+            ok: true,
+            result: {
+              timeline: [{
+                method: 'operator.runtime.tab.locator',
+                result: 'ok',
+                tabId: 7,
+                origin: 'https://example.com',
+                actionKind: 'click'
+              }]
+            }
+          };
+        }
         if (message.type === 'operator.blockedOriginsStatus') {
           return { blockedOrigins: [], blocked: false, blockedPattern: null };
         }
@@ -225,6 +247,8 @@ test('side panel treats daemon EXTENSION_CONNECTED status as connected', async (
   assert.equal(elements.get('token-output').textContent, '34');
   assert.equal(elements.get('token-command-count').textContent, '2');
   assert.equal(elements.get('token-last-command').textContent, 'page.observe');
+  assert.equal(elements.get('audit-timeline').children.length, 1);
+  assert.match(elements.get('audit-timeline').children[0].textContent, /runtime\.tab\.locator/);
   assert.equal(
     elements.get('next-step').textContent,
     'Ready for Codex operator commands on this active origin.'
@@ -655,13 +679,20 @@ test('background rejects active-tab actions when the queued tab lock no longer m
 
 test('runtime tab navigation does not activate background session tabs', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const tabInfoStart = background.indexOf('function tabInfo(tab)');
+  const tabInfoEnd = background.indexOf('function sessionTabInfo', tabInfoStart);
+  const tabInfoBlock = background.slice(tabInfoStart, tabInfoEnd);
   const start = background.indexOf("if (method === 'operator.runtime.tab.goto')");
   const end = background.indexOf("if (method === 'operator.runtime.tab.observe')", start);
   const block = background.slice(start, end);
 
+  assert.ok(tabInfoStart !== -1 && tabInfoEnd !== -1, 'tabInfo should be present');
+  assert.match(tabInfoBlock, /pendingUrl:\s*tab\.pendingUrl \|\| null/);
   assert.ok(start !== -1 && end !== -1, 'runtime tab goto block should be present');
   assert.match(block, /chrome\.tabs\.update\(tab\.id,\s*\{\s*url:\s*params\.url\s*\}\)/s);
   assert.doesNotMatch(block, /active:\s*true/);
+  assert.doesNotMatch(block, /\.\.\.tabInfo\(targetTab\)[\s\S]*url:\s*params\.url/);
+  assert.match(block, /requestedUrl:\s*params\.url/);
 });
 
 test('background fails closed when required click verification is inconclusive', () => {
@@ -740,6 +771,19 @@ test('background exposes guarded session tab commands for hybrid operator mode',
   assert.match(background, /TAB_NOT_CLAIMABLE/);
   assert.match(background, /favIconUrl/);
   assert.match(background, /lastAccessed/);
+});
+
+test('background reports session tab close failures without marking them closed', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const start = background.indexOf("if (method === 'operator.tabs.finalize')");
+  const end = background.indexOf("if (method === 'operator.session.name')", start);
+  const block = background.slice(start, end);
+
+  assert.ok(start !== -1 && end !== -1, 'operator.tabs.finalize block should be present');
+  assert.match(block, /const closeFailed = \[\]/);
+  assert.match(block, /closeFailed\.push/);
+  assert.doesNotMatch(block, /catch\s*\{[\s\S]*closed\.push\(tabId\)/);
+  assert.match(block, /result:\s*\{\s*kept,\s*closed,\s*released,\s*closeFailed\s*\}/s);
 });
 
 test('background bounds session tab creation so native RPCs do not hang indefinitely', () => {

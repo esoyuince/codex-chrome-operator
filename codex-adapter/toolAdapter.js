@@ -380,6 +380,14 @@ function visualObserveOptions(input) {
   ]);
 }
 
+function activeTabDiagnosticOptions(input) {
+  return pickDefined(input, [
+    'expectedActiveTabId',
+    'diagnosticActiveTab',
+    'diagnosticReason'
+  ]);
+}
+
 class CodexChromeToolAdapter {
   constructor({
     settings,
@@ -708,12 +716,14 @@ class CodexChromeToolAdapter {
       case 'codex_chrome_visual_observe':
         response = await this.sendRpc('page.visualObserve', {
           origin: normalizeOrigin(input.origin),
+          ...activeTabDiagnosticOptions(input),
           ...visualObserveOptions(input)
         });
         break;
       case 'codex_chrome_visual_analyze':
         response = await this.sendRpc('page.visualAnalyze', {
           origin: normalizeOrigin(input.origin),
+          ...activeTabDiagnosticOptions(input),
           ...(input.provider === undefined ? {} : { provider: input.provider }),
           ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }),
           ...(input.allowSensitive === undefined ? {} : { allowSensitive: input.allowSensitive })
@@ -729,6 +739,7 @@ class CodexChromeToolAdapter {
         response = await this.sendRpc('page.visualInspectTarget', {
           origin: normalizeOrigin(input.origin),
           handle: input.handle,
+          ...activeTabDiagnosticOptions(input),
           ...(input.maxBytes === undefined ? {} : { maxBytes: input.maxBytes }),
           ...(input.reason === undefined ? {} : { reason: input.reason })
         });

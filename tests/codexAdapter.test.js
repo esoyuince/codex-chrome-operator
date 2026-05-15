@@ -148,7 +148,9 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.equal(batch.inputSchema.properties.actions.type, 'array');
   assert.equal(batch.inputSchema.properties.actions.items.additionalProperties, false);
   assert.ok(visualObserve);
-  assert.deepEqual(visualObserve.inputSchema.required, ['origin']);
+  assert.deepEqual(visualObserve.inputSchema.required, ['origin', 'expectedActiveTabId', 'diagnosticActiveTab']);
+  assert.equal(visualObserve.inputSchema.properties.expectedActiveTabId.type, 'number');
+  assert.deepEqual(visualObserve.inputSchema.properties.diagnosticActiveTab.enum, [true]);
   assert.equal(visualObserve.inputSchema.properties.maxBytes.minimum, 1);
   assert.deepEqual(visualObserve.inputSchema.properties.mode.enum, ['tiny', 'medium', 'full']);
   assert.equal(visualObserve.inputSchema.properties.reason.type, 'string');
@@ -158,7 +160,7 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.equal(mediaInspect.inputSchema.properties.maxItems.minimum, 1);
   assert.match(mediaInspect.description, /media/i);
   assert.ok(visualInspectTarget);
-  assert.deepEqual(visualInspectTarget.inputSchema.required, ['origin', 'handle']);
+  assert.deepEqual(visualInspectTarget.inputSchema.required, ['origin', 'handle', 'expectedActiveTabId', 'diagnosticActiveTab']);
   assert.equal(visualInspectTarget.inputSchema.properties.maxBytes.minimum, 1);
   assert.match(visualInspectTarget.description, /target/i);
   assert.ok(formExtract);
@@ -621,6 +623,8 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   assert.equal(
     validateToolInput('codex_chrome_visual_observe', {
       origin: 'https://example.com/path',
+      expectedActiveTabId: 7,
+      diagnosticActiveTab: true,
       mode: 'medium',
       maxBytes: 120000,
       reason: 'DOM confidence low around product tiles'
@@ -630,7 +634,16 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   assert.equal(
     validateToolInput('codex_chrome_visual_observe', {
       origin: 'https://example.com/path',
+      expectedActiveTabId: 7,
+      diagnosticActiveTab: true,
       maxBytes: 0
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_visual_observe', {
+      origin: 'https://example.com/path',
+      expectedActiveTabId: 7
     }).error.code,
     'INVALID_TOOL_INPUT'
   );
@@ -792,6 +805,9 @@ test('CodexChromeToolAdapter forwards explicit form value observe and read-page 
     toolName: 'codex_chrome_visual_observe',
     input: {
       origin: 'https://example.com/form',
+      expectedActiveTabId: 7,
+      diagnosticActiveTab: true,
+      diagnosticReason: 'active form diagnostic',
       mode: 'medium',
       includeFormValues: true,
       maxFieldValueChars: 16,
@@ -814,6 +830,9 @@ test('CodexChromeToolAdapter forwards explicit form value observe and read-page 
     maxFieldValueChars: 32
   }, {
     origin: 'https://example.com',
+    expectedActiveTabId: 7,
+    diagnosticActiveTab: true,
+    diagnosticReason: 'active form diagnostic',
     mode: 'medium',
     includeFormValues: true,
     maxFieldValueChars: 16,
@@ -1418,9 +1437,12 @@ test('CodexChromeToolAdapter exposes strict visual analyze schema and validation
   assert.ok(visualAnalyze);
   assert.equal(visualAnalyze.inputSchema.type, 'object');
   assert.equal(visualAnalyze.inputSchema.additionalProperties, false);
-  assert.deepEqual(visualAnalyze.inputSchema.required, ['origin']);
+  assert.deepEqual(visualAnalyze.inputSchema.required, ['origin', 'expectedActiveTabId', 'diagnosticActiveTab']);
   assert.deepEqual(visualAnalyze.inputSchema.properties, {
     origin: { type: 'string' },
+    expectedActiveTabId: { type: 'number', minimum: 0 },
+    diagnosticActiveTab: { type: 'boolean', enum: [true] },
+    diagnosticReason: { type: 'string' },
     provider: { type: 'string' },
     maxBytes: { type: 'number' },
     allowSensitive: { type: 'boolean' }
@@ -1439,12 +1461,45 @@ test('CodexChromeToolAdapter exposes strict visual analyze schema and validation
   assert.equal(
     validateToolInput('codex_chrome_visual_analyze', {
       origin: 'https://example.com/path',
+      expectedActiveTabId: 7,
+      diagnosticActiveTab: false
+    }).error.code,
+    'INVALID_TOOL_INPUT'
+  );
+  assert.equal(
+    validateToolInput('codex_chrome_visual_analyze', {
+      origin: 'https://example.com/path',
+      expectedActiveTabId: 7,
+      diagnosticActiveTab: true,
+      diagnosticReason: 'active tab screenshot diagnostic',
       provider: 'local',
       maxBytes: 120000,
       allowSensitive: false
     }).ok,
     true
   );
+});
+
+test('CodexChromeToolAdapter requires explicit active-tab diagnostic fields for visual diagnostics', () => {
+  assert.equal(validateToolInput('codex_chrome_visual_observe', {
+    origin: 'https://example.com'
+  }).ok, false);
+  assert.equal(validateToolInput('codex_chrome_visual_analyze', {
+    origin: 'https://example.com',
+    expectedActiveTabId: 7
+  }).ok, false);
+  assert.equal(validateToolInput('codex_chrome_visual_inspect_target', {
+    origin: 'https://example.com',
+    handle: 'el_state_0',
+    diagnosticActiveTab: true
+  }).ok, false);
+  assert.equal(validateToolInput('codex_chrome_visual_inspect_target', {
+    origin: 'https://example.com',
+    handle: 'el_state_0',
+    expectedActiveTabId: 7,
+    diagnosticActiveTab: true,
+    diagnosticReason: 'legacy active-tab target screenshot diagnostic'
+  }).ok, true);
 });
 
 test('CodexChromeToolAdapter routes visual analyze with normalized origin and options', async () => {
@@ -1471,6 +1526,9 @@ test('CodexChromeToolAdapter routes visual analyze with normalized origin and op
     toolName: 'codex_chrome_visual_analyze',
     input: {
       origin: 'https://example.com/deep/path?x=1#section',
+      expectedActiveTabId: 7,
+      diagnosticActiveTab: true,
+      diagnosticReason: 'active tab visual diagnostic',
       provider: 'local',
       maxBytes: 120000,
       allowSensitive: false
@@ -1481,6 +1539,9 @@ test('CodexChromeToolAdapter routes visual analyze with normalized origin and op
   assert.equal(response.result.method, 'page.visualAnalyze');
   assert.deepEqual(response.result.params, {
     origin: 'https://example.com',
+    expectedActiveTabId: 7,
+    diagnosticActiveTab: true,
+    diagnosticReason: 'active tab visual diagnostic',
     provider: 'local',
     maxBytes: 120000,
     allowSensitive: false
@@ -1539,6 +1600,9 @@ test('CodexChromeToolAdapter routes target visual inspect and form tools', async
     input: {
       origin: 'https://example.com/form?x=1',
       handle: 'el_state_0',
+      expectedActiveTabId: 7,
+      diagnosticActiveTab: true,
+      diagnosticReason: 'active tab target diagnostic',
       maxBytes: 100000,
       reason: 'target verification'
     }
@@ -1574,6 +1638,9 @@ test('CodexChromeToolAdapter routes target visual inspect and form tools', async
   assert.deepEqual(calls[0].params, {
     origin: 'https://example.com',
     handle: 'el_state_0',
+    expectedActiveTabId: 7,
+    diagnosticActiveTab: true,
+    diagnosticReason: 'active tab target diagnostic',
     maxBytes: 100000,
     reason: 'target verification'
   });
@@ -1609,6 +1676,9 @@ test('CodexChromeToolAdapter routes visual observe with normalized origin and sc
     toolName: 'codex_chrome_visual_observe',
     input: {
       origin: 'https://example.com/deep/path?x=1#section',
+      expectedActiveTabId: 7,
+      diagnosticActiveTab: true,
+      diagnosticReason: 'active tab visual diagnostic',
       mode: 'medium',
       maxActionableHandles: 12,
       summaryMaxChars: 400,
@@ -1622,6 +1692,9 @@ test('CodexChromeToolAdapter routes visual observe with normalized origin and sc
   assert.equal(response.result.method, 'page.visualObserve');
   assert.deepEqual(response.result.params, {
     origin: 'https://example.com',
+    expectedActiveTabId: 7,
+    diagnosticActiveTab: true,
+    diagnosticReason: 'active tab visual diagnostic',
     mode: 'medium',
     maxActionableHandles: 12,
     summaryMaxChars: 400,
@@ -2459,7 +2532,9 @@ test('CodexChromeToolAdapter redacts raw visual data URLs from tool responses', 
   const response = await adapter.executeTool({
     toolName: 'codex_chrome_visual_observe',
     input: {
-      origin: 'https://example.com'
+      origin: 'https://example.com',
+      expectedActiveTabId: 7,
+      diagnosticActiveTab: true
     }
   });
 
