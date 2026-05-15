@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
 const {
@@ -108,6 +109,7 @@ function clearsLastErrorOnSuccess(method) {
     'operator.fullAuto.stop',
     'operator.fullAuto.status',
     'operator.audit.tail',
+    'operator.audit.timeline',
     'operator.ensureStarted',
     'operator.approvals.approve',
     'operator.approvals.reject',
@@ -121,6 +123,7 @@ function clearsLastErrorOnSuccess(method) {
     method.startsWith('operator.context.') ||
     method.startsWith('operator.downloads.') ||
     method.startsWith('operator.sessions.') ||
+    method.startsWith('operator.chatWatcher.') ||
     method.startsWith('operator.cdp.') ||
     method === 'operator.session.name';
 }
@@ -165,6 +168,19 @@ const ACTIVE_TAB_MUTATION_METHODS = new Set([
   'page.check',
   'page.scroll',
   'page.pressKey'
+]);
+
+const ACTIVE_TAB_READ_METHODS = new Set([
+  'page.observe',
+  'page.readPage',
+  'page.extract',
+  'page.mediaInspect',
+  'page.formExtract',
+  'page.formFillPlan',
+  'page.visualObserve',
+  'page.visualAnalyze',
+  'page.visualInspectTarget',
+  'page.waitFor'
 ]);
 
 const BATCH_ACTION_KINDS = Object.freeze({
@@ -216,13 +232,28 @@ const TOKEN_USAGE_METHOD_PREFIXES = Object.freeze([
   'operator.sessions.',
   'operator.tabs.'
 ]);
-const RUNTIME_LOCATOR_ACTIONS = new Set(['resolve', 'click', 'type', 'fill', 'focus', 'clear']);
+const RUNTIME_LOCATOR_ACTIONS = new Set([
+  'resolve',
+  'click',
+  'type',
+  'fill',
+  'focus',
+  'clear',
+  'select',
+  'check',
+  'scroll',
+  'pressKey'
+]);
 const RUNTIME_LOCATOR_MUTATION_METHODS = Object.freeze({
   click: 'page.click',
   type: 'page.type',
   fill: 'page.fill',
   focus: 'page.focus',
-  clear: 'page.clear'
+  clear: 'page.clear',
+  select: 'page.select',
+  check: 'page.check',
+  scroll: 'page.scroll',
+  pressKey: 'page.pressKey'
 });
 const GUARDED_ACTION_KINDS = new Set([
   'navigate',
@@ -337,8 +368,11 @@ const PROFILE_CONFIDENCE_REQUIRED_APPROVAL_KINDS = new Set([
 
 const MAX_BATCH_ACTIONS = 20;
 const WARM_SESSION_CACHE_TTL_MS = 10000;
+const APPROVAL_TTL_MS = 5 * 60 * 1000;
 const RECENT_ACTION_LOG_LIMIT = 25;
+const CHAT_WATCHER_EVENT_LIMIT = 50;
 const WARM_CACHE_PRESERVING_ACTION_KINDS = new Set(['observe', 'screenshot', 'wait']);
+const APPROVAL_INVALIDATABLE_STATUSES = new Set(['pending', 'approved']);
 const VERIFY_CONDITION_TYPES = new Set([
   'textAppears',
   'textAppearsInArticle',
@@ -349,6 +383,167 @@ const VERIFY_CONDITION_TYPES = new Set([
 
 function cloneJson(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function canonicalJson(value) {
+  if (value === undefined) {
+    return 'null';
+  }
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => canonicalJson(entry)).join(',')}]`;
+  }
+  const entries = Object.keys(value)
+    .filter((key) => value[key] !== undefined)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`);
+  return `{${entries.join(',')}}`;
+}
+
+function stableHash(value) {
+  return crypto
+    .createHash('sha256')
+    .update(canonicalJson(value))
+    .digest('hex');
+}
+
+function makeOperatorSessionId() {
+  return `session_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function pageStateIdFromHandle(handle) {
+  if (typeof handle !== 'string' || !handle.startsWith('el_')) {
+    return null;
+  }
+  const lastUnderscore = handle.lastIndexOf('_');
+  if (lastUnderscore <= 3) {
+    return null;
+  }
+  const index = handle.slice(lastUnderscore + 1);
+  if (!/^\d+$/.test(index)) {
+    return null;
+  }
+  return handle.slice(3, lastUnderscore) || null;
+}
+
+function approvalTargetContractFromParams(params = {}, error = {}) {
+  if (isPlainObject(params.targetContract)) {
+    return params.targetContract;
+  }
+  if (
+    Number.isInteger(error.childActionIndex) &&
+    Array.isArray(params.actions) &&
+    isPlainObject(params.actions[error.childActionIndex]) &&
+    isPlainObject(params.actions[error.childActionIndex].targetContract)
+  ) {
+    return params.actions[error.childActionIndex].targetContract;
+  }
+  if (Array.isArray(params.actions)) {
+    const actionWithContract = params.actions.find((action) => isPlainObject(action && action.targetContract));
+    if (actionWithContract) {
+      return actionWithContract.targetContract;
+    }
+  }
+  if (Array.isArray(params.steps)) {
+    const stepWithContract = params.steps.find((step) => isPlainObject(step && step.targetContract));
+    if (stepWithContract) {
+      return stepWithContract.targetContract;
+    }
+  }
+  return null;
+}
+
+function approvalTargetHandleFromParams(params = {}, error = {}, targetContract = null) {
+  if (targetContract && typeof targetContract.handle === 'string' && targetContract.handle) {
+    return targetContract.handle;
+  }
+  if (
+    Number.isInteger(error.childActionIndex) &&
+    Array.isArray(params.actions) &&
+    typeof params.actions[error.childActionIndex].handle === 'string'
+  ) {
+    return params.actions[error.childActionIndex].handle;
+  }
+  if (typeof params.handle === 'string' && params.handle) {
+    return params.handle;
+  }
+  if (Array.isArray(params.actions)) {
+    const actionWithHandle = params.actions.find((action) => typeof (action && action.handle) === 'string' && action.handle);
+    if (actionWithHandle) {
+      return actionWithHandle.handle;
+    }
+  }
+  return null;
+}
+
+function approvalContextError(record, reason, extra = {}) {
+  return {
+    code: ERROR_CODES.APPROVAL_CONTEXT_MISMATCH,
+    message: 'Approval replay context no longer matches the approved action.',
+    approvalId: record && record.approvalId,
+    reason,
+    ...extra
+  };
+}
+
+function flattenObservedTargets(result) {
+  const targets = [];
+  const visit = (value) => {
+    if (!value || typeof value !== 'object') {
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        visit(entry);
+      }
+      return;
+    }
+    if (
+      typeof value.handle === 'string' ||
+      isPlainObject(value.targetContract) ||
+      isPlainObject(value.contract)
+    ) {
+      targets.push(value);
+    }
+    for (const key of ['elements', 'items', 'actionable', 'controls', 'targets']) {
+      if (Array.isArray(value[key])) {
+        visit(value[key]);
+      }
+    }
+  };
+  visit(result);
+  return targets;
+}
+
+function observedTargetMatchesApproval(result, record) {
+  if (!record.targetContractHash && !record.targetHandle) {
+    return true;
+  }
+  const targets = flattenObservedTargets(result);
+  return targets.some((target) => {
+    const contract = isPlainObject(target.targetContract)
+      ? target.targetContract
+      : (isPlainObject(target.contract) ? target.contract : null);
+    if (record.targetContractHash && contract && stableHash(contract) === record.targetContractHash) {
+      return true;
+    }
+    if (!record.targetHandle) {
+      return false;
+    }
+    const candidateHandles = [
+      typeof target.handle === 'string' ? target.handle : null,
+      contract && typeof contract.handle === 'string' ? contract.handle : null
+    ].filter(Boolean);
+    if (!candidateHandles.includes(record.targetHandle)) {
+      return false;
+    }
+    if (!record.pageStateId) {
+      return true;
+    }
+    return candidateHandles.some((handle) => pageStateIdFromHandle(handle) === record.pageStateId);
+  });
 }
 
 function guardOk(extra = {}) {
@@ -780,6 +975,13 @@ function normalizeHttpOrigin(value) {
   }
 }
 
+function normalizeOriginAllowlist(origins = []) {
+  if (!Array.isArray(origins)) {
+    return new Set();
+  }
+  return new Set(origins.map((origin) => normalizeHttpOrigin(origin)).filter(Boolean));
+}
+
 function invalidOriginResponse(id) {
   return rpcError(id, {
     code: ERROR_CODES.INVALID_SCHEMA,
@@ -1184,22 +1386,25 @@ function tabIdentitySummary(tab, source) {
   };
 }
 
-function mutatingActiveTabBatch(batch) {
+function guardedActiveTabBatch(batch) {
   return Boolean(
     batch &&
     Array.isArray(batch.childActions) &&
     batch.childActions.some((action) => (
       action &&
-      ACTIVE_TAB_MUTATING_BATCH_ACTION_KINDS.has(action.actionKind)
+      (
+        ACTIVE_TAB_MUTATING_BATCH_ACTION_KINDS.has(action.actionKind) ||
+        action.actionKind === 'observe'
+      )
     ))
   );
 }
 
-function requiresActiveTabMutationGuard(method, batch) {
+function requiresActiveTabTargetGuard(method, batch) {
   if (method === 'page.batch') {
-    return mutatingActiveTabBatch(batch);
+    return guardedActiveTabBatch(batch);
   }
-  return ACTIVE_TAB_MUTATION_METHODS.has(method);
+  return ACTIVE_TAB_MUTATION_METHODS.has(method) || ACTIVE_TAB_READ_METHODS.has(method);
 }
 
 function summarizeActiveTabForEvent(tab) {
@@ -1221,6 +1426,32 @@ function normalizeTabId(value, label = 'tabId') {
   return guardOk({ tabId: value });
 }
 
+function normalizeAgentId(value) {
+  if (value === undefined || value === null || value === '') {
+    return guardOk({ agentId: null });
+  }
+  if (typeof value !== 'string') {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'agentId must be a string.');
+  }
+  const agentId = value.trim();
+  if (!agentId) {
+    return guardOk({ agentId: null });
+  }
+  if (agentId.length > 120 || !/^[A-Za-z0-9_.:-]+$/.test(agentId)) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'agentId must be a short stable identifier.', {
+      field: 'agentId'
+    });
+  }
+  return guardOk({ agentId });
+}
+
+function makeTabLeaseId(sessionId, agentId, tabId) {
+  if (!agentId || !Number.isInteger(tabId)) {
+    return null;
+  }
+  return `lease_${stableHash({ sessionId, agentId, tabId }).slice(0, 24)}`;
+}
+
 function normalizeSessionTab(tab, fallbackOwnership = null) {
   if (!tab || typeof tab !== 'object') {
     return null;
@@ -1232,6 +1463,7 @@ function normalizeSessionTab(tab, fallbackOwnership = null) {
   const ownership = tab.ownership === 'agent' || tab.ownership === 'user'
     ? tab.ownership
     : fallbackOwnership;
+  const ownerAgent = normalizeAgentId(tab.ownerAgentId || tab.agentId);
   return {
     id: tabId.tabId,
     title: typeof tab.title === 'string' ? tab.title : null,
@@ -1246,6 +1478,8 @@ function normalizeSessionTab(tab, fallbackOwnership = null) {
     muted: tab.muted === true,
     lastAccessed: typeof tab.lastAccessed === 'string' ? tab.lastAccessed : null,
     ownership: ownership === 'agent' || ownership === 'user' ? ownership : null,
+    ownerAgentId: ownerAgent.ok ? ownerAgent.agentId : null,
+    leaseId: typeof tab.leaseId === 'string' && tab.leaseId ? tab.leaseId : null,
     active: tab.active === true,
     finalizedStatus: tab.finalizedStatus === 'handoff' || tab.finalizedStatus === 'deliverable'
       ? tab.finalizedStatus
@@ -1332,8 +1566,14 @@ function validateRuntimeLocatorParams(params = {}) {
   }
   const selector = typeof params.selector === 'string' ? params.selector.trim() : '';
   const text = typeof params.text === 'string' ? params.text.trim() : '';
-  if (!selector && !text) {
-    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator requires selector or text.');
+  const handle = typeof params.handle === 'string' ? params.handle.trim() : '';
+  if (!handle && !selector && !text) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator requires handle, selector, or text.');
+  }
+  if (handle.length > 200) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator handle is too long.', {
+      maxLength: 200
+    });
   }
   if (selector.length > 300) {
     return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator selector is too long.', {
@@ -1348,6 +1588,23 @@ function validateRuntimeLocatorParams(params = {}) {
   if ((action === 'type' || action === 'fill') && typeof params.textValue !== 'string') {
     return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator type/fill actions require textValue.');
   }
+  if (action === 'select' && typeof params.value !== 'string') {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator select actions require value.');
+  }
+  if (action === 'check' && typeof params.checked !== 'boolean') {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator check actions require checked.');
+  }
+  if (action === 'scroll') {
+    if (typeof params.deltaX !== 'number' || !Number.isFinite(params.deltaX)) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator scroll actions require numeric deltaX.');
+    }
+    if (typeof params.deltaY !== 'number' || !Number.isFinite(params.deltaY)) {
+      return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator scroll actions require numeric deltaY.');
+    }
+  }
+  if (action === 'pressKey' && typeof params.key !== 'string') {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'Locator pressKey actions require key.');
+  }
   const verify = validateVerifyConditions(params.verify);
   if (!verify.ok) {
     return verify;
@@ -1358,9 +1615,15 @@ function validateRuntimeLocatorParams(params = {}) {
   }
   return guardOk({
     action,
+    handle: handle || undefined,
     selector: selector || undefined,
     text: text || undefined,
-    textValue: typeof params.textValue === 'string' ? params.textValue : undefined
+    textValue: typeof params.textValue === 'string' ? params.textValue : undefined,
+    value: typeof params.value === 'string' ? params.value : undefined,
+    checked: typeof params.checked === 'boolean' ? params.checked : undefined,
+    deltaX: typeof params.deltaX === 'number' ? params.deltaX : undefined,
+    deltaY: typeof params.deltaY === 'number' ? params.deltaY : undefined,
+    key: typeof params.key === 'string' ? params.key : undefined
   });
 }
 
@@ -1492,19 +1755,59 @@ function validateTargetCueParams(params = {}) {
   });
 }
 
+function validateChatWatcherStartParams(params = {}) {
+  const origin = normalizeHttpOrigin(params.origin) || originFromUrl(params.url);
+  if (!origin) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'chat watcher origin must be an http(s) URL or origin.');
+  }
+  const tabId = normalizeTabId(params.tabId);
+  if (!tabId.ok) {
+    return tabId;
+  }
+  const unreadSelector = typeof params.unreadSelector === 'string' ? params.unreadSelector.trim() : '';
+  if (!unreadSelector) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'chat watcher requires unreadSelector.');
+  }
+  if (unreadSelector.length > 300) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'chat watcher unreadSelector is too long.');
+  }
+  const label = typeof params.label === 'string' && params.label.trim()
+    ? params.label.trim().slice(0, 120)
+    : null;
+  return guardOk({
+    origin,
+    tabId: tabId.tabId,
+    unreadSelector,
+    label,
+    intervalMs: boundedInteger(params.intervalMs, 30000, 5000, 300000),
+    screenshotOnUnread: params.screenshotOnUnread === true
+  });
+}
+
+function validateChatWatcherId(params = {}) {
+  const watcherId = typeof params.watcherId === 'string' ? params.watcherId.trim() : '';
+  if (!watcherId) {
+    return guardError(ERROR_CODES.INVALID_SCHEMA, 'watcherId is required.');
+  }
+  return guardOk({ watcherId });
+}
+
 class SessionManager {
   constructor(config = {}) {
     this.stateStore = config.stateStore || new OperatorStateStore({ statePath: config.statePath });
     this.config = {
       expectedExtensionId: config.expectedExtensionId || 'development-extension-id',
       expectedProtocolVersion: config.expectedProtocolVersion || '1.0',
-      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.12',
-      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.12',
+      expectedExtensionVersion: config.expectedExtensionVersion || '0.2.13',
+      expectedBridgeVersion: config.expectedBridgeVersion || '0.2.13',
       auditLogPath: config.auditLogPath || defaultAuditPath(),
       screenshotDir: config.screenshotDir || defaultScreenshotDir(),
       visualAnalyzerRegistry: config.visualAnalyzerRegistry || createVisualAnalyzerRegistry(),
       assetValidator: config.assetValidator || defaultAssetValidator,
       siteProfiles: config.siteProfiles || loadSiteProfiles({ profileDir: config.siteProfileDir }),
+      chatWatcherAllowedOrigins: Array.isArray(config.chatWatcherAllowedOrigins)
+        ? config.chatWatcherAllowedOrigins.slice()
+        : [],
       token: config.token || process.env.CODEX_CHROME_OPERATOR_TOKEN || 'dev-token'
     };
     this.audit = new AuditLog(this.config.auditLogPath);
@@ -1515,6 +1818,7 @@ class SessionManager {
     this.assetValidator = this.config.assetValidator;
     this.siteProfiles = this.config.siteProfiles;
     this.connectionState = 'DAEMON_RUNNING_EXTENSION_DISCONNECTED';
+    this.sessionId = config.sessionId || makeOperatorSessionId();
     this.profileVerified = false;
     this.profileIdentityVerified = false;
     this.profileVerificationMode = 'not-required';
@@ -1534,6 +1838,7 @@ class SessionManager {
     this.pendingApprovals = new Map();
     this.nextApprovalId = 1;
     this.lastVersionMismatch = null;
+    this.loadedExtension = null;
     this.activeTab = null;
     this.recentEvents = [];
     this.emergencyStop = {
@@ -1543,10 +1848,16 @@ class SessionManager {
       clearedAt: null
     };
     this.boundedFullAuto = this.defaultBoundedFullAutoState();
-    this.warmSessionCache = null;
+    this.warmSessionCaches = new Map();
+    this.lastWarmSessionInactive = null;
     this.sessionName = null;
     this.sessionTabs = new Map();
     this.lastUserTabInventory = new Map();
+    this.tabCommandLocks = new Map();
+    this.chatWatcherAllowedOrigins = normalizeOriginAllowlist(this.config.chatWatcherAllowedOrigins);
+    this.chatWatchers = new Map();
+    this.chatWatcherEvents = [];
+    this.nextChatWatcherId = 1;
     this.tokenUsage = this.defaultTokenUsage();
   }
 
@@ -1562,9 +1873,22 @@ class SessionManager {
     };
   }
 
+  chatWatcherStatus({ limit = 20 } = {}) {
+    const boundedLimit = boundedInteger(limit, 20, 0, CHAT_WATCHER_EVENT_LIMIT);
+    return {
+      mode: 'observe-only',
+      allowlistedOrigins: [...this.chatWatcherAllowedOrigins].sort(),
+      watchers: [...this.chatWatchers.values()]
+        .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)))
+        .map((watcher) => ({ ...watcher })),
+      events: this.chatWatcherEvents.slice(-boundedLimit).map((event) => ({ ...event }))
+    };
+  }
+
   status({ detail = 'full' } = {}) {
     const profileConfidence = this.profileConfidence();
     const fullStatus = {
+      sessionId: this.sessionId,
       connectionState: this.connectionState,
       connectionId: this.connectionId,
       bridgeInstanceId: this.bridgeInstanceId,
@@ -1587,6 +1911,7 @@ class SessionManager {
       sessionName: this.sessionName,
       sessionTabs: this.listSessionTabRecords(),
       warmSession: this.warmSessionStatus(),
+      chatWatcher: this.chatWatcherStatus(),
       recentEvents: this.recentEvents.map((event) => cloneJson(event)),
       recentActionLog: this.recentEvents.map((event) => cloneJson(event)),
       tokenUsage: { ...this.tokenUsage },
@@ -1596,6 +1921,10 @@ class SessionManager {
         protocolVersion: this.config.expectedProtocolVersion,
         extensionVersion: this.config.expectedExtensionVersion,
         bridgeVersion: this.config.expectedBridgeVersion,
+        loadedExtensionVersion: this.loadedExtension && this.loadedExtension.extensionVersion,
+        loadedBridgeVersion: this.loadedExtension && this.loadedExtension.bridgeVersion,
+        loadedExtensionHash: this.loadedExtension && this.loadedExtension.loadedExtensionHash,
+        loadedAt: this.loadedExtension && this.loadedExtension.loadedAt,
         lastMismatch: this.lastVersionMismatch
       },
       auditLogPath: this.config.auditLogPath,
@@ -1607,6 +1936,7 @@ class SessionManager {
 
   compactStatus(fullStatus = this.status({ detail: 'full' })) {
     return {
+      sessionId: fullStatus.sessionId,
       connectionState: fullStatus.connectionState,
       connectionId: fullStatus.connectionId,
       bridgeInstanceId: fullStatus.bridgeInstanceId,
@@ -1622,6 +1952,12 @@ class SessionManager {
       sessionName: fullStatus.sessionName,
       sessionTabs: fullStatus.sessionTabs.map((tab) => ({ ...tab })),
       warmSession: { ...fullStatus.warmSession },
+      chatWatcher: {
+        allowlistedOriginCount: fullStatus.chatWatcher.allowlistedOrigins.length,
+        watcherCount: fullStatus.chatWatcher.watchers.length,
+        eventCount: fullStatus.chatWatcher.events.length,
+        pausedCount: fullStatus.chatWatcher.watchers.filter((watcher) => watcher.paused).length
+      },
       tokenUsage: { ...fullStatus.tokenUsage },
       pendingApprovalCount: fullStatus.pendingApprovals.length,
       emergencyStop: { ...fullStatus.emergencyStop },
@@ -1759,6 +2095,14 @@ class SessionManager {
       case 'operator.sessions.reopenClosedTab':
         response = await this.routeSessionRecoveryCommand(id, request.method, params);
         break;
+      case 'operator.chatWatcher.start':
+      case 'operator.chatWatcher.pause':
+      case 'operator.chatWatcher.resume':
+      case 'operator.chatWatcher.stop':
+      case 'operator.chatWatcher.poll':
+      case 'operator.chatWatcher.status':
+        response = await this.routeChatWatcherCommand(id, request.method, params);
+        break;
       case 'operator.cdp.attach':
       case 'operator.cdp.detach':
       case 'operator.cdp.execute':
@@ -1768,6 +2112,7 @@ class SessionManager {
       case 'operator.runtime.tab.observe':
       case 'operator.runtime.tab.readPage':
       case 'operator.runtime.tab.locator':
+      case 'operator.runtime.tab.batch':
       case 'operator.runtime.tab.showTarget':
       case 'operator.runtime.tab.indicator':
         response = await this.routeRuntimeCommand(id, request.method, params);
@@ -1792,6 +2137,9 @@ class SessionManager {
         break;
       case 'operator.audit.tail':
         response = this.tailAudit(id, params);
+        break;
+      case 'operator.audit.timeline':
+        response = this.timelineAudit(id, params);
         break;
       case 'page.observe':
       case 'page.readPage':
@@ -2084,6 +2432,17 @@ class SessionManager {
       return;
     }
 
+    if (method.startsWith('operator.chatWatcher.')) {
+      this.recordRecentEvent({
+        type: 'chatWatcher',
+        method,
+        origin,
+        result,
+        errorCode
+      });
+      return;
+    }
+
     if (method === 'extension.hostPermissionGranted' || method === 'extension.hostPermissionsSynced') {
       this.recordRecentEvent({
         type: 'hostPermission',
@@ -2123,7 +2482,15 @@ class SessionManager {
     const actionKind = PAGE_ACTION_KINDS[method];
     const mode = this.auditMode(method, response);
     const entry = {
-      sessionId: 'daemon',
+      sessionId: this.sessionId,
+      agentId: typeof params.agentId === 'string' && params.agentId.trim()
+        ? params.agentId.trim()
+        : null,
+      connectionId: this.connectionId,
+      bridgeInstanceId: this.bridgeInstanceId,
+      tabId: Number.isInteger(params.tabId)
+        ? params.tabId
+        : (Number.isInteger(params.expectedActiveTabId) ? params.expectedActiveTabId : null),
       requestId,
       method,
       mode,
@@ -2186,19 +2553,78 @@ class SessionManager {
       .map((tab) => ({ ...tab }));
   }
 
-  updateSessionTab(tab, fallbackOwnership) {
+  listSessionTabRecordsForAgent(agentId) {
+    return this.listSessionTabRecords()
+      .filter((tab) => !agentId || !tab.ownerAgentId || tab.ownerAgentId === agentId);
+  }
+
+  assertTabLease(tab, agentId) {
+    if (!tab) {
+      return guardOk();
+    }
+    if (agentId && tab.ownerAgentId && tab.ownerAgentId !== agentId) {
+      return guardError(ERROR_CODES.TAB_MISMATCH, 'Session tab is leased to a different agent.', {
+        reason: 'agent-lease-mismatch',
+        tabId: tab.id,
+        ownerAgentId: tab.ownerAgentId,
+        agentId
+      });
+    }
+    return guardOk();
+  }
+
+  assertTabFinalizeLease(tab, agentId) {
+    if (!agentId || !tab) {
+      return guardOk();
+    }
+    if (tab.ownerAgentId !== agentId) {
+      return guardError(ERROR_CODES.TAB_MISMATCH, 'Session tab is leased to a different agent.', {
+        reason: 'agent-lease-mismatch',
+        tabId: tab.id,
+        ownerAgentId: tab.ownerAgentId || null,
+        agentId
+      });
+    }
+    return guardOk();
+  }
+
+  updateSessionTab(tab, fallbackOwnership, options = {}) {
     const normalized = normalizeSessionTab(tab, fallbackOwnership);
     if (!normalized) {
       return null;
     }
     const previous = this.sessionTabs.get(normalized.id) || {};
+    const agentId = normalizeAgentId(options.agentId).agentId ||
+      normalized.ownerAgentId ||
+      previous.ownerAgentId ||
+      null;
+    const leaseId = agentId
+      ? (
+        previous.ownerAgentId === agentId && previous.leaseId
+          ? previous.leaseId
+          : makeTabLeaseId(this.sessionId, agentId, normalized.id)
+      )
+      : (normalized.leaseId || previous.leaseId || null);
     const merged = {
       ...previous,
       ...normalized,
       ownership: normalized.ownership || previous.ownership || fallbackOwnership || null,
+      ownerAgentId: agentId,
+      leaseId,
       finalizedStatus: normalized.finalizedStatus || previous.finalizedStatus || null
     };
     this.sessionTabs.set(merged.id, merged);
+    if (previous.url && merged.url && previous.url !== merged.url) {
+      this.clearWarmSessionCache('tab-navigated', {
+        tabId: merged.id,
+        url: previous.url,
+        origin: originFromUrl(previous.url)
+      });
+      this.invalidateApprovalsForTab(merged.id, 'tab-navigated', {
+        previousUrl: previous.url,
+        currentUrl: merged.url
+      });
+    }
     return { ...merged };
   }
 
@@ -2216,6 +2642,9 @@ class SessionManager {
     if (options.pruneMissing) {
       for (const tabId of [...this.sessionTabs.keys()]) {
         if (!seenTabIds.has(tabId)) {
+          const previous = this.sessionTabs.get(tabId);
+          this.clearWarmSessionCache('tab-closed', this.warmCacheContextForTab(previous, { tabId }));
+          this.invalidateApprovalsForTab(tabId, 'tab-closed');
           this.sessionTabs.delete(tabId);
         }
       }
@@ -2278,6 +2707,11 @@ class SessionManager {
     if (disconnected) {
       return disconnected;
     }
+    const agent = normalizeAgentId(params.agentId);
+    if (!agent.ok) {
+      return rpcError(id, agent.error);
+    }
+    const agentId = agent.agentId;
 
     if (method === 'operator.tabs.listUser') {
       const extensionResponse = await this.enqueueExtensionCommand(method, {});
@@ -2293,6 +2727,10 @@ class SessionManager {
       if (!tabId.ok) {
         return rpcError(id, tabId.error);
       }
+      const existingLease = this.assertTabLease(this.sessionTabs.get(tabId.tabId), agentId);
+      if (!existingLease.ok) {
+        return rpcError(id, existingLease.error);
+      }
       if (!this.lastUserTabInventory.has(tabId.tabId)) {
         return rpcError(id, {
           code: ERROR_CODES.INVALID_SCHEMA,
@@ -2300,30 +2738,33 @@ class SessionManager {
           tabId: tabId.tabId
         });
       }
-      const extensionResponse = await this.enqueueExtensionCommand(method, { tabId: tabId.tabId });
+      const extensionResponse = await this.enqueueExtensionCommand(method, {
+        ...(agentId ? { agentId } : {}),
+        tabId: tabId.tabId
+      });
       if (!extensionResponse.ok) {
         return rpcError(id, extensionResponse.error);
       }
-      const tab = this.updateSessionTab(extensionResponse.result && extensionResponse.result.tab, 'user');
+      const tab = this.updateSessionTab(extensionResponse.result && extensionResponse.result.tab, 'user', { agentId });
       return rpcOk(id, { tab });
     }
 
     if (method === 'operator.tabs.create') {
-      const extensionResponse = await this.enqueueExtensionCommand(method, {});
+      const extensionResponse = await this.enqueueExtensionCommand(method, agentId ? { agentId } : {});
       if (!extensionResponse.ok) {
         return rpcError(id, extensionResponse.error);
       }
-      const tab = this.updateSessionTab(extensionResponse.result && extensionResponse.result.tab, 'agent');
+      const tab = this.updateSessionTab(extensionResponse.result && extensionResponse.result.tab, 'agent', { agentId });
       return rpcOk(id, { tab });
     }
 
     if (method === 'operator.tabs.listSession') {
-      const extensionResponse = await this.enqueueExtensionCommand(method, {});
+      const extensionResponse = await this.enqueueExtensionCommand(method, agentId ? { agentId } : {});
       if (!extensionResponse.ok) {
         return rpcError(id, extensionResponse.error);
       }
       const tabs = this.updateSessionTabs(extensionResponse.result && extensionResponse.result.tabs, { pruneMissing: true });
-      return rpcOk(id, { tabs });
+      return rpcOk(id, { tabs: this.listSessionTabRecordsForAgent(agentId) });
     }
 
     if (method === 'operator.tabs.finalize') {
@@ -2331,7 +2772,16 @@ class SessionManager {
       if (!keep.ok) {
         return rpcError(id, keep.error);
       }
-      const extensionResponse = await this.enqueueExtensionCommand(method, { keep: keep.keep });
+      for (const entry of keep.keep) {
+        const lease = this.assertTabFinalizeLease(this.sessionTabs.get(entry.tabId), agentId);
+        if (!lease.ok) {
+          return rpcError(id, lease.error);
+        }
+      }
+      const extensionResponse = await this.enqueueExtensionCommand(method, {
+        ...(agentId ? { agentId } : {}),
+        keep: keep.keep
+      });
       if (!extensionResponse.ok) {
         return rpcError(id, extensionResponse.error);
       }
@@ -2342,12 +2792,25 @@ class SessionManager {
       ];
       for (const tabId of removedTabIds) {
         if (Number.isInteger(tabId)) {
+          const previous = this.sessionTabs.get(tabId);
+          if (agentId && previous && previous.ownerAgentId !== agentId) {
+            continue;
+          }
+          this.clearWarmSessionCache('tab-closed', this.warmCacheContextForTab(previous, { tabId }));
+          this.invalidateApprovalsForTab(tabId, 'tab-closed');
           this.sessionTabs.delete(tabId);
         }
       }
       const keepTabIds = new Set(keep.keep.map((entry) => entry.tabId));
       for (const tabId of [...this.sessionTabs.keys()]) {
+        const tab = this.sessionTabs.get(tabId);
+        if (agentId && tab && tab.ownerAgentId !== agentId) {
+          continue;
+        }
         if (!keepTabIds.has(tabId)) {
+          const previous = this.sessionTabs.get(tabId);
+          this.clearWarmSessionCache('tab-finalized', this.warmCacheContextForTab(previous, { tabId }));
+          this.invalidateApprovalsForTab(tabId, 'tab-finalized');
           this.sessionTabs.delete(tabId);
         }
       }
@@ -2388,7 +2851,14 @@ class SessionManager {
       if (!tabId.ok) {
         return rpcError(id, tabId.error);
       }
-      const extensionResponse = await this.enqueueExtensionCommand(method, { tabId: tabId.tabId });
+      const lease = this.assertTabLease(this.sessionTabs.get(tabId.tabId), agentId);
+      if (!lease.ok) {
+        return rpcError(id, lease.error);
+      }
+      const extensionResponse = await this.enqueueExtensionCommand(method, {
+        ...(agentId ? { agentId } : {}),
+        tabId: tabId.tabId
+      });
       if (!extensionResponse.ok) {
         return rpcError(id, extensionResponse.error);
       }
@@ -2402,10 +2872,15 @@ class SessionManager {
       if (!tabId.ok) {
         return rpcError(id, tabId.error);
       }
+      const lease = this.assertTabLease(this.sessionTabs.get(tabId.tabId), agentId);
+      if (!lease.ok) {
+        return rpcError(id, lease.error);
+      }
       if (typeof params.pinned !== 'boolean') {
         return rpcError(id, { code: ERROR_CODES.INVALID_SCHEMA, message: 'pinned must be a boolean.' });
       }
       const extensionResponse = await this.enqueueExtensionCommand(method, {
+        ...(agentId ? { agentId } : {}),
         tabId: tabId.tabId,
         pinned: params.pinned
       });
@@ -2423,6 +2898,10 @@ class SessionManager {
       if (!tabId.ok) {
         return rpcError(id, tabId.error);
       }
+      const lease = this.assertTabLease(this.sessionTabs.get(tabId.tabId), agentId);
+      if (!lease.ok) {
+        return rpcError(id, lease.error);
+      }
       const index = boundedInteger(params.index, null, 0, 1000);
       if (index === null) {
         return rpcError(id, { code: ERROR_CODES.INVALID_SCHEMA, message: 'index must be a non-negative integer.' });
@@ -2431,7 +2910,12 @@ class SessionManager {
       if (params.windowId !== undefined && windowId === null) {
         return rpcError(id, { code: ERROR_CODES.INVALID_SCHEMA, message: 'windowId must be a non-negative integer.' });
       }
-      const commandParams = { tabId: tabId.tabId, index, ...(windowId === undefined ? {} : { windowId }) };
+      const commandParams = {
+        ...(agentId ? { agentId } : {}),
+        tabId: tabId.tabId,
+        index,
+        ...(windowId === undefined ? {} : { windowId })
+      };
       const extensionResponse = await this.enqueueExtensionCommand(method, commandParams);
       if (!extensionResponse.ok) {
         return rpcError(id, extensionResponse.error);
@@ -2480,6 +2964,11 @@ class SessionManager {
     if (!tabId.ok) {
       return rpcError(id, tabId.error);
     }
+    const agent = normalizeAgentId(params.agentId);
+    if (!agent.ok) {
+      return rpcError(id, agent.error);
+    }
+    const agentId = agent.agentId;
     const tab = await this.refreshSessionTabForOperation(tabId.tabId);
     if (!tab) {
       return rpcError(id, {
@@ -2487,6 +2976,10 @@ class SessionManager {
         message: 'CDP commands require a session-owned tab.',
         tabId: tabId.tabId
       });
+    }
+    const lease = this.assertTabLease(tab, agentId);
+    if (!lease.ok) {
+      return rpcError(id, lease.error);
     }
 
     const origin = originFromUrl(tab.url);
@@ -2503,6 +2996,7 @@ class SessionManager {
         return rpcError(id, readiness.error);
       }
       const extensionResponse = await this.enqueueExtensionCommand(method, {
+        ...(agentId ? { agentId } : {}),
         tabId: tabId.tabId
       });
       if (!extensionResponse.ok) {
@@ -2543,6 +3037,7 @@ class SessionManager {
     }
 
     const extensionResponse = await this.enqueueExtensionCommand('operator.cdp.execute', {
+      ...(agentId ? { agentId } : {}),
       tabId: tabId.tabId,
       method: cdpMethod,
       params: cdpParams.params
@@ -2672,7 +3167,13 @@ class SessionManager {
       ? params.sessionId.trim()
       : undefined;
     const claim = params.claim === true;
+    const agent = normalizeAgentId(params.agentId);
+    if (!agent.ok) {
+      return rpcError(id, agent.error);
+    }
+    const agentId = agent.agentId;
     const extensionResponse = await this.enqueueExtensionCommand(method, {
+      ...(agentId ? { agentId } : {}),
       ...(sessionId ? { sessionId } : {}),
       claim
     });
@@ -2681,12 +3182,261 @@ class SessionManager {
     }
     const rawTab = extensionResponse.result && extensionResponse.result.tab;
     const tab = claim
-      ? this.updateSessionTab(rawTab, 'user')
+      ? this.updateSessionTab(rawTab, 'user', { agentId })
       : normalizeUserTab(rawTab);
     if (claim && tab) {
       this.lastUserTabInventory.set(tab.id, tab);
     }
     return rpcOk(id, { tab });
+  }
+
+  async validateChatWatcherContext(id, watcher, agentId = watcher && watcher.agentId) {
+    if (!watcher) {
+      return rpcError(id, {
+        code: ERROR_CODES.CHAT_WATCHER_UNAVAILABLE,
+        message: 'Chat watcher is not active.',
+        reason: 'WATCHER_NOT_FOUND'
+      });
+    }
+    const tab = await this.refreshSessionTabForOperation(watcher.tabId);
+    if (!tab) {
+      return rpcError(id, {
+        code: ERROR_CODES.CHAT_WATCHER_UNAVAILABLE,
+        message: 'Chat watcher tab is no longer session-owned.',
+        reason: 'TAB_NOT_SESSION_OWNED',
+        tabId: watcher.tabId
+      });
+    }
+    const lease = this.assertTabLease(tab, agentId);
+    if (!lease.ok) {
+      return rpcError(id, lease.error);
+    }
+    const currentOrigin = originFromUrl(tab.url);
+    if (currentOrigin !== watcher.origin) {
+      return rpcError(id, {
+        code: ERROR_CODES.CHAT_WATCHER_UNAVAILABLE,
+        message: 'Chat watcher origin changed; restart the watcher after re-observing the tab.',
+        reason: 'ORIGIN_CHANGED',
+        expectedOrigin: watcher.origin,
+        actualOrigin: currentOrigin || null,
+        tabId: watcher.tabId
+      });
+    }
+    if (!this.chatWatcherAllowedOrigins.has(watcher.origin)) {
+      return rpcError(id, {
+        code: ERROR_CODES.CHAT_WATCHER_UNAVAILABLE,
+        message: 'Chat watcher origin is not allowlisted.',
+        reason: 'ORIGIN_NOT_ALLOWLISTED',
+        origin: watcher.origin
+      });
+    }
+    const readiness = assertReadyForRealSiteAction(this.readinessStateForOrigin(watcher.origin));
+    if (!readiness.ok) {
+      return rpcError(id, readiness.error);
+    }
+    return rpcOk(id, { tab });
+  }
+
+  recordChatWatcherEvent(event) {
+    const cleanEvent = Object.fromEntries(Object.entries({
+      id: `chat_evt_${Date.now()}_${this.chatWatcherEvents.length + 1}`,
+      timestamp: new Date().toISOString(),
+      ...event
+    }).filter(([, value]) => value !== undefined));
+    this.chatWatcherEvents.push(cleanEvent);
+    if (this.chatWatcherEvents.length > CHAT_WATCHER_EVENT_LIMIT) {
+      this.chatWatcherEvents.splice(0, this.chatWatcherEvents.length - CHAT_WATCHER_EVENT_LIMIT);
+    }
+    return { ...cleanEvent };
+  }
+
+  async routeChatWatcherCommand(id, method, params = {}) {
+    if (method === 'operator.chatWatcher.status') {
+      return rpcOk(id, this.chatWatcherStatus({ limit: params.limit }));
+    }
+
+    if (method === 'operator.chatWatcher.start') {
+      const start = validateChatWatcherStartParams(params);
+      if (!start.ok) {
+        return rpcError(id, start.error);
+      }
+      if (!this.chatWatcherAllowedOrigins.has(start.origin)) {
+        return rpcError(id, {
+          code: ERROR_CODES.CHAT_WATCHER_UNAVAILABLE,
+          message: 'Chat watcher origin is not allowlisted.',
+          reason: 'ORIGIN_NOT_ALLOWLISTED',
+          origin: start.origin
+        });
+      }
+      const agent = normalizeAgentId(params.agentId);
+      if (!agent.ok) {
+        return rpcError(id, agent.error);
+      }
+      const tab = await this.refreshSessionTabForOperation(start.tabId);
+      if (!tab) {
+        return rpcError(id, {
+          code: ERROR_CODES.CHAT_WATCHER_UNAVAILABLE,
+          message: 'Chat watcher requires a session-owned tab.',
+          reason: 'TAB_NOT_SESSION_OWNED',
+          tabId: start.tabId
+        });
+      }
+      const lease = this.assertTabLease(tab, agent.agentId);
+      if (!lease.ok) {
+        return rpcError(id, lease.error);
+      }
+      const tabOrigin = originFromUrl(tab.url);
+      if (tabOrigin !== start.origin) {
+        return rpcError(id, {
+          code: ERROR_CODES.CHAT_WATCHER_UNAVAILABLE,
+          message: 'Chat watcher origin must match the leased tab origin.',
+          reason: 'ORIGIN_MISMATCH',
+          expectedOrigin: start.origin,
+          actualOrigin: tabOrigin || null,
+          tabId: start.tabId
+        });
+      }
+      const readiness = assertReadyForRealSiteAction(this.readinessStateForOrigin(start.origin));
+      if (!readiness.ok) {
+        return rpcError(id, readiness.error);
+      }
+      const watcherId = `chat_watch_${this.nextChatWatcherId++}_${stableHash({
+        sessionId: this.sessionId,
+        agentId: agent.agentId,
+        tabId: start.tabId,
+        origin: start.origin,
+        unreadSelector: start.unreadSelector
+      }).slice(0, 10)}`;
+      const now = new Date().toISOString();
+      const watcher = {
+        watcherId,
+        status: 'running',
+        mode: 'observe-only',
+        agentId: agent.agentId || null,
+        tabId: start.tabId,
+        origin: start.origin,
+        label: start.label,
+        unreadSelector: start.unreadSelector,
+        intervalMs: start.intervalMs,
+        screenshotOnUnread: start.screenshotOnUnread,
+        paused: false,
+        createdAt: now,
+        updatedAt: now,
+        lastPollAt: null,
+        lastUnreadAt: null,
+        unreadEventCount: 0
+      };
+      this.chatWatchers.set(watcherId, watcher);
+      return rpcOk(id, { origin: watcher.origin, watcher: { ...watcher } });
+    }
+
+    const watcherId = validateChatWatcherId(params);
+    if (!watcherId.ok) {
+      return rpcError(id, watcherId.error);
+    }
+    const watcher = this.chatWatchers.get(watcherId.watcherId);
+
+    if (method === 'operator.chatWatcher.stop') {
+      if (!watcher) {
+        return rpcError(id, {
+          code: ERROR_CODES.CHAT_WATCHER_UNAVAILABLE,
+          message: 'Chat watcher is not active.',
+          reason: 'WATCHER_NOT_FOUND'
+        });
+      }
+      this.chatWatchers.delete(watcher.watcherId);
+      return rpcOk(id, { origin: watcher.origin, stopped: true, watcher: { ...watcher, status: 'stopped', paused: true } });
+    }
+
+    const context = await this.validateChatWatcherContext(id, watcher);
+    if (!context.ok) {
+      return context;
+    }
+
+    if (method === 'operator.chatWatcher.pause' || method === 'operator.chatWatcher.resume') {
+      watcher.paused = method === 'operator.chatWatcher.pause';
+      watcher.status = watcher.paused ? 'paused' : 'running';
+      watcher.updatedAt = new Date().toISOString();
+      return rpcOk(id, { origin: watcher.origin, watcher: { ...watcher } });
+    }
+
+    if (method !== 'operator.chatWatcher.poll') {
+      return rpcError(id, {
+        code: ERROR_CODES.UNKNOWN_METHOD,
+        message: `Unknown method: ${method}`
+      });
+    }
+
+    if (watcher.paused) {
+      return rpcOk(id, { origin: watcher.origin, watcher: { ...watcher }, event: null, skipped: 'paused' });
+    }
+    const locator = await this.routeRuntimeCommand(`${id}:unread`, 'operator.runtime.tab.locator', {
+      ...(watcher.agentId ? { agentId: watcher.agentId } : {}),
+      tabId: watcher.tabId,
+      selector: watcher.unreadSelector,
+      action: 'resolve',
+      mode: 'tiny',
+      maxActionableHandles: 5
+    });
+    watcher.lastPollAt = new Date().toISOString();
+    watcher.updatedAt = watcher.lastPollAt;
+    if (!locator.ok && locator.error && locator.error.code === 'LOCATOR_NOT_FOUND') {
+      return rpcOk(id, { origin: watcher.origin, watcher: { ...watcher }, event: null, unread: false });
+    }
+    if (!locator.ok) {
+      return rpcError(id, locator.error);
+    }
+
+    let screenshot = null;
+    if (watcher.screenshotOnUnread) {
+      const screenshotResponse = await this.routeCdpCommand(`${id}:screenshot`, 'operator.cdp.execute', {
+        ...(watcher.agentId ? { agentId: watcher.agentId } : {}),
+        tabId: watcher.tabId,
+        method: 'Page.captureScreenshot',
+        params: { format: 'png' }
+      });
+      if (!screenshotResponse.ok) {
+        return screenshotResponse;
+      }
+      screenshot = screenshotResponse.result || null;
+    }
+
+    watcher.lastUnreadAt = new Date().toISOString();
+    watcher.unreadEventCount += 1;
+    const target = locator.result && locator.result.target;
+    const event = this.recordChatWatcherEvent({
+      watcherId: watcher.watcherId,
+      agentId: watcher.agentId,
+      tabId: watcher.tabId,
+      origin: watcher.origin,
+      type: 'unread',
+      selector: watcher.unreadSelector,
+      targetSummary: target && target.label
+        ? `${target.tag || target.role || 'element'}: ${target.label}`
+        : null,
+      screenshot: screenshot
+        ? {
+          artifactId: screenshot.screenshot && screenshot.screenshot.artifactId
+            ? screenshot.screenshot.artifactId
+            : null,
+          mimeType: screenshot.screenshot && screenshot.screenshot.mimeType
+            ? screenshot.screenshot.mimeType
+            : null,
+          width: screenshot.screenshot && screenshot.screenshot.width
+            ? screenshot.screenshot.width
+            : null,
+          height: screenshot.screenshot && screenshot.screenshot.height
+            ? screenshot.screenshot.height
+            : null
+        }
+        : null
+    });
+    return rpcOk(id, {
+      origin: watcher.origin,
+      watcher: { ...watcher },
+      event,
+      unread: true
+    });
   }
 
   async routeRuntimeCommand(id, method, params = {}) {
@@ -2699,6 +3449,7 @@ class SessionManager {
       'operator.runtime.tab.observe',
       'operator.runtime.tab.readPage',
       'operator.runtime.tab.locator',
+      'operator.runtime.tab.batch',
       'operator.runtime.tab.showTarget',
       'operator.runtime.tab.indicator'
     ].includes(method)) {
@@ -2712,6 +3463,11 @@ class SessionManager {
     if (!tabId.ok) {
       return rpcError(id, tabId.error);
     }
+    const agent = normalizeAgentId(params.agentId);
+    if (!agent.ok) {
+      return rpcError(id, agent.error);
+    }
+    const agentId = agent.agentId;
     const tab = await this.refreshSessionTabForOperation(tabId.tabId);
     if (!tab) {
       return rpcError(id, {
@@ -2720,10 +3476,15 @@ class SessionManager {
         tabId: tabId.tabId
       });
     }
+    const lease = this.assertTabLease(tab, agentId);
+    if (!lease.ok) {
+      return rpcError(id, lease.error);
+    }
 
     let origin = originFromUrl(tab.url);
     let commandParams = { ...params, tabId: tabId.tabId };
     let policyMethod = 'page.observe';
+    let runtimeBatch = null;
 
     if (method === 'operator.runtime.tab.goto') {
       const target = navigationTarget(params.url);
@@ -2732,6 +3493,9 @@ class SessionManager {
       }
       origin = target.origin;
       commandParams = { tabId: tabId.tabId, url: target.url };
+      if (agentId) {
+        commandParams.agentId = agentId;
+      }
       policyMethod = 'page.navigate';
     } else {
       if (!origin) {
@@ -2751,26 +3515,47 @@ class SessionManager {
           delete runtimeOptions.targetContract;
         }
         commandParams = {
+          ...(agentId ? { agentId } : {}),
           tabId: tabId.tabId,
           action: locator.action,
+          ...(locator.handle === undefined ? {} : { handle: locator.handle }),
           ...(locator.selector === undefined ? {} : { selector: locator.selector }),
           ...(locator.text === undefined ? {} : { text: locator.text }),
           ...(locator.textValue === undefined ? {} : { textValue: locator.textValue }),
+          ...(locator.value === undefined ? {} : { value: locator.value }),
+          ...(locator.checked === undefined ? {} : { checked: locator.checked }),
+          ...(locator.deltaX === undefined ? {} : { deltaX: locator.deltaX }),
+          ...(locator.deltaY === undefined ? {} : { deltaY: locator.deltaY }),
+          ...(locator.key === undefined ? {} : { key: locator.key }),
           ...runtimeOptions
         };
         policyMethod = RUNTIME_LOCATOR_MUTATION_METHODS[locator.action] || 'page.observe';
+      } else if (method === 'operator.runtime.tab.batch') {
+        const batch = this.validateBatchCommandParams(params, origin);
+        if (!batch.ok) {
+          return rpcError(id, batch.error);
+        }
+        runtimeBatch = batch;
+        commandParams = {
+          ...(agentId ? { agentId } : {}),
+          tabId: tabId.tabId,
+          ...batch.commandParams
+        };
+        policyMethod = 'page.batch';
       } else if (method === 'operator.runtime.tab.showTarget') {
         const cue = validateTargetCueParams(params);
         if (!cue.ok) {
           return rpcError(id, cue.error);
         }
         commandParams = {
+          ...(agentId ? { agentId } : {}),
           tabId: tabId.tabId,
           ...pickDefinedLocal(cue, ['handle', 'selector', 'text', 'durationMs'])
         };
         policyMethod = 'page.observe';
       } else if (method === 'operator.runtime.tab.indicator') {
         commandParams = {
+          ...(agentId ? { agentId } : {}),
           tabId: tabId.tabId,
           active: params.active !== false,
           ...(typeof params.label === 'string' && params.label.trim()
@@ -2784,11 +3569,13 @@ class SessionManager {
       } else if (method === 'operator.runtime.tab.readPage') {
         policyMethod = 'page.readPage';
         commandParams = {
+          ...(agentId ? { agentId } : {}),
           tabId: tabId.tabId,
           ...pickRuntimeReadPageParams(params)
         };
       } else {
         commandParams = {
+          ...(agentId ? { agentId } : {}),
           tabId: tabId.tabId,
           ...pickRuntimeObservationParams(params)
         };
@@ -2799,18 +3586,65 @@ class SessionManager {
     if (!readiness.ok) {
       return rpcError(id, readiness.error);
     }
-    const boundedFullAuto = this.enforceBoundedFullAuto(policyMethod, origin);
+    const boundedFullAuto = runtimeBatch
+      ? this.enforceBoundedFullAutoBatch(runtimeBatch.childActions, origin)
+      : this.enforceBoundedFullAuto(policyMethod, origin);
     if (!boundedFullAuto.ok) {
       return rpcError(id, boundedFullAuto.error);
     }
 
-    const extensionResponse = RUNTIME_LOCATOR_MUTATION_METHODS[commandParams.action]
+    const runtimeWarmContext = {
+      agentId,
+      tabId: tabId.tabId,
+      url: tab.url,
+      origin
+    };
+    if (method === 'operator.runtime.tab.observe' || method === 'operator.runtime.tab.readPage') {
+      const warmCache = this.warmCacheHit(policyMethod, commandParams, origin, runtimeWarmContext);
+      if (warmCache) {
+        if (!warmCache.ok) {
+          return rpcError(id, warmCache.error);
+        }
+        return rpcOk(id, {
+          tabId: tabId.tabId,
+          origin,
+          ...warmCache.result
+        });
+      }
+    }
+
+    const extensionResponse = runtimeBatch || RUNTIME_LOCATOR_MUTATION_METHODS[commandParams.action]
       ? await this.enqueueExtensionCommandWithPolicy(method, commandParams)
       : await this.enqueueExtensionCommand(method, commandParams);
     if (!extensionResponse.ok) {
       return rpcError(id, this.attachApprovalRequest(method, { ...commandParams, origin }, extensionResponse.error));
     }
+    if (runtimeBatch) {
+      const childFailureIndex = Array.isArray(extensionResponse.result && extensionResponse.result.results)
+        ? extensionResponse.result.results.findIndex((entry) => !entry || entry.ok === false)
+        : -1;
+      if (childFailureIndex !== -1) {
+        const childFailure = extensionResponse.result.results[childFailureIndex] || {};
+        const childError = {
+          ...(childFailure.error || {
+            code: ERROR_CODES.INVALID_SCHEMA,
+            message: 'Batch child action failed without a structured error.'
+          }),
+          childActionIndex: childFailureIndex,
+          childAction: runtimeBatch.childActions[childFailureIndex]
+            ? runtimeBatch.childActions[childFailureIndex].action
+            : null
+        };
+        return rpcError(id, this.attachApprovalRequest(method, commandParams, childError));
+      }
+    }
     if (method === 'operator.runtime.tab.goto') {
+      this.clearWarmSessionCache('page.navigate', {
+        agentId,
+        tabId: tabId.tabId,
+        url: tab.url,
+        origin: originFromUrl(tab.url)
+      });
       const updatedTab = this.updateSessionTab(extensionResponse.result && extensionResponse.result.tab, tab.ownership);
       return rpcOk(id, {
         ...(extensionResponse.result || {}),
@@ -2818,8 +3652,13 @@ class SessionManager {
         origin
       });
     }
-    if (shouldInvalidateWarmSession(policyMethod)) {
-      this.clearWarmSessionCache(policyMethod);
+    if (method === 'operator.runtime.tab.observe' || method === 'operator.runtime.tab.readPage') {
+      this.storeRuntimeWarmSessionCache(policyMethod, commandParams, origin, tab, extensionResponse.result || {});
+    }
+    if (runtimeBatch
+      ? shouldInvalidateWarmSession('page.batch', runtimeBatch.childActions)
+      : shouldInvalidateWarmSession(policyMethod)) {
+      this.clearWarmSessionCache(policyMethod, runtimeWarmContext);
     }
     return rpcOk(id, {
       tabId: tabId.tabId,
@@ -2874,6 +3713,15 @@ class SessionManager {
     this.profileVerificationMode = result.profileVerificationMode || 'not-required';
     this.profileIdentityVerified = result.profileIdentityVerified === true;
     this.profileVerified = true;
+    this.loadedExtension = {
+      extensionId: hello.extensionId,
+      extensionVersion: hello.extensionVersion,
+      bridgeVersion: hello.bridgeVersion,
+      loadedExtensionHash: typeof hello.loadedExtensionHash === 'string' && hello.loadedExtensionHash.trim()
+        ? hello.loadedExtensionHash.trim()
+        : null,
+      loadedAt: new Date().toISOString()
+    };
     this.bridgeInstanceId = bridgeInstanceId;
     const previousState = this.connectionState;
     this.connectionId = makeConnectionId();
@@ -2929,7 +3777,7 @@ class SessionManager {
     }
 
     if (warmup.ok !== true) {
-      this.clearWarmSessionCache('warmup-failed');
+      this.clearWarmSessionCache('warmup-failed', this.warmCacheContextForTab(activeTab));
       return rpcOk(id, {
         warmSession: this.warmSessionStatus()
       });
@@ -2941,7 +3789,7 @@ class SessionManager {
       (readPage && readPage.origin) ||
       (activeTab && activeTab.origin);
     if (!origin || !activeTab || activeTab.origin !== origin) {
-      this.clearWarmSessionCache('warmup-origin-mismatch');
+      this.clearWarmSessionCache('warmup-origin-mismatch', this.warmCacheContextForTab(activeTab));
       return rpcError(id, {
         code: ERROR_CODES.INVALID_SCHEMA,
         message: 'Warm session origin must match the active tab origin.'
@@ -2949,15 +3797,16 @@ class SessionManager {
     }
     const readiness = assertReadyForRealSiteAction(this.readinessStateForOrigin(origin));
     if (!readiness.ok) {
-      this.clearWarmSessionCache('warmup-domain-not-approved');
+      this.clearWarmSessionCache('warmup-domain-not-approved', this.warmCacheContextForTab(activeTab));
       return rpcError(id, readiness.error);
     }
 
     const updatedAtMs = Date.now();
-    this.warmSessionCache = {
+    const cache = this.setWarmSessionCache({
       origin,
       url: activeTab.url,
       tabId: activeTab.id,
+      agentId: params.agentId,
       title: activeTab.title || (observation && observation.title) || (readPage && readPage.title) || null,
       source: typeof warmup.source === 'string' && warmup.source.trim()
         ? warmup.source.trim()
@@ -2968,7 +3817,22 @@ class SessionManager {
       readPage: readPage ? cloneJson(readPage) : null,
       readPageFilter: typeof warmup.readPageFilter === 'string' ? warmup.readPageFilter : 'interactive',
       metadata: this.warmResultMetadata(observation, readPage)
-    };
+    });
+    const warmMetadata = cache.metadata || {};
+    if (warmMetadata.pageStateId) {
+      this.invalidateApprovals('page-state-changed', (record) => (
+        APPROVAL_INVALIDATABLE_STATUSES.has(record.status) &&
+        record.origin === origin &&
+        record.pageStateId &&
+        record.pageStateId !== warmMetadata.pageStateId &&
+        (!Number.isInteger(record.tabId) || record.tabId === activeTab.id) &&
+        (!record.url || record.url === activeTab.url)
+      ), {
+        origin,
+        tabId: activeTab.id,
+        pageStateId: warmMetadata.pageStateId
+      });
+    }
 
     return rpcOk(id, {
       warmSession: this.warmSessionStatus()
@@ -2991,15 +3855,30 @@ class SessionManager {
   updateActiveTab(tab) {
     const normalized = normalizeActiveTab(tab);
     if (normalized) {
+      const previous = this.activeTab;
       this.activeTab = normalized;
       if (
-        this.warmSessionCache &&
-        (
-          this.warmSessionCache.url !== normalized.url ||
-          this.warmSessionCache.tabId !== normalized.id
-        )
+        previous &&
+        Number.isInteger(previous.id) &&
+        previous.id === normalized.id &&
+        previous.url &&
+        normalized.url &&
+        previous.url !== normalized.url
       ) {
-        this.clearWarmSessionCache('active-tab-changed');
+        this.clearWarmSessionCache('active-tab-changed', this.warmCacheContextForTab(previous));
+      }
+      if (
+        previous &&
+        Number.isInteger(previous.id) &&
+        previous.id === normalized.id &&
+        previous.url &&
+        normalized.url &&
+        previous.url !== normalized.url
+      ) {
+        this.invalidateApprovalsForTab(normalized.id, 'active-tab-navigated', {
+          previousUrl: previous.url,
+          currentUrl: normalized.url
+        });
       }
     }
     return this.activeTab;
@@ -3032,8 +3911,8 @@ class SessionManager {
     return [...tabsById.values()].sort((left, right) => left.id - right.id);
   }
 
-  guardActiveTabMutationTarget(method, origin, batch) {
-    if (!origin || !requiresActiveTabMutationGuard(method, batch)) {
+  guardActiveTabTarget(method, origin, batch) {
+    if (!origin || !requiresActiveTabTargetGuard(method, batch)) {
       return guardOk();
     }
 
@@ -3048,7 +3927,7 @@ class SessionManager {
     if (singleClaimedTab && singleClaimedTab.id !== activeTab.id) {
       return guardError(
         ERROR_CODES.TAB_MISMATCH,
-        'Active-tab mutation target does not match the claimed same-origin session tab. Use a tab-scoped tool for this action.',
+        'Active-tab command target does not match the claimed same-origin session tab. Use a tab-scoped tool for this action.',
         {
           origin,
           expectedTabId: singleClaimedTab.id,
@@ -3060,7 +3939,7 @@ class SessionManager {
     if (sameOriginTabs.length > 1) {
       return guardError(
         ERROR_CODES.TAB_MISMATCH,
-        'Active-tab mutation is ambiguous because multiple same-origin tabs are known. Use a tab-scoped tool for this action.',
+        'Active-tab command is ambiguous because multiple same-origin tabs are known. Use a tab-scoped tool for this action.',
         {
           origin,
           expectedTabId: singleClaimedTab ? singleClaimedTab.id : null,
@@ -3105,63 +3984,199 @@ class SessionManager {
     };
   }
 
-  clearWarmSessionCache(reason = 'cleared') {
-    const previous = this.warmSessionCache;
-    this.warmSessionCache = previous
-      ? {
-        origin: previous.origin,
-        url: previous.url,
-        tabId: previous.tabId,
-        title: previous.title,
-        source: previous.source,
-        updatedAt: previous.updatedAt,
-        expiresAt: previous.expiresAt,
-        metadata: previous.metadata || null,
-        inactiveAt: new Date().toISOString(),
-        inactiveReason: reason,
-        observation: null,
-        readPage: null
-      }
-      : {
-        inactiveAt: new Date().toISOString(),
-        inactiveReason: reason,
-        observation: null,
-        readPage: null
-      };
+  normalizeWarmAgentId(agentId) {
+    return typeof agentId === 'string' && agentId.trim() ? agentId.trim() : null;
   }
 
-  warmSessionStatus() {
-    const cache = this.warmSessionCache;
+  warmCacheContextForTab(tab, extra = {}) {
+    return {
+      ...extra,
+      tabId: tab && Number.isInteger(tab.id) ? tab.id : extra.tabId,
+      url: tab && typeof tab.url === 'string' ? tab.url : extra.url,
+      origin: (tab && tabOrigin(tab)) || extra.origin
+    };
+  }
+
+  warmCacheKey({ agentId, tabId, url, pageStateId } = {}) {
+    return [
+      this.sessionId,
+      this.normalizeWarmAgentId(agentId) || '',
+      Number.isInteger(tabId) ? String(tabId) : '',
+      url || '',
+      pageStateId || ''
+    ].join('\x1f');
+  }
+
+  warmCacheExpired(cache) {
+    const expiresAt = Date.parse(cache && cache.expiresAt);
+    return Number.isFinite(expiresAt) && Date.now() > expiresAt;
+  }
+
+  warmCacheIsActive(cache) {
+    return Boolean(cache && !this.warmCacheExpired(cache) && (cache.observation || cache.readPage));
+  }
+
+  warmCacheMatchesContext(cache, context = {}) {
     if (!cache) {
-      return {
-        active: false,
-        reason: null
-      };
+      return false;
+    }
+    const agentId = this.normalizeWarmAgentId(context.agentId);
+    if (cache.sessionId !== this.sessionId) {
+      return false;
+    }
+    if (Object.hasOwn(context, 'agentId') && (cache.agentId || null) !== agentId) {
+      return false;
+    }
+    if (Number.isInteger(context.tabId) && cache.tabId !== context.tabId) {
+      return false;
+    }
+    if (context.url && cache.url !== context.url) {
+      return false;
+    }
+    if (context.origin && cache.origin !== context.origin) {
+      return false;
+    }
+    const cachePageStateId = cache.metadata && cache.metadata.pageStateId;
+    if (context.pageStateId && cachePageStateId !== context.pageStateId) {
+      return false;
+    }
+    return true;
+  }
+
+  findWarmSessionCache(context = {}, options = {}) {
+    const activeOnly = options.activeOnly !== false;
+    const candidates = [...this.warmSessionCaches.values()]
+      .filter((cache) => this.warmCacheMatchesContext(cache, context))
+      .filter((cache) => !activeOnly || this.warmCacheIsActive(cache))
+      .sort((left, right) => Date.parse(right.updatedAt || right.inactiveAt || 0) - Date.parse(left.updatedAt || left.inactiveAt || 0));
+    return candidates[0] || null;
+  }
+
+  setWarmSessionCache(entry = {}) {
+    const metadata = entry.metadata || this.warmResultMetadata(entry.observation, entry.readPage);
+    const agentId = this.normalizeWarmAgentId(entry.agentId);
+    const tabId = Number.isInteger(entry.tabId) ? entry.tabId : null;
+    const key = this.warmCacheKey({
+      agentId,
+      tabId,
+      url: entry.url || null,
+      pageStateId: metadata && metadata.pageStateId
+    });
+    const previous = this.warmSessionCaches.get(key) || {};
+    const cache = {
+      ...previous,
+      sessionId: this.sessionId,
+      agentId,
+      origin: entry.origin || previous.origin || null,
+      url: entry.url || previous.url || null,
+      tabId,
+      title: entry.title || previous.title || null,
+      source: entry.source || previous.source || 'extension',
+      updatedAt: entry.updatedAt || new Date().toISOString(),
+      expiresAt: entry.expiresAt || new Date(Date.now() + WARM_SESSION_CACHE_TTL_MS).toISOString(),
+      metadata,
+      readPageFilter: entry.readPageFilter || previous.readPageFilter || 'interactive',
+      observation: entry.observation !== undefined ? cloneJson(entry.observation) : (previous.observation || null),
+      readPage: entry.readPage !== undefined ? cloneJson(entry.readPage) : (previous.readPage || null),
+      inactiveAt: null,
+      inactiveReason: null
+    };
+    this.warmSessionCaches.set(key, cache);
+    this.lastWarmSessionInactive = null;
+    return cache;
+  }
+
+  clearWarmSessionCache(reason = 'cleared', context = {}) {
+    const fallbackContext = !context || Object.keys(context).length === 0
+      ? this.warmCacheContextForTab(this.activeTab)
+      : context;
+    const inactiveAt = new Date().toISOString();
+    let cleared = 0;
+
+    for (const [key, cache] of this.warmSessionCaches.entries()) {
+      if (fallbackContext.all === true || this.warmCacheMatchesContext(cache, fallbackContext)) {
+        this.warmSessionCaches.set(key, {
+          ...cache,
+          inactiveAt,
+          inactiveReason: reason,
+          observation: null,
+          readPage: null
+        });
+        cleared += 1;
+      }
     }
 
-    const expiresAt = Date.parse(cache.expiresAt);
-    const expired = Number.isFinite(expiresAt) && Date.now() > expiresAt;
-    if (expired) {
+    this.lastWarmSessionInactive = {
+      active: false,
+      reason,
+      origin: fallbackContext.origin || null,
+      url: fallbackContext.url || null,
+      tabId: fallbackContext.tabId ?? null,
+      source: null,
+      updatedAt: null,
+      expiresAt: null,
+      metadata: null,
+      inactiveAt,
+      hasObservation: false,
+      hasReadPage: false,
+      cleared
+    };
+  }
+
+  warmSessionStatus(context = {}) {
+    const statusContext = Object.keys(context || {}).length > 0
+      ? context
+      : this.warmCacheContextForTab(this.activeTab);
+    const anyCache = this.findWarmSessionCache(statusContext, { activeOnly: false });
+    if (!anyCache) {
+      return this.lastWarmSessionInactive
+        ? { ...this.lastWarmSessionInactive }
+        : {
+          active: false,
+          reason: null
+        };
+    }
+
+    if (this.warmCacheExpired(anyCache)) {
       return {
         active: false,
         reason: 'expired',
-        origin: cache.origin || null,
-        url: cache.url || null,
-        tabId: cache.tabId ?? null,
-        title: cache.title || null,
-        source: cache.source || null,
-        updatedAt: cache.updatedAt || null,
-        expiresAt: cache.expiresAt || null,
-        metadata: cache.metadata || null,
+        origin: anyCache.origin || null,
+        url: anyCache.url || null,
+        tabId: anyCache.tabId ?? null,
+        title: anyCache.title || null,
+        source: anyCache.source || null,
+        updatedAt: anyCache.updatedAt || null,
+        expiresAt: anyCache.expiresAt || null,
+        metadata: anyCache.metadata || null,
         hasObservation: false,
         hasReadPage: false
       };
     }
 
-    const active = Boolean(cache.observation || cache.readPage);
+    if (!anyCache.observation && !anyCache.readPage) {
+      return {
+        active: false,
+        reason: anyCache.inactiveReason || 'cleared',
+        origin: anyCache.origin || null,
+        url: anyCache.url || null,
+        tabId: anyCache.tabId ?? null,
+        title: anyCache.title || null,
+        source: anyCache.source || null,
+        updatedAt: anyCache.updatedAt || null,
+        expiresAt: anyCache.expiresAt || null,
+        metadata: anyCache.metadata || null,
+        inactiveAt: anyCache.inactiveAt || null,
+        hasObservation: false,
+        hasReadPage: false
+      };
+    }
+
+    const cache = anyCache;
+
     return {
-      active,
-      reason: active ? null : (cache.inactiveReason || 'cleared'),
+      active: true,
+      reason: null,
       origin: cache.origin || null,
       url: cache.url || null,
       tabId: cache.tabId ?? null,
@@ -3175,14 +4190,17 @@ class SessionManager {
     };
   }
 
-  warmCacheMetadata() {
-    const status = this.warmSessionStatus();
+  warmCacheMetadata(cache) {
     return {
       hit: true,
-      source: status.source,
-      updatedAt: status.updatedAt,
-      expiresAt: status.expiresAt,
-      metadata: status.metadata || null
+      sessionId: cache && cache.sessionId ? cache.sessionId : this.sessionId,
+      agentId: cache && cache.agentId ? cache.agentId : null,
+      tabId: cache && cache.tabId !== undefined ? cache.tabId : null,
+      url: cache && cache.url ? cache.url : null,
+      source: cache && cache.source ? cache.source : null,
+      updatedAt: cache && cache.updatedAt ? cache.updatedAt : null,
+      expiresAt: cache && cache.expiresAt ? cache.expiresAt : null,
+      metadata: cache && cache.metadata ? cache.metadata : null
     };
   }
 
@@ -3236,14 +4254,15 @@ class SessionManager {
     return true;
   }
 
-  warmCacheHit(method, params = {}, origin) {
-    const status = this.warmSessionStatus();
-    const cache = this.warmSessionCache;
-    if (!status.active || !cache || cache.origin !== origin) {
+  warmCacheHit(method, params = {}, origin, context = {}) {
+    if (!Number.isInteger(context.tabId)) {
       return null;
     }
-    if (this.activeTab && this.activeTab.url && cache.url !== this.activeTab.url) {
-      this.clearWarmSessionCache('active-tab-changed');
+    const cache = this.findWarmSessionCache({
+      ...context,
+      origin
+    });
+    if (!cache || cache.origin !== origin) {
       return null;
     }
 
@@ -3252,7 +4271,7 @@ class SessionManager {
         ok: true,
         result: {
           ...cloneJson(cache.observation),
-          warmCache: this.warmCacheMetadata()
+          warmCache: this.warmCacheMetadata(cache)
         }
       };
     }
@@ -3274,12 +4293,41 @@ class SessionManager {
         ok: true,
         result: {
           ...cloneJson(cache.readPage),
-          warmCache: this.warmCacheMetadata()
+          warmCache: this.warmCacheMetadata(cache)
         }
       };
     }
 
     return null;
+  }
+
+  storeRuntimeWarmSessionCache(method, params = {}, origin, tab, result = {}) {
+    if (method !== 'page.observe' && method !== 'page.readPage') {
+      return null;
+    }
+    const tabId = Number.isInteger(params.tabId)
+      ? params.tabId
+      : (tab && Number.isInteger(tab.id) ? tab.id : null);
+    if (!Number.isInteger(tabId)) {
+      return null;
+    }
+    const observation = method === 'page.observe' && isPlainObject(result) ? result : undefined;
+    const readPage = method === 'page.readPage' && isPlainObject(result) ? result : undefined;
+    const source = method === 'page.observe' ? 'operator.runtime.tab.observe' : 'operator.runtime.tab.readPage';
+    return this.setWarmSessionCache({
+      agentId: params.agentId,
+      origin,
+      tabId,
+      url: (result && result.url) || (tab && tab.url) || null,
+      title: (result && result.title) || (tab && tab.title) || null,
+      source,
+      observation,
+      readPage,
+      readPageFilter: typeof params.filter === 'string' && params.filter
+        ? params.filter
+        : 'interactive',
+      metadata: this.warmResultMetadata(observation, readPage)
+    });
   }
 
   ensureStarted(id, params = {}) {
@@ -3342,13 +4390,18 @@ class SessionManager {
       previousConnectionId
     });
     const cancelledPolls = this.cancelBridgePolls();
+    this.clearWarmSessionCache('extension-disconnected', { all: true });
+    const invalidatedApprovals = this.invalidateApprovals('extension-disconnected', () => true, {
+      previousConnectionId
+    });
 
     return rpcOk(id, {
       connectionState: this.connectionState,
       source: this.lastDisconnect.source,
       previousConnectionId,
       ...cancelled,
-      ...cancelledPolls
+      ...cancelledPolls,
+      invalidatedApprovals
     });
   }
 
@@ -3373,7 +4426,9 @@ class SessionManager {
     }
     const revoked = this.stateStore.revokeDomain(origin);
     this.approvedOrigins = new Set(this.activeDomainApprovalOrigins());
-    return rpcOk(id, { origin, revoked });
+    this.clearWarmSessionCache('domain-revoked', { origin });
+    const invalidatedApprovals = this.invalidateApprovalsForOrigin(origin, 'domain-revoked');
+    return rpcOk(id, { origin, revoked, invalidatedApprovals });
   }
 
   activeDomainApprovalOrigins() {
@@ -3574,6 +4629,15 @@ class SessionManager {
     return rpcOk(id, {
       auditLogPath: this.config.auditLogPath,
       entries: this.audit.tail({
+        limit: params.limit
+      })
+    });
+  }
+
+  timelineAudit(id, params = {}) {
+    return rpcOk(id, {
+      auditLogPath: this.config.auditLogPath,
+      timeline: this.audit.timeline({
         limit: params.limit
       })
     });
@@ -4206,15 +5270,22 @@ class SessionManager {
       return rpcError(id, boundedFullAuto.error);
     }
 
-    const activeTabGuard = this.guardActiveTabMutationTarget(method, origin, batch);
+    const activeTabGuard = this.guardActiveTabTarget(method, origin, batch);
     if (!activeTabGuard.ok) {
       return rpcError(id, activeTabGuard.error);
     }
     const activeTabLock = Number.isInteger(activeTabGuard.expectedActiveTabId)
       ? { expectedActiveTabId: activeTabGuard.expectedActiveTabId }
       : {};
+    const activeWarmContext = Number.isInteger(activeTabGuard.expectedActiveTabId)
+      ? this.warmCacheContextForTab(this.activeTab, {
+        agentId: params.agentId,
+        tabId: activeTabGuard.expectedActiveTabId,
+        origin
+      })
+      : {};
 
-    const warmCache = this.warmCacheHit(method, params, origin);
+    const warmCache = this.warmCacheHit(method, { ...params, ...activeTabLock }, origin, activeWarmContext);
     if (warmCache) {
       if (!warmCache.ok) {
         return rpcError(id, warmCache.error);
@@ -4247,7 +5318,7 @@ class SessionManager {
         }, extensionResponse.error));
       }
       if (shouldInvalidateWarmSession(method)) {
-        this.clearWarmSessionCache(method);
+        this.clearWarmSessionCache(method, activeWarmContext);
       }
       return rpcOk(id, {
         ...extensionResponse.result,
@@ -4267,7 +5338,7 @@ class SessionManager {
         }, extensionResponse.error));
       }
       if (shouldInvalidateWarmSession(method)) {
-        this.clearWarmSessionCache(method);
+        this.clearWarmSessionCache(method, activeWarmContext);
       }
       return rpcOk(id, {
         ...extensionResponse.result,
@@ -4308,7 +5379,7 @@ class SessionManager {
         return rpcError(id, this.attachApprovalRequest(method, batch.commandParams, childError));
       }
       if (shouldInvalidateWarmSession(method, batch.childActions)) {
-        this.clearWarmSessionCache(method);
+        this.clearWarmSessionCache(method, activeWarmContext);
       }
       return rpcOk(id, extensionResponse.result);
     }
@@ -4325,7 +5396,7 @@ class SessionManager {
       return rpcError(id, this.attachApprovalRequest(method, { ...params, origin, ...activeTabLock }, error));
     }
     if (shouldInvalidateWarmSession(method)) {
-      this.clearWarmSessionCache(method);
+      this.clearWarmSessionCache(method, activeWarmContext);
     }
     if (method === 'page.visualObserve' || method === 'page.visualAnalyze' || method === 'page.visualInspectTarget') {
       const materialized = this.materializeVisualObservation(extensionResponse.result, origin, {
@@ -4371,10 +5442,14 @@ class SessionManager {
       if (previousOrigin && previousOrigin !== origin) {
         const previousApprovalRevoked = this.stateStore.revokeDomain(previousOrigin);
         this.approvedOrigins = new Set(this.activeDomainApprovalOrigins());
+        const invalidatedApprovals = this.invalidateApprovalsForOrigin(previousOrigin, 'origin-navigation', {
+          newOrigin: origin
+        });
         navigationOriginChange = {
           from: previousOrigin,
           to: origin,
-          previousApprovalRevoked
+          previousApprovalRevoked,
+          ...(invalidatedApprovals > 0 ? { invalidatedApprovals } : {})
         };
       }
       return rpcOk(id, {
@@ -4561,10 +5636,14 @@ class SessionManager {
       clearedAt: null
     };
     const cancelled = this.cancelPendingCommands(this.emergencyStopError());
+    const invalidatedApprovals = this.invalidateApprovals('emergency-stop', () => true, {
+      reason: this.emergencyStop.reason
+    });
 
     return rpcOk(id, {
       ...this.emergencyStop,
-      ...cancelled
+      ...cancelled,
+      invalidatedApprovals
     });
   }
 
@@ -4575,6 +5654,92 @@ class SessionManager {
       clearedAt: new Date().toISOString()
     };
     return rpcOk(id, { ...this.emergencyStop });
+  }
+
+  invalidateApprovalRecord(record, reason, details = {}) {
+    if (!record || !APPROVAL_INVALIDATABLE_STATUSES.has(record.status)) {
+      return false;
+    }
+    record.status = 'invalidated';
+    record.invalidatedAt = new Date().toISOString();
+    record.invalidationReason = reason;
+    if (Object.keys(details).length > 0) {
+      record.invalidationDetails = cloneJson(details);
+    }
+    return true;
+  }
+
+  invalidateApprovals(reason, predicate = () => true, details = {}) {
+    let invalidatedApprovals = 0;
+    for (const record of this.pendingApprovals.values()) {
+      if (predicate(record) && this.invalidateApprovalRecord(record, reason, details)) {
+        invalidatedApprovals += 1;
+      }
+    }
+    return invalidatedApprovals;
+  }
+
+  invalidateApprovalsForOrigin(origin, reason, details = {}) {
+    if (!origin) {
+      return 0;
+    }
+    return this.invalidateApprovals(reason, (record) => record.origin === origin, {
+      origin,
+      ...details
+    });
+  }
+
+  invalidateApprovalsForTab(tabId, reason, details = {}) {
+    if (!Number.isInteger(tabId)) {
+      return 0;
+    }
+    return this.invalidateApprovals(reason, (record) => record.tabId === tabId || record.expectedActiveTabId === tabId, {
+      tabId,
+      ...details
+    });
+  }
+
+  buildApprovalContext(method, params = {}, error = {}) {
+    const targetContract = approvalTargetContractFromParams(params, error);
+    const targetHandle = approvalTargetHandleFromParams(params, error, targetContract);
+    const expectedActiveTabId = Number.isInteger(params.expectedActiveTabId)
+      ? params.expectedActiveTabId
+      : null;
+    const activeTab = this.activeTab && tabOrigin(this.activeTab) === params.origin
+      ? this.activeTab
+      : null;
+    const tabId = Number.isInteger(params.tabId)
+      ? params.tabId
+      : (expectedActiveTabId ?? (activeTab && Number.isInteger(activeTab.id) ? activeTab.id : null));
+    const sessionTab = Number.isInteger(tabId) ? this.sessionTabs.get(tabId) : null;
+    const targetUrl = targetContract &&
+      targetContract.context &&
+      typeof targetContract.context.url === 'string'
+      ? targetContract.context.url
+      : null;
+    const url = typeof params.url === 'string' && params.url
+      ? params.url
+      : (targetUrl || (sessionTab && sessionTab.url) || (activeTab && activeTab.url) || null);
+    const createdAtMs = Date.now();
+    const paramsSnapshot = cloneJson(params || {});
+    const pageStateId = pageStateIdFromHandle(targetHandle) ||
+      (typeof params.sincePageStateId === 'string' && params.sincePageStateId ? params.sincePageStateId : null);
+
+    return {
+      sessionId: this.sessionId,
+      agentId: typeof params.agentId === 'string' && params.agentId.trim() ? params.agentId.trim() : null,
+      connectionId: this.connectionId,
+      bridgeInstanceId: this.bridgeInstanceId,
+      tabId,
+      expectedActiveTabId,
+      url,
+      origin: params.origin || originFromParams(params) || null,
+      pageStateId,
+      targetHandle,
+      targetContractHash: targetContract ? stableHash(targetContract) : null,
+      paramsHash: stableHash({ method, params: paramsSnapshot }),
+      expiresAt: new Date(createdAtMs + APPROVAL_TTL_MS).toISOString()
+    };
   }
 
   attachApprovalRequest(method, params, error) {
@@ -4615,15 +5780,30 @@ class SessionManager {
     }
 
     const approvalId = `approval_${this.nextApprovalId++}`;
+    const context = this.buildApprovalContext(method, params, error);
+    const paramsSnapshot = cloneJson(params || {});
     const record = {
       approvalId,
       status: 'pending',
       method,
-      origin: params.origin,
-      params,
+      origin: context.origin || params.origin,
+      params: paramsSnapshot,
       approvalKind,
       targetSummary: error.targetSummary || null,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      expiresAt: context.expiresAt,
+      agentId: context.agentId,
+      sessionId: context.sessionId,
+      connectionId: context.connectionId,
+      bridgeInstanceId: context.bridgeInstanceId,
+      tabId: context.tabId,
+      expectedActiveTabId: context.expectedActiveTabId,
+      url: context.url,
+      pageStateId: context.pageStateId,
+      targetHandle: context.targetHandle,
+      targetContractHash: context.targetContractHash,
+      paramsHash: context.paramsHash,
+      invalidationReason: null
     };
     this.pendingApprovals.set(approvalId, record);
 
@@ -4683,19 +5863,181 @@ class SessionManager {
     });
   }
 
-  approveApproval(id, params) {
-    const record = this.approvalRecord(params);
+  approvalExpired(record) {
+    const expiresAt = Date.parse(record && record.expiresAt);
+    return Number.isFinite(expiresAt) && Date.now() > expiresAt;
+  }
+
+  failApprovalContext(id, record, reason, extra = {}) {
+    this.invalidateApprovalRecord(record, reason, extra);
+    return rpcError(id, approvalContextError(record, reason, extra));
+  }
+
+  validateApprovalRecordForDecision(id, record, requiredStatus) {
     if (!record) {
       return rpcError(id, {
         code: ERROR_CODES.INVALID_REQUEST,
         message: 'Approval request not found.'
       });
     }
-    if (record.status !== 'pending') {
-      return rpcError(id, {
-        code: ERROR_CODES.INVALID_REQUEST,
-        message: `Approval request is ${record.status}.`
+    if (this.approvalExpired(record)) {
+      return this.failApprovalContext(id, record, 'approval-expired', {
+        expiresAt: record.expiresAt
       });
+    }
+    if (record.status !== requiredStatus) {
+      if (record.status === 'invalidated') {
+        return rpcError(id, approvalContextError(record, record.invalidationReason || 'approval-invalidated', {
+          invalidatedAt: record.invalidatedAt || null
+        }));
+      }
+      return rpcError(id, {
+        code: requiredStatus === 'pending' ? ERROR_CODES.INVALID_REQUEST : ERROR_CODES.APPROVAL_REQUIRED,
+        message: requiredStatus === 'pending'
+          ? `Approval request is ${record.status}.`
+          : 'Approval request must be approved before replay.'
+      });
+    }
+    return null;
+  }
+
+  validateApprovalReplayStaticContext(record) {
+    if (record.sessionId && record.sessionId !== this.sessionId) {
+      return guardError(ERROR_CODES.APPROVAL_CONTEXT_MISMATCH, 'Approval was created for a different daemon session.', {
+        reason: 'session-mismatch',
+        expectedSessionId: record.sessionId,
+        currentSessionId: this.sessionId
+      });
+    }
+    if (record.connectionId && record.connectionId !== this.connectionId) {
+      return guardError(ERROR_CODES.APPROVAL_CONTEXT_MISMATCH, 'Approval was created for a different extension connection.', {
+        reason: 'connection-mismatch',
+        expectedConnectionId: record.connectionId,
+        currentConnectionId: this.connectionId
+      });
+    }
+    if (record.paramsHash && stableHash({ method: record.method, params: record.params }) !== record.paramsHash) {
+      return guardError(ERROR_CODES.APPROVAL_CONTEXT_MISMATCH, 'Approval parameters changed before replay.', {
+        reason: 'params-hash-mismatch'
+      });
+    }
+
+    if (Number.isInteger(record.expectedActiveTabId)) {
+      const activeTab = this.activeTab || null;
+      if (
+        !activeTab ||
+        activeTab.id !== record.expectedActiveTabId ||
+        tabOrigin(activeTab) !== record.origin
+      ) {
+        return guardError(ERROR_CODES.APPROVAL_CONTEXT_MISMATCH, 'Approved active tab is no longer active.', {
+          reason: 'active-tab-mismatch',
+          expectedActiveTabId: record.expectedActiveTabId,
+          activeTabId: activeTab && Number.isInteger(activeTab.id) ? activeTab.id : null,
+          activeTabUrl: activeTab && activeTab.url ? activeTab.url : null
+        });
+      }
+      if (record.url && activeTab.url && activeTab.url !== record.url) {
+        return guardError(ERROR_CODES.APPROVAL_CONTEXT_MISMATCH, 'Approved active tab URL changed before replay.', {
+          reason: 'active-tab-url-mismatch',
+          expectedUrl: record.url,
+          activeTabUrl: activeTab.url
+        });
+      }
+    } else if (Number.isInteger(record.tabId)) {
+      const tab = this.sessionTabs.get(record.tabId) || null;
+      if (!tab || originFromUrl(tab.url) !== record.origin) {
+        return guardError(ERROR_CODES.APPROVAL_CONTEXT_MISMATCH, 'Approved session tab is no longer available.', {
+          reason: 'tab-mismatch',
+          tabId: record.tabId,
+          currentUrl: tab && tab.url ? tab.url : null
+        });
+      }
+      if (record.url && tab.url && tab.url !== record.url) {
+        return guardError(ERROR_CODES.APPROVAL_CONTEXT_MISMATCH, 'Approved session tab URL changed before replay.', {
+          reason: 'tab-url-mismatch',
+          tabId: record.tabId,
+          expectedUrl: record.url,
+          currentUrl: tab.url
+        });
+      }
+    }
+
+    return guardOk();
+  }
+
+  approvalReobserveCommand(record) {
+    if (!record.pageStateId && !record.targetContractHash) {
+      return null;
+    }
+    if (Number.isInteger(record.expectedActiveTabId)) {
+      return {
+        method: 'page.observe',
+        params: {
+          origin: record.origin,
+          expectedActiveTabId: record.expectedActiveTabId,
+          mode: 'tiny',
+          maxActionableHandles: 80,
+          summaryMaxChars: 2000
+        }
+      };
+    }
+    if (Number.isInteger(record.tabId)) {
+      return {
+        method: 'operator.runtime.tab.observe',
+        params: {
+          tabId: record.tabId,
+          mode: 'tiny',
+          maxActionableHandles: 80,
+          summaryMaxChars: 2000
+        }
+      };
+    }
+    return null;
+  }
+
+  async validateApprovalReplayObservedContext(record) {
+    const reobserve = this.approvalReobserveCommand(record);
+    if (!reobserve) {
+      return guardOk();
+    }
+    const observation = await this.enqueueExtensionCommand(reobserve.method, reobserve.params);
+    if (!observation.ok) {
+      return guardError(ERROR_CODES.APPROVAL_CONTEXT_MISMATCH, 'Could not re-observe approved target before replay.', {
+        reason: 'reobserve-failed',
+        reobserveError: observation.error || null
+      });
+    }
+
+    const result = observation.result || {};
+    if (record.url && result.url && result.url !== record.url) {
+      return guardError(ERROR_CODES.APPROVAL_CONTEXT_MISMATCH, 'Observed URL no longer matches approval.', {
+        reason: 'url-mismatch',
+        expectedUrl: record.url,
+        observedUrl: result.url
+      });
+    }
+    if (record.pageStateId && result.pageStateId && result.pageStateId !== record.pageStateId) {
+      return guardError(ERROR_CODES.APPROVAL_CONTEXT_MISMATCH, 'Observed page state no longer matches approval.', {
+        reason: 'page-state-mismatch',
+        expectedPageStateId: record.pageStateId,
+        observedPageStateId: result.pageStateId
+      });
+    }
+    if (record.targetContractHash && !observedTargetMatchesApproval(result, record)) {
+      return guardError(ERROR_CODES.APPROVAL_CONTEXT_MISMATCH, 'Approved target contract was not found during replay re-observe.', {
+        reason: 'target-contract-mismatch',
+        targetContractHash: record.targetContractHash,
+        targetHandle: record.targetHandle || null
+      });
+    }
+    return guardOk();
+  }
+
+  approveApproval(id, params) {
+    const record = this.approvalRecord(params);
+    const invalid = this.validateApprovalRecordForDecision(id, record, 'pending');
+    if (invalid) {
+      return invalid;
     }
     const policy = this.stateStore.getPolicyControls();
     if (!isLocalMockOrigin(record.origin) && policy.guardedActionsEnabled !== false) {
@@ -4729,17 +6071,9 @@ class SessionManager {
     }
 
     const record = this.approvalRecord(params);
-    if (!record) {
-      return rpcError(id, {
-        code: ERROR_CODES.INVALID_REQUEST,
-        message: 'Approval request not found.'
-      });
-    }
-    if (record.status !== 'approved') {
-      return rpcError(id, {
-        code: ERROR_CODES.APPROVAL_REQUIRED,
-        message: 'Approval request must be approved before replay.'
-      });
+    const invalid = this.validateApprovalRecordForDecision(id, record, 'approved');
+    if (invalid) {
+      return invalid;
     }
 
     const readiness = assertReadyForRealSiteAction({
@@ -4748,6 +6082,16 @@ class SessionManager {
     });
     if (!readiness.ok) {
       return rpcError(id, readiness.error);
+    }
+
+    const staticContext = this.validateApprovalReplayStaticContext(record);
+    if (!staticContext.ok) {
+      return this.failApprovalContext(id, record, staticContext.error.reason || 'context-mismatch', staticContext.error);
+    }
+
+    const observedContext = await this.validateApprovalReplayObservedContext(record);
+    if (!observedContext.ok) {
+      return this.failApprovalContext(id, record, observedContext.error.reason || 'context-mismatch', observedContext.error);
     }
 
     record.status = 'running';
@@ -4775,7 +6119,27 @@ class SessionManager {
     return rpcOk(id, extensionResponse.result);
   }
 
-  enqueueExtensionCommand(method, params) {
+  enqueueExtensionCommand(method, params = {}) {
+    const tabId = params && Number.isInteger(params.tabId) ? params.tabId : null;
+    if (tabId === null) {
+      return this.enqueueExtensionCommandNow(method, params);
+    }
+    const previous = this.tabCommandLocks.get(tabId);
+    const next = previous
+      ? previous
+        .catch(() => null)
+        .then(() => this.enqueueExtensionCommandNow(method, params))
+      : this.enqueueExtensionCommandNow(method, params);
+    this.tabCommandLocks.set(tabId, next);
+    next.finally(() => {
+      if (this.tabCommandLocks.get(tabId) === next) {
+        this.tabCommandLocks.delete(tabId);
+      }
+    });
+    return next;
+  }
+
+  enqueueExtensionCommandNow(method, params) {
     const commandId = `cmd_${this.nextCommandId++}`;
     const command = {
       type: 'command',

@@ -90,6 +90,77 @@ test('AuditLog.tail returns recent redacted entries in order', () => {
   assert.equal(entries[1].requestId, 'req_3');
 });
 
+test('AuditLog.timeline returns a redacted action timeline without raw params', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-audit-'));
+  const file = path.join(dir, 'audit.jsonl');
+  const audit = new AuditLog(file);
+
+  audit.append({
+    requestId: 'req_observe',
+    sessionId: 'session_1',
+    agentId: 'agent-alpha',
+    connectionId: 'conn_1',
+    tabId: 7,
+    method: 'operator.runtime.tab.observe',
+    mode: 'guarded',
+    origin: 'https://example.com',
+    actionKind: 'observe',
+    params: {
+      token: 'secret-token',
+      text: 'raw private prompt'
+    },
+    result: 'ok'
+  });
+  audit.append({
+    requestId: 'req_click',
+    sessionId: 'session_1',
+    agentId: 'agent-alpha',
+    tabId: 7,
+    method: 'operator.runtime.tab.locator',
+    origin: 'https://example.com',
+    actionKind: 'click',
+    targetSummary: 'button: Publish',
+    params: {
+      password: 'raw secret'
+    },
+    result: 'error',
+    errorCode: 'HIGH_RISK_BLOCKED'
+  });
+
+  const timeline = audit.timeline({ limit: 5 });
+
+  assert.deepEqual(timeline.map((entry) => ({
+    requestId: entry.requestId,
+    agentId: entry.agentId,
+    tabId: entry.tabId,
+    method: entry.method,
+    actionKind: entry.actionKind,
+    result: entry.result,
+    errorCode: entry.errorCode,
+    targetSummary: entry.targetSummary
+  })), [{
+    requestId: 'req_observe',
+    agentId: 'agent-alpha',
+    tabId: 7,
+    method: 'operator.runtime.tab.observe',
+    actionKind: 'observe',
+    result: 'ok',
+    errorCode: undefined,
+    targetSummary: undefined
+  }, {
+    requestId: 'req_click',
+    agentId: 'agent-alpha',
+    tabId: 7,
+    method: 'operator.runtime.tab.locator',
+    actionKind: 'click',
+    result: 'error',
+    errorCode: 'HIGH_RISK_BLOCKED',
+    targetSummary: 'button: Publish'
+  }]);
+  assert.equal(JSON.stringify(timeline).includes('raw secret'), false);
+  assert.equal(JSON.stringify(timeline).includes('raw private prompt'), false);
+});
+
 test('AuditLog redacts sensitive token text outside sensitive keys', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-audit-'));
   const file = path.join(dir, 'audit.jsonl');

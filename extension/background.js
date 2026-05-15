@@ -69,13 +69,43 @@ function getProfileBinding() {
   };
 }
 
+async function sha256Text(text) {
+  const bytes = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function loadedExtensionHash() {
+  try {
+    return `sha256:${await sha256Text(JSON.stringify({
+      manifest: chrome.runtime.getManifest(),
+      bridgeVersion: '0.2.13',
+      imports: [
+        'permissionOrigins.js',
+        'actionPolicy.js',
+        'visualCapture.js',
+        'accessibilitySnapshot.js',
+        'uiGraph.js',
+        'runtimeLocatorAction.js',
+        'fileUpload.js',
+        'cartWorkflow.js',
+        'debuggerActions.js',
+        'pageReader.js'
+      ]
+    }))}`;
+  } catch {
+    return null;
+  }
+}
+
 async function buildHello() {
   return {
     type: 'HELLO',
     protocolVersion: '1.0',
     extensionId: chrome.runtime.id,
     extensionVersion: chrome.runtime.getManifest().version,
-  bridgeVersion: '0.2.12',
+    bridgeVersion: '0.2.13',
+    loadedExtensionHash: await loadedExtensionHash(),
     sessionBootstrapId: requestId('boot'),
     ...getProfileBinding(),
     capabilities: [
@@ -690,7 +720,10 @@ async function tabGroupTitlesById(tabs) {
       return null;
     }
     try {
-      const group = await chrome.tabGroups.get(groupId);
+      const group = await boundedChromePromise(chrome.tabGroups.get(groupId));
+      if (!group) {
+        return null;
+      }
       const title = typeof group.title === 'string' ? group.title.trim() : '';
       return title ? [groupId, title] : null;
     } catch {
@@ -735,14 +768,30 @@ function originMetadata(url) {
   }
 }
 
-function sessionTabInfo(tab, ownership, finalizedStatus = null) {
+function normalizeAgentId(value) {
+  return typeof value === 'string' && value.trim() && /^[A-Za-z0-9_.:-]{1,120}$/.test(value.trim())
+    ? value.trim()
+    : null;
+}
+
+function sessionTabInfo(tab, ownership, finalizedStatus = null, options = {}) {
+  const ownerAgentId = normalizeAgentId(options.ownerAgentId || tab.ownerAgentId || tab.agentId);
   return {
     ...tabInfo(tab),
     ownership,
     active: tab.active === true,
     finalizedStatus,
+    ...(ownerAgentId ? { ownerAgentId } : {}),
+    ...(typeof options.leaseId === 'string' && options.leaseId ? { leaseId: options.leaseId } : {}),
     originMetadata: originMetadata(tab && tab.url)
   };
+}
+
+function boundedChromePromise(promise, timeoutMs = 1500) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs))
+  ]).catch(() => null);
 }
 
 async function groupTabsBestEffort(tabIds, title) {
@@ -750,14 +799,17 @@ async function groupTabsBestEffort(tabIds, title) {
     return null;
   }
   try {
-    const groupId = await chrome.tabs.group({
+    const groupId = await boundedChromePromise(chrome.tabs.group({
       tabIds: tabIds.length === 1 ? tabIds[0] : tabIds
-    });
-    const group = await chrome.tabGroups.update(groupId, {
+    }));
+    if (!Number.isInteger(groupId)) {
+      return null;
+    }
+    const group = await boundedChromePromise(chrome.tabGroups.update(groupId, {
       title,
       color: title === DELIVERABLE_SESSION_GROUP_TITLE ? 'blue' : 'grey'
-    });
-    return { groupId, title: group.title || title };
+    }));
+    return { groupId, title: group && group.title ? group.title : title };
   } catch {
     // Tabs may span windows or Chrome may reject grouping. Ownership still works.
     return null;
@@ -769,7 +821,12 @@ async function syncSessionGroupMetadataFromChrome() {
   const tabs = [];
   for (const tabId of operatorSessionTabs.keys()) {
     try {
-      tabs.push(await chrome.tabs.get(tabId));
+      const tab = await boundedChromePromise(chrome.tabs.get(tabId));
+      if (!tab) {
+        operatorSessionTabs.delete(tabId);
+        continue;
+      }
+      tabs.push(tab);
     } catch {
       operatorSessionTabs.delete(tabId);
     }
@@ -780,11 +837,14 @@ async function syncSessionGroupMetadataFromChrome() {
     if (!previous) {
       continue;
     }
-    operatorSessionTabs.set(tab.id, {
-      ...previous,
-      ...sessionTabInfo(tab, previous.ownership, previous.finalizedStatus || null),
-      ...(groupTitles.has(tab.groupId) ? { tabGroup: groupTitles.get(tab.groupId) } : {})
-    });
+      operatorSessionTabs.set(tab.id, {
+        ...previous,
+        ...sessionTabInfo(tab, previous.ownership, previous.finalizedStatus || null, {
+          ownerAgentId: previous.ownerAgentId || null,
+          leaseId: previous.leaseId || null
+        }),
+        ...(groupTitles.has(tab.groupId) ? { tabGroup: groupTitles.get(tab.groupId) } : {})
+      });
   }
   await saveSessionTabState();
 }
@@ -794,10 +854,17 @@ async function refreshSessionTabsFromChrome() {
   const refreshed = [];
   for (const [tabId, record] of operatorSessionTabs.entries()) {
     try {
-      const tab = await chrome.tabs.get(tabId);
+      const tab = await boundedChromePromise(chrome.tabs.get(tabId));
+      if (!tab) {
+        operatorSessionTabs.delete(tabId);
+        continue;
+      }
       const next = {
         ...record,
-        ...sessionTabInfo(tab, record.ownership, record.finalizedStatus || null)
+        ...sessionTabInfo(tab, record.ownership, record.finalizedStatus || null, {
+          ownerAgentId: record.ownerAgentId || null,
+          leaseId: record.leaseId || null
+        })
       };
       operatorSessionTabs.set(tabId, next);
       refreshed.push(next);
@@ -807,6 +874,20 @@ async function refreshSessionTabsFromChrome() {
   }
   await saveSessionTabState();
   return refreshed;
+}
+
+async function createSessionChromeTab() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const tab = await boundedChromePromise(chrome.tabs.create({
+      active: true,
+      url: 'about:blank'
+    }), 5000);
+    if (tab && Number.isInteger(tab.id)) {
+      return tab;
+    }
+    await sleep(150);
+  }
+  return null;
 }
 
 async function detachSessionCdpBestEffort(tabId) {
@@ -847,7 +928,8 @@ async function handleSessionTabCommand(method, params = {}) {
         }
       };
     }
-    const record = sessionTabInfo(tab, 'user');
+    const ownerAgentId = normalizeAgentId(params.agentId);
+    const record = sessionTabInfo(tab, 'user', null, { ownerAgentId });
     operatorSessionTabs.set(record.id, record);
     await groupTabsBestEffort([...operatorSessionTabs.keys()], operatorSessionName || DEFAULT_SESSION_GROUP_TITLE);
     await syncSessionGroupMetadataFromChrome();
@@ -856,8 +938,18 @@ async function handleSessionTabCommand(method, params = {}) {
   }
 
   if (method === 'operator.tabs.create') {
-    const tab = await chrome.tabs.create({ active: true, url: 'about:blank' });
-    const record = sessionTabInfo(tab, 'agent');
+    const tab = await createSessionChromeTab();
+    if (!tab) {
+      return {
+        ok: false,
+        error: {
+          code: 'TAB_CREATE_FAILED',
+          message: 'Chrome did not create a session tab before timeout.'
+        }
+      };
+    }
+    const ownerAgentId = normalizeAgentId(params.agentId);
+    const record = sessionTabInfo(tab, 'agent', null, { ownerAgentId });
     operatorSessionTabs.set(record.id, record);
     await groupTabsBestEffort([...operatorSessionTabs.keys()], operatorSessionName || DEFAULT_SESSION_GROUP_TITLE);
     await syncSessionGroupMetadataFromChrome();
@@ -866,16 +958,47 @@ async function handleSessionTabCommand(method, params = {}) {
   }
 
   if (method === 'operator.tabs.listSession') {
-    return { ok: true, result: { tabs: await refreshSessionTabsFromChrome() } };
+    const ownerAgentId = normalizeAgentId(params.agentId);
+    const tabs = await refreshSessionTabsFromChrome();
+    return {
+      ok: true,
+      result: {
+        tabs: ownerAgentId
+          ? tabs.filter((tab) => !tab.ownerAgentId || tab.ownerAgentId === ownerAgentId)
+          : tabs
+      }
+    };
   }
 
   if (method === 'operator.tabs.finalize') {
+    const ownerAgentId = normalizeAgentId(params.agentId);
     const keep = Array.isArray(params.keep) ? params.keep : [];
     const keepById = new Map(keep.map((entry) => [entry.tabId, entry.status]));
+    if (ownerAgentId) {
+      for (const entry of keep) {
+        const record = operatorSessionTabs.get(entry.tabId);
+        if (record && record.ownerAgentId !== ownerAgentId) {
+          return {
+            ok: false,
+            error: {
+              code: 'TAB_MISMATCH',
+              message: 'Session tab is leased to a different agent.',
+              reason: 'agent-lease-mismatch',
+              tabId: entry.tabId,
+              ownerAgentId: record.ownerAgentId,
+              agentId: ownerAgentId
+            }
+          };
+        }
+      }
+    }
     const kept = [];
     const closed = [];
     const released = [];
     for (const [tabId, record] of [...operatorSessionTabs.entries()]) {
+      if (ownerAgentId && record.ownerAgentId !== ownerAgentId) {
+        continue;
+      }
       await detachSessionCdpBestEffort(tabId);
       const status = keepById.get(tabId);
       if (status === 'handoff' || status === 'deliverable') {
@@ -1152,8 +1275,9 @@ async function handleSessionRecoveryCommand(method, params = {}) {
       }
     };
   }
+  const ownerAgentId = normalizeAgentId(params.agentId);
   const record = params.claim === true
-    ? sessionTabInfo(tab, 'user')
+    ? sessionTabInfo(tab, 'user', null, { ownerAgentId })
     : userTabInfo(tab, await tabGroupTitlesById([tab]));
   if (params.claim === true) {
     await loadSessionTabState();
@@ -1216,6 +1340,40 @@ async function tabForRuntimeCommand(tabId) {
 }
 
 async function resolveRuntimeTabLocator(tabId, params = {}, { includeTargetContract = false } = {}) {
+  if (typeof params.handle === 'string' && params.handle.trim()) {
+    const target = await chrome.tabs.sendMessage(tabId, {
+      type: 'content.resolveActionTarget',
+      action: params.action || 'resolve',
+      handle: params.handle.trim()
+    });
+    if (!target || !target.ok) {
+      const fallbackTarget = targetForActionParams(params);
+      if (
+        fallbackTarget &&
+        fallbackTarget.targetContract &&
+        target &&
+        target.error &&
+        target.error.code === 'STALE_HANDLE'
+      ) {
+        return {
+          ok: true,
+          result: {
+            action: 'resolved',
+            target: fallbackTarget,
+            staleHandle: target.error
+          }
+        };
+      }
+      return target || {
+        ok: false,
+        error: {
+          code: 'LOCATOR_FAILED',
+          message: 'Handle target resolution failed without a structured response.'
+        }
+      };
+    }
+    return target;
+  }
   const locator = await chrome.tabs.sendMessage(tabId, {
     type: 'content.resolveLocator',
     selector: params.selector,
@@ -1252,15 +1410,24 @@ async function dispatchRuntimeTabLocatorAction(tab, action, params, locator) {
   if (!runtimePreflight.ok) {
     return runtimePreflight;
   }
+  const observedTarget = targetForActionParams({
+    ...params,
+    handle: target && target.handle,
+    target: (runtimePreflight.result && runtimePreflight.result.target) || requestedTarget
+  });
   const actionResponse = await runDebuggerAction({
     chromeApi: chrome,
     tab,
     action,
     params: {
       handle: target.handle,
-      target: requestedTarget,
+      target: observedTarget,
       text: params.textValue,
-      value: params.textValue,
+      value: params.value !== undefined ? params.value : params.textValue,
+      checked: params.checked,
+      deltaX: params.deltaX,
+      deltaY: params.deltaY,
+      key: params.key,
       approval: params.approval,
       policy: params.policy
     }
@@ -1269,16 +1436,16 @@ async function dispatchRuntimeTabLocatorAction(tab, action, params, locator) {
     ...params,
     action,
     handle: target.handle,
-    target: requestedTarget,
+    target: observedTarget,
     label: params.actionTraceLabel
   });
   return attachPostActionSnapshot(tab.id, tracedResponse, {
     ...params,
     action,
     handle: target.handle,
-    target: requestedTarget,
+    target: observedTarget,
     text: params.textValue,
-    value: params.textValue,
+    value: params.value !== undefined ? params.value : params.textValue,
     preActionUrl: tab.url
   });
 }
@@ -1365,6 +1532,17 @@ async function handleRuntimeCommand(method, params = {}) {
     return runLocatorActionWithRetry({
       resolveLocator: () => resolveRuntimeTabLocator(tab.id, params, { includeTargetContract: true }),
       runAction: ({ locator }) => dispatchRuntimeTabLocatorAction(tab, action, params, locator)
+    });
+  }
+
+  if (method === 'operator.runtime.tab.batch') {
+    return chrome.tabs.sendMessage(tab.id, {
+      type: 'content.batch',
+      origin: params.origin,
+      stopOnError: params.stopOnError,
+      approval: params.approval,
+      policy: params.policy,
+      actions: params.actions
     });
   }
 
@@ -2031,6 +2209,11 @@ function targetForActionParams(params = {}) {
       targetContract && targetContract.accessibleName,
       targetContract && targetContract.label
     ),
+    dataRisk: firstTargetValue(
+      suppliedTarget && suppliedTarget.dataRisk,
+      targetContract && targetContract.dataRisk,
+      data.risk
+    ),
     testid: firstTargetValue(
       suppliedTarget && suppliedTarget.testid,
       targetContract && targetContract.testid,
@@ -2046,10 +2229,34 @@ function targetForActionParams(params = {}) {
   });
 }
 
+function approvedHighRiskForRisk(params = {}, risk = null) {
+  return Boolean(
+    risk &&
+    params.approval &&
+    params.approval.allowHighRisk === true &&
+    (params.approval.approvalKind === risk.approvalKind ||
+      params.approval.approvalKind === 'policy-disabled')
+  );
+}
+
 async function preflightDebuggerAction(ready, action, params) {
   const highRiskPolicyEnabled = !(params.policy && params.policy.highRiskEnabled === false);
   if (action === 'scroll' && !params.handle) {
     return { ok: true };
+  }
+
+  const requestedRisk = params.target
+    ? globalThis.CodexActionPolicy.classifyActionRisk({
+        action,
+        target: params.target
+      })
+    : null;
+  if (
+    requestedRisk &&
+    highRiskPolicyEnabled &&
+    !approvedHighRiskForRisk(params, requestedRisk)
+  ) {
+    return { ok: false, error: requestedRisk };
   }
 
   const preflight = await chrome.tabs.sendMessage(ready.tab.id, {
@@ -2068,12 +2275,7 @@ async function preflightDebuggerAction(ready, action, params) {
         action,
         target: params.target
       });
-      const approvedHighRisk = risk &&
-        params.approval &&
-        params.approval.allowHighRisk === true &&
-        (params.approval.approvalKind === risk.approvalKind ||
-          params.approval.approvalKind === 'policy-disabled');
-      if (risk && highRiskPolicyEnabled && !approvedHighRisk) {
+      if (risk && highRiskPolicyEnabled && !approvedHighRiskForRisk(params, risk)) {
         return { ok: false, error: risk };
       }
       return { ok: true, result: { target: params.target, risk } };
@@ -2087,17 +2289,18 @@ async function preflightDebuggerAction(ready, action, params) {
     };
   }
 
-  const risk = preflight.result && preflight.result.risk;
-  const approvedHighRisk = risk &&
-    params.approval &&
-    params.approval.allowHighRisk === true &&
-    (params.approval.approvalKind === risk.approvalKind ||
-      params.approval.approvalKind === 'policy-disabled');
-  if (risk && highRiskPolicyEnabled && !approvedHighRisk) {
-    return { ok: false, error: risk };
+  const resolvedRisk = preflight.result && preflight.result.risk;
+  const effectiveRisk = resolvedRisk || requestedRisk;
+  if (effectiveRisk && highRiskPolicyEnabled && !approvedHighRiskForRisk(params, effectiveRisk)) {
+    return { ok: false, error: effectiveRisk };
   }
 
-  return { ok: true, result: preflight.result };
+  return {
+    ok: true,
+    result: effectiveRisk && preflight.result
+      ? { ...preflight.result, risk: effectiveRisk }
+      : preflight.result
+  };
 }
 
 async function handleOperatorCommand(command) {

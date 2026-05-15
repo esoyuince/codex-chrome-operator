@@ -423,9 +423,9 @@ test('buildRpcRequest maps wait-ready to operator.verifyReadiness', () => {
   });
 });
 
-test('buildRpcRequest maps open-observe to page.observe cli action', () => {
+test('buildRpcRequest maps open-observe to runtime-tab observe cli action', () => {
   assert.deepEqual(buildRpcRequest(['open-observe', 'https://example.com/path', '1500', '25']), {
-    method: 'page.observe',
+    method: 'operator.runtime.tab.observe',
     params: {
       url: 'https://example.com/path',
       origin: 'https://example.com',
@@ -667,11 +667,11 @@ test('openObserve navigates and observes after readiness is confirmed', async ()
       calls.push(request.method === 'operator.status'
         ? 'operator.status'
         : `${request.method}:${request.params.url || request.params.origin}`);
-      if (request.method === 'page.navigate') {
+      if (request.method === 'operator.runtime.tab.goto') {
         return {
           ok: true,
           result: {
-            navigated: true,
+            action: 'navigate',
             url: request.params.url
           }
         };
@@ -718,7 +718,7 @@ test('openObserve navigates and observes after readiness is confirmed', async ()
           }
         };
       }
-      if (request.method === 'page.observe') {
+      if (request.method === 'operator.runtime.tab.observe') {
         observeParams.push(request.params);
         return {
           ok: true,
@@ -736,13 +736,13 @@ test('openObserve navigates and observes after readiness is confirmed', async ()
     'prepare',
     'wait-ready',
     'operator.tabs.create:undefined',
-    'page.navigate:https://example.com/path',
+    'operator.runtime.tab.goto:https://example.com/path',
     'operator.status',
     'operator.tabs.listSession:undefined',
-    'page.observe:https://example.com'
+    'operator.runtime.tab.observe:undefined'
   ]);
   assert.deepEqual(observeParams, [{
-    origin: 'https://example.com',
+    tabId: 7,
     mode: 'medium',
     maxActionableHandles: 18,
     summaryMaxChars: 500,
@@ -751,11 +751,83 @@ test('openObserve navigates and observes after readiness is confirmed', async ()
   assert.equal(response.ok, true);
   assert.equal(response.result.origin, 'https://example.com');
   assert.equal(response.result.url, 'https://example.com/path');
-  assert.equal(response.result.navigation.navigated, true);
+  assert.equal(response.result.navigation.action, 'navigate');
   assert.equal(response.result.sessionTab.tab.id, 7);
   assert.equal(response.result.sessionTab.tab.groupId, 3);
   assert.equal(response.result.sessionTabs[0].groupId, 3);
   assert.equal(response.result.observation.title, 'Example');
+});
+
+test('openObserve retries transient session tab creation timeouts', async () => {
+  const calls = [];
+  let createAttempts = 0;
+  const response = await openObserve({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'cli-token',
+      installDir: 'C:/Operator'
+    },
+    request: {
+      id: 'open_retry',
+      method: 'page.observe',
+      params: {
+        url: 'https://example.com/retry',
+        origin: 'https://example.com',
+        timeoutMs: 1000,
+        pollIntervalMs: 1
+      }
+    },
+    prepareOriginFn: async () => ({ ok: true, result: { ready: true, requiresUserGesture: false } }),
+    waitReadyFn: async () => ({ ok: true, result: { ready: true } }),
+    sendRpcFn: async ({ request }) => {
+      calls.push(request.method);
+      if (request.method === 'operator.tabs.create') {
+        createAttempts += 1;
+        if (createAttempts === 1) {
+          return {
+            ok: false,
+            error: {
+              code: 'TIMEOUT',
+              message: 'Timed out waiting for extension response to operator.tabs.create.'
+            }
+          };
+        }
+        return { ok: true, result: { tab: { id: 9, ownership: 'agent' } } };
+      }
+      if (request.method === 'operator.runtime.tab.goto') {
+        return { ok: true, result: { action: 'navigate', url: request.params.url } };
+      }
+      if (request.method === 'operator.status') {
+        return {
+          ok: true,
+          result: {
+            activeTab: {
+              url: 'https://example.com/retry',
+              origin: 'https://example.com',
+              loadingState: 'complete'
+            }
+          }
+        };
+      }
+      if (request.method === 'operator.tabs.listSession') {
+        return { ok: true, result: { tabs: [{ id: 9, url: 'https://example.com/retry' }] } };
+      }
+      if (request.method === 'operator.runtime.tab.observe') {
+        return { ok: true, result: { title: 'Retry Example', elements: [] } };
+      }
+      throw new Error(`unexpected method ${request.method}`);
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(createAttempts, 2);
+  assert.deepEqual(calls.slice(0, 4), [
+    'operator.tabs.create',
+    'operator.tabs.create',
+    'operator.runtime.tab.goto',
+    'operator.status'
+  ]);
+  assert.equal(response.result.sessionTab.tab.id, 9);
 });
 
 test('openObserve waits for navigation to settle before observing', async () => {
@@ -799,8 +871,8 @@ test('openObserve waits for navigation to settle before observing', async () => 
       };
     },
     sendRpcFn: async ({ request }) => {
-      if (request.method === 'page.navigate') {
-        calls.push('page.navigate');
+      if (request.method === 'operator.runtime.tab.goto') {
+        calls.push('operator.runtime.tab.goto');
         return {
           ok: true,
           result: {
@@ -865,8 +937,8 @@ test('openObserve waits for navigation to settle before observing', async () => 
           }
         };
       }
-      if (request.method === 'page.observe') {
-        calls.push(tabSettled ? 'page.observe:settled' : 'page.observe:early');
+      if (request.method === 'operator.runtime.tab.observe') {
+        calls.push(tabSettled ? 'operator.runtime.tab.observe:settled' : 'operator.runtime.tab.observe:early');
         return tabSettled
           ? {
             ok: true,
@@ -890,11 +962,11 @@ test('openObserve waits for navigation to settle before observing', async () => 
     'prepare',
     'wait-ready',
     'operator.tabs.create',
-    'page.navigate',
+    'operator.runtime.tab.goto',
     'operator.status:1',
     'operator.status:2',
     'operator.tabs.listSession',
-    'page.observe:settled'
+    'operator.runtime.tab.observe:settled'
   ]);
   assert.equal(response.ok, true);
   assert.equal(response.result.navigationSettled.activeTab.url, 'https://example.com/path');
@@ -1080,6 +1152,10 @@ test('buildRpcRequest maps approval and page commands', () => {
   });
   assert.deepEqual(buildRpcRequest(['audit-tail', '5']), {
     method: 'operator.audit.tail',
+    params: { limit: 5 }
+  });
+  assert.deepEqual(buildRpcRequest(['audit-timeline', '5']), {
+    method: 'operator.audit.timeline',
     params: { limit: 5 }
   });
   assert.deepEqual(buildRpcRequest(['emergency-stop', 'stop now']), {
@@ -1431,6 +1507,7 @@ test('buildRpcRequest rejects incomplete commands with usage error', () => {
   assert.throws(() => buildRpcRequest(['approval-run']), /Usage:/);
   assert.throws(() => buildRpcRequest(['full-auto-start']), /Usage:/);
   assert.throws(() => buildRpcRequest(['audit-tail', 'nope']), /Usage:/);
+  assert.throws(() => buildRpcRequest(['audit-timeline', 'nope']), /Usage:/);
   assert.throws(() => buildRpcRequest(['wat']), /Usage:/);
 });
 

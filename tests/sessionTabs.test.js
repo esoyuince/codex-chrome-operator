@@ -450,6 +450,96 @@ test('active-tab page.batch rejects mutating same-origin races before queuing', 
   assert.deepEqual(calls, []);
 });
 
+test('active-tab page.readPage rejects when a same-origin claimed tab is no longer active', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Inbox A',
+    url: 'https://example.com/inbox',
+    ownership: 'agent',
+    active: false,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  session.updateActiveTab({
+    id: 8,
+    title: 'Inbox B',
+    url: 'https://example.com/inbox',
+    status: 'complete'
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    return { ok: true, result: { pageContent: 'wrong active tab text' } };
+  };
+
+  const readPage = await session.handleRpc({
+    id: 'same-origin-read-race',
+    method: 'page.readPage',
+    params: {
+      origin: 'https://example.com',
+      filter: 'interactive'
+    }
+  });
+
+  assert.equal(readPage.ok, false);
+  assert.equal(readPage.error.code, 'TAB_MISMATCH');
+  assert.equal(readPage.error.expectedTabId, 7);
+  assert.equal(readPage.error.activeTabId, 8);
+  assert.deepEqual(calls, []);
+});
+
+test('active-tab page.observe rejects when a same-origin claimed tab is no longer active', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Dashboard A',
+    url: 'https://example.com/dashboard',
+    ownership: 'agent',
+    active: false,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  session.updateActiveTab({
+    id: 8,
+    title: 'Dashboard B',
+    url: 'https://example.com/dashboard',
+    status: 'complete'
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    return { ok: true, result: { title: 'Wrong active dashboard', elements: [] } };
+  };
+
+  const observed = await session.handleRpc({
+    id: 'same-origin-observe-race',
+    method: 'page.observe',
+    params: {
+      origin: 'https://example.com',
+      mode: 'tiny'
+    }
+  });
+
+  assert.equal(observed.ok, false);
+  assert.equal(observed.error.code, 'TAB_MISMATCH');
+  assert.equal(observed.error.expectedTabId, 7);
+  assert.equal(observed.error.activeTabId, 8);
+  assert.deepEqual(calls, []);
+});
+
 test('active-tab page.click carries an active tab lock for extension-side race checks', async () => {
   const session = makeSession();
   session.updateActiveTab({
@@ -840,6 +930,122 @@ test('session tabs create, list, name, and finalize with validated keep states',
   assert.equal(finalized.ok, true);
   assert.deepEqual(finalized.result.kept, [{ tabId: 11, status: 'deliverable' }]);
   assert.equal(session.status({ detail: 'compact' }).sessionTabs[0].finalizedStatus, 'deliverable');
+});
+
+test('agent-scoped tab leases reject cross-agent runtime access and scoped finalize does not release other agents', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Alpha',
+    url: 'https://example.com/alpha',
+    ownership: 'agent',
+    ownerAgentId: 'agent-alpha',
+    leaseId: 'lease_alpha',
+    active: true,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  session.sessionTabs.set(8, {
+    id: 8,
+    title: 'Beta',
+    url: 'https://example.com/beta',
+    ownership: 'agent',
+    ownerAgentId: 'agent-beta',
+    leaseId: 'lease_beta',
+    active: false,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  session.sessionTabs.set(9, {
+    id: 9,
+    title: 'Unowned',
+    url: 'https://example.com/unowned',
+    ownership: 'agent',
+    ownerAgentId: null,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    if (method === 'operator.tabs.finalize') {
+      return {
+        ok: true,
+        result: {
+          kept: params.keep,
+          released: [],
+          closed: [9]
+        }
+      };
+    }
+    return {
+      ok: true,
+      result: { pageContent: 'wrong agent read should not queue' }
+    };
+  };
+
+  const betaReadAlpha = await session.handleRpc({
+    id: 'beta-read-alpha',
+    method: 'operator.runtime.tab.readPage',
+    params: { agentId: 'agent-beta', tabId: 7, filter: 'interactive' }
+  });
+  assert.equal(betaReadAlpha.ok, false);
+  assert.equal(betaReadAlpha.error.code, ERROR_CODES.TAB_MISMATCH);
+  assert.equal(betaReadAlpha.error.reason, 'agent-lease-mismatch');
+  assert.deepEqual(calls, []);
+
+  const alphaKeepBeta = await session.handleRpc({
+    id: 'alpha-keep-beta',
+    method: 'operator.tabs.finalize',
+    params: {
+      agentId: 'agent-alpha',
+      keep: [{ tabId: 8, status: 'deliverable' }]
+    }
+  });
+  assert.equal(alphaKeepBeta.ok, false);
+  assert.equal(alphaKeepBeta.error.code, ERROR_CODES.TAB_MISMATCH);
+  assert.equal(alphaKeepBeta.error.reason, 'agent-lease-mismatch');
+  assert.deepEqual(calls, []);
+
+  const alphaFinalize = await session.handleRpc({
+    id: 'alpha-finalize',
+    method: 'operator.tabs.finalize',
+    params: {
+      agentId: 'agent-alpha',
+      keep: [{ tabId: 7, status: 'deliverable' }]
+    }
+  });
+  assert.equal(alphaFinalize.ok, true);
+  assert.deepEqual(calls, [{
+    method: 'operator.tabs.finalize',
+    params: {
+      agentId: 'agent-alpha',
+      keep: [{ tabId: 7, status: 'deliverable' }]
+    }
+  }]);
+  assert.deepEqual(session.listSessionTabRecords().map((tab) => ({
+    id: tab.id,
+    ownerAgentId: tab.ownerAgentId,
+    finalizedStatus: tab.finalizedStatus
+  })), [{
+    id: 7,
+    ownerAgentId: 'agent-alpha',
+    finalizedStatus: 'deliverable'
+  }, {
+    id: 8,
+    ownerAgentId: 'agent-beta',
+    finalizedStatus: null
+  }, {
+    id: 9,
+    ownerAgentId: null,
+    finalizedStatus: null
+  }]);
 });
 
 test('finalize removes closed and released tabs from daemon session state', async () => {
@@ -1328,6 +1534,290 @@ test('runtime tab commands route through session-owned tabs and fail closed for 
     'operator.runtime.tab.locator'
   ]);
   assert.equal(calls[2].params.postActionVerifyDelayMs, 3000);
+});
+
+test('runtime tab reads use per-tab warm cache without same-origin bleed', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Alpha',
+    url: 'https://example.com/alpha',
+    ownership: 'agent',
+    active: false,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  session.sessionTabs.set(8, {
+    id: 8,
+    title: 'Beta',
+    url: 'https://example.com/beta',
+    ownership: 'agent',
+    active: true,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+
+  for (const tab of [
+    { id: 7, url: 'https://example.com/alpha', title: 'Alpha', state: 'alpha_state', text: 'Alpha cached text [el_alpha_0]' },
+    { id: 8, url: 'https://example.com/beta', title: 'Beta', state: 'beta_state', text: 'Beta cached text [el_beta_0]' }
+  ]) {
+    const warmed = await session.handleRpc({
+      id: `warm-${tab.id}`,
+      method: 'extension.activeTabWarmup',
+      params: {
+        activeTab: {
+          id: tab.id,
+          windowId: 1,
+          url: tab.url,
+          title: tab.title,
+          status: 'complete'
+        },
+        warmup: {
+          ok: true,
+          source: 'unit-warmup',
+          observation: {
+            origin: 'https://example.com',
+            url: tab.url,
+            title: tab.title,
+            observationMode: 'tiny',
+            pageStateId: tab.state,
+            elements: [{ handle: `el_${tab.state}_0`, label: tab.title }]
+          },
+          readPage: {
+            origin: 'https://example.com',
+            url: tab.url,
+            title: tab.title,
+            pageStateId: tab.state,
+            pageContent: tab.text,
+            handles: [{ handle: `el_${tab.state}_0`, label: tab.title }]
+          }
+        }
+      }
+    });
+    assert.equal(warmed.ok, true);
+  }
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    return {
+      ok: false,
+      error: {
+        code: 'UNEXPECTED_QUEUE',
+        message: 'Per-tab warm cache should satisfy runtime tab reads.'
+      }
+    };
+  };
+
+  const alphaRead = await session.handleRpc({
+    id: 'alpha-read',
+    method: 'operator.runtime.tab.readPage',
+    params: { tabId: 7, filter: 'interactive', maxChars: 1000 }
+  });
+  const betaRead = await session.handleRpc({
+    id: 'beta-read',
+    method: 'operator.runtime.tab.readPage',
+    params: { tabId: 8, filter: 'interactive', maxChars: 1000 }
+  });
+  const alphaObserve = await session.handleRpc({
+    id: 'alpha-observe',
+    method: 'operator.runtime.tab.observe',
+    params: { tabId: 7, mode: 'tiny' }
+  });
+  const betaObserve = await session.handleRpc({
+    id: 'beta-observe',
+    method: 'operator.runtime.tab.observe',
+    params: { tabId: 8, mode: 'tiny' }
+  });
+
+  assert.equal(alphaRead.ok, true);
+  assert.equal(alphaRead.result.pageContent, 'Alpha cached text [el_alpha_0]');
+  assert.equal(alphaRead.result.warmCache.tabId, 7);
+  assert.equal(betaRead.ok, true);
+  assert.equal(betaRead.result.pageContent, 'Beta cached text [el_beta_0]');
+  assert.equal(betaRead.result.warmCache.tabId, 8);
+  assert.equal(alphaObserve.ok, true);
+  assert.equal(alphaObserve.result.title, 'Alpha');
+  assert.equal(alphaObserve.result.warmCache.tabId, 7);
+  assert.equal(betaObserve.ok, true);
+  assert.equal(betaObserve.result.title, 'Beta');
+  assert.equal(betaObserve.result.warmCache.tabId, 8);
+  assert.deepEqual(calls, []);
+});
+
+test('same-tab extension commands are mutexed until the previous response is delivered', async () => {
+  const session = makeSession();
+
+  const first = session.enqueueExtensionCommand('operator.runtime.tab.observe', { tabId: 7 });
+  const second = session.enqueueExtensionCommand('operator.runtime.tab.readPage', { tabId: 7 });
+
+  const firstPoll = await session.handleRpc({
+    id: 'poll-1',
+    method: 'bridge.poll',
+    params: {}
+  });
+  assert.equal(firstPoll.ok, true);
+  assert.equal(firstPoll.result.command.method, 'operator.runtime.tab.observe');
+
+  const emptyPoll = await session.handleRpc({
+    id: 'poll-empty',
+    method: 'bridge.poll',
+    params: {}
+  });
+  assert.equal(emptyPoll.ok, true);
+  assert.equal(emptyPoll.result.command, null);
+
+  const firstDelivery = await session.handleRpc({
+    id: 'deliver-1',
+    method: 'bridge.deliver',
+    params: {
+      commandId: firstPoll.result.command.commandId,
+      connectionId: 'conn_test',
+      response: { ok: true, result: { name: 'first' } }
+    }
+  });
+  assert.equal(firstDelivery.ok, true);
+  assert.deepEqual(await first, { ok: true, result: { name: 'first' } });
+
+  const secondPoll = await session.handleRpc({
+    id: 'poll-2',
+    method: 'bridge.poll',
+    params: {}
+  });
+  assert.equal(secondPoll.ok, true);
+  assert.equal(secondPoll.result.command.method, 'operator.runtime.tab.readPage');
+
+  const secondDelivery = await session.handleRpc({
+    id: 'deliver-2',
+    method: 'bridge.deliver',
+    params: {
+      commandId: secondPoll.result.command.commandId,
+      connectionId: 'conn_test',
+      response: { ok: true, result: { name: 'second' } }
+    }
+  });
+  assert.equal(secondDelivery.ok, true);
+  assert.deepEqual(await second, { ok: true, result: { name: 'second' } });
+});
+
+test('runtime tab locator accepts handle actions without depending on the active tab', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Example',
+    url: 'https://example.com/app',
+    ownership: 'agent',
+    active: false,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  session.updateActiveTab({
+    id: 8,
+    title: 'Other Example',
+    url: 'https://example.com/app',
+    status: 'complete'
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    return { ok: true, result: { action: 'clicked' } };
+  };
+
+  const clicked = await session.handleRpc({
+    id: 'runtime-handle-click',
+    method: 'operator.runtime.tab.locator',
+    params: {
+      tabId: 7,
+      handle: 'el_state_0',
+      action: 'click',
+      postActionSnapshot: 'delta'
+    }
+  });
+
+  assert.equal(clicked.ok, true);
+  assert.deepEqual(calls, [{
+    method: 'operator.runtime.tab.locator',
+    params: {
+      tabId: 7,
+      handle: 'el_state_0',
+      action: 'click',
+      postActionSnapshot: 'delta'
+    }
+  }]);
+});
+
+test('runtime tab batch routes through a session-owned tab when the same-origin active tab differs', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Claimed Example',
+    url: 'https://example.com/app',
+    ownership: 'agent',
+    active: false,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  session.updateActiveTab({
+    id: 8,
+    title: 'Unclaimed Example',
+    url: 'https://example.com/app',
+    status: 'complete'
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    return {
+      ok: true,
+      result: {
+        results: [{ ok: true, result: { action: 'clicked' } }],
+        stoppedOnError: false
+      }
+    };
+  };
+
+  const batched = await session.handleRpc({
+    id: 'runtime-tab-batch',
+    method: 'operator.runtime.tab.batch',
+    params: {
+      tabId: 7,
+      stopOnError: true,
+      actions: [{
+        action: 'click',
+        handle: 'el_state_0'
+      }]
+    }
+  });
+
+  assert.equal(batched.ok, true);
+  assert.deepEqual(calls, [{
+    method: 'operator.runtime.tab.batch',
+    params: {
+      tabId: 7,
+      origin: 'https://example.com',
+      stopOnError: true,
+      actions: [{
+        action: 'click',
+        handle: 'el_state_0'
+      }]
+    }
+  }]);
 });
 
 test('runtime tab locator carries relaxed policy when guarded actions are disabled', async () => {

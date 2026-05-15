@@ -322,6 +322,10 @@ function pickDefined(input, fields) {
   );
 }
 
+function normalizeAgentId(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
 function observeOptions(input) {
   return pickDefined(input, [
     'mode',
@@ -349,6 +353,17 @@ function postActionSnapshotOptions(input) {
     'targetContract',
     'verify'
   ]);
+}
+
+function runtimeHandleActionParams(input, action, extras = {}) {
+  return {
+    ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+    tabId: input.tabId,
+    handle: input.handle,
+    action,
+    ...extras,
+    ...postActionSnapshotOptions(input)
+  };
 }
 
 function visualObserveOptions(input) {
@@ -380,6 +395,13 @@ class CodexChromeToolAdapter {
     this.prepareOriginFn = prepareOriginFn;
     this.profileDoctorFn = profileDoctorFn;
     this.profileOnboardFn = profileOnboardFn;
+    this.agentId = normalizeAgentId(this.settings.agentId) ||
+      normalizeAgentId(process.env.CODEX_CHROME_OPERATOR_AGENT_ID);
+  }
+
+  agentContext(input = {}) {
+    const agentId = normalizeAgentId(input.agentId) || this.agentId;
+    return agentId ? { agentId } : {};
   }
 
   async executeTool({ toolName, input = {} }) {
@@ -428,7 +450,10 @@ class CodexChromeToolAdapter {
         });
         break;
       case 'codex_chrome_reopen_closed_tab':
-        response = await this.sendRpc('operator.sessions.reopenClosedTab', pickDefined(input, ['sessionId', 'claim']));
+        response = await this.sendRpc('operator.sessions.reopenClosedTab', {
+          ...this.agentContext(input),
+          ...pickDefined(input, ['sessionId', 'claim'])
+        });
         break;
       case 'codex_chrome_download_wait':
         response = await this.sendRpc('operator.downloads.wait', pickDefined(input, [
@@ -446,23 +471,29 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_claim_tab':
         response = await this.sendRpc('operator.tabs.claim', {
+          ...this.agentContext(input),
           tabId: input.tabId
         });
         break;
       case 'codex_chrome_session_tabs':
-        response = await this.sendRpc('operator.tabs.listSession', {});
+        response = await this.sendRpc('operator.tabs.listSession', this.agentContext(input));
         break;
       case 'codex_chrome_tab_focus':
-        response = await this.sendRpc('operator.tabs.focus', { tabId: input.tabId });
+        response = await this.sendRpc('operator.tabs.focus', {
+          ...this.agentContext(input),
+          tabId: input.tabId
+        });
         break;
       case 'codex_chrome_tab_pin':
         response = await this.sendRpc('operator.tabs.pin', {
+          ...this.agentContext(input),
           tabId: input.tabId,
           pinned: input.pinned
         });
         break;
       case 'codex_chrome_tab_move':
         response = await this.sendRpc('operator.tabs.move', {
+          ...this.agentContext(input),
           tabId: input.tabId,
           index: input.index,
           ...pickDefined(input, ['windowId'])
@@ -475,7 +506,7 @@ class CodexChromeToolAdapter {
         });
         break;
       case 'codex_chrome_new_tab':
-        response = await this.sendRpc('operator.tabs.create', {});
+        response = await this.sendRpc('operator.tabs.create', this.agentContext(input));
         break;
       case 'codex_chrome_name_session':
         response = await this.sendRpc('operator.session.name', {
@@ -484,6 +515,7 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_finalize_tabs':
         response = await this.sendRpc('operator.tabs.finalize', {
+          ...this.agentContext(input),
           keep: input.keep.map((entry) => ({ ...entry }))
         });
         break;
@@ -496,8 +528,34 @@ class CodexChromeToolAdapter {
           'purchaseApprovalsEnabled'
         ]));
         break;
+      case 'codex_chrome_audit_timeline':
+        response = await this.sendRpc('operator.audit.timeline', pickDefined(input, ['limit']));
+        break;
+      case 'codex_chrome_chat_watcher_start':
+        response = await this.sendRpc('operator.chatWatcher.start', {
+          ...this.agentContext(input),
+          tabId: input.tabId,
+          origin: input.origin,
+          unreadSelector: input.unreadSelector,
+          ...pickDefined(input, ['label', 'intervalMs', 'screenshotOnUnread'])
+        });
+        break;
+      case 'codex_chrome_chat_watcher_status':
+        response = await this.sendRpc('operator.chatWatcher.status', pickDefined(input, ['limit']));
+        break;
+      case 'codex_chrome_chat_watcher_poll':
+        response = await this.sendRpc('operator.chatWatcher.poll', {
+          watcherId: input.watcherId
+        });
+        break;
+      case 'codex_chrome_chat_watcher_control':
+        response = await this.sendRpc(`operator.chatWatcher.${input.action}`, {
+          watcherId: input.watcherId
+        });
+        break;
       case 'codex_chrome_tab_screenshot':
         response = await this.sendRpc('operator.cdp.execute', {
+          ...this.agentContext(input),
           tabId: input.tabId,
           method: 'Page.captureScreenshot',
           params: pickDefined(input, ['format', 'quality'])
@@ -505,6 +563,7 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_tab_handle_dialog':
         response = await this.sendRpc('operator.cdp.execute', {
+          ...this.agentContext(input),
           tabId: input.tabId,
           method: 'Page.handleJavaScriptDialog',
           params: pickDefined(input, ['accept', 'promptText'])
@@ -512,18 +571,21 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_tab_goto':
         response = await this.sendRpc('operator.runtime.tab.goto', {
+          ...this.agentContext(input),
           tabId: input.tabId,
           url: input.url
         });
         break;
       case 'codex_chrome_tab_observe':
         response = await this.sendRpc('operator.runtime.tab.observe', {
+          ...this.agentContext(input),
           tabId: input.tabId,
           ...observeOptions(input)
         });
         break;
       case 'codex_chrome_tab_read_page':
         response = await this.sendRpc('operator.runtime.tab.readPage', {
+          ...this.agentContext(input),
           tabId: input.tabId,
           ...pickDefined(input, [
             'filter',
@@ -537,12 +599,19 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_tab_locator':
         response = await this.sendRpc('operator.runtime.tab.locator', {
+          ...this.agentContext(input),
           tabId: input.tabId,
           ...pickDefined(input, [
             'selector',
+            'handle',
             'text',
             'action',
             'textValue',
+            'value',
+            'checked',
+            'deltaX',
+            'deltaY',
+            'key',
             'includeFormValues',
             'maxFieldValueChars',
             'postActionSnapshot',
@@ -562,12 +631,14 @@ class CodexChromeToolAdapter {
         break;
       case 'codex_chrome_tab_show_target':
         response = await this.sendRpc('operator.runtime.tab.showTarget', {
+          ...this.agentContext(input),
           tabId: input.tabId,
           ...pickDefined(input, ['handle', 'selector', 'text', 'durationMs'])
         });
         break;
       case 'codex_chrome_tab_operator_indicator':
         response = await this.sendRpc('operator.runtime.tab.indicator', {
+          ...this.agentContext(input),
           tabId: input.tabId,
           ...pickDefined(input, ['active', 'label', 'stopReason'])
         });
@@ -576,14 +647,16 @@ class CodexChromeToolAdapter {
         response = await this.openObserve(input);
         break;
       case 'codex_chrome_observe':
-        response = await this.sendRpc('page.observe', {
-          origin: normalizeOrigin(input.origin),
+        response = await this.sendRpc('operator.runtime.tab.observe', {
+          ...this.agentContext(input),
+          tabId: input.tabId,
           ...observeOptions(input)
         });
         break;
       case 'codex_chrome_read_page':
-        response = await this.sendRpc('page.readPage', {
-          origin: normalizeOrigin(input.origin),
+        response = await this.sendRpc('operator.runtime.tab.readPage', {
+          ...this.agentContext(input),
+          tabId: input.tabId,
           ...pickDefined(input, [
             'filter',
             'depth',
@@ -602,8 +675,9 @@ class CodexChromeToolAdapter {
         });
         break;
       case 'codex_chrome_batch':
-        response = await this.sendRpc('page.batch', {
-          origin: normalizeOrigin(input.origin),
+        response = await this.sendRpc('operator.runtime.tab.batch', {
+          ...this.agentContext(input),
+          tabId: input.tabId,
           actions: input.actions.map((action) => ({ ...action })),
           ...(input.stopOnError === undefined ? {} : { stopOnError: input.stopOnError })
         });
@@ -673,74 +747,71 @@ class CodexChromeToolAdapter {
         });
         break;
       case 'codex_chrome_fill':
-        response = await this.sendRpc('page.fill', {
-          origin: normalizeOrigin(input.origin),
-          handle: input.handle,
-          text: input.text,
-          ...postActionSnapshotOptions(input)
-        });
+        response = await this.sendRpc('operator.runtime.tab.locator', runtimeHandleActionParams({
+          ...input,
+          ...this.agentContext(input)
+        }, 'fill', {
+          textValue: input.text
+        }));
         break;
       case 'codex_chrome_type':
-        response = await this.sendRpc('page.type', {
-          origin: normalizeOrigin(input.origin),
-          handle: input.handle,
-          text: input.text,
-          ...postActionSnapshotOptions(input)
-        });
+        response = await this.sendRpc('operator.runtime.tab.locator', runtimeHandleActionParams({
+          ...input,
+          ...this.agentContext(input)
+        }, 'type', {
+          textValue: input.text
+        }));
         break;
       case 'codex_chrome_clear':
-        response = await this.sendRpc('page.clear', {
-          origin: normalizeOrigin(input.origin),
-          handle: input.handle,
-          ...postActionSnapshotOptions(input)
-        });
+        response = await this.sendRpc('operator.runtime.tab.locator', runtimeHandleActionParams({
+          ...input,
+          ...this.agentContext(input)
+        }, 'clear'));
         break;
       case 'codex_chrome_focus':
-        response = await this.sendRpc('page.focus', {
-          origin: normalizeOrigin(input.origin),
-          handle: input.handle,
-          ...postActionSnapshotOptions(input)
-        });
+        response = await this.sendRpc('operator.runtime.tab.locator', runtimeHandleActionParams({
+          ...input,
+          ...this.agentContext(input)
+        }, 'focus'));
         break;
       case 'codex_chrome_select':
-        response = await this.sendRpc('page.select', {
-          origin: normalizeOrigin(input.origin),
-          handle: input.handle,
-          value: input.value,
-          ...postActionSnapshotOptions(input)
-        });
+        response = await this.sendRpc('operator.runtime.tab.locator', runtimeHandleActionParams({
+          ...input,
+          ...this.agentContext(input)
+        }, 'select', {
+          value: input.value
+        }));
         break;
       case 'codex_chrome_check':
-        response = await this.sendRpc('page.check', {
-          origin: normalizeOrigin(input.origin),
-          handle: input.handle,
-          checked: input.checked,
-          ...postActionSnapshotOptions(input)
-        });
+        response = await this.sendRpc('operator.runtime.tab.locator', runtimeHandleActionParams({
+          ...input,
+          ...this.agentContext(input)
+        }, 'check', {
+          checked: input.checked
+        }));
         break;
       case 'codex_chrome_scroll':
-        response = await this.sendRpc('page.scroll', {
-          origin: normalizeOrigin(input.origin),
-          handle: input.handle,
+        response = await this.sendRpc('operator.runtime.tab.locator', runtimeHandleActionParams({
+          ...input,
+          ...this.agentContext(input)
+        }, 'scroll', {
           deltaX: input.deltaX,
-          deltaY: input.deltaY,
-          ...postActionSnapshotOptions(input)
-        });
+          deltaY: input.deltaY
+        }));
         break;
       case 'codex_chrome_press_key':
-        response = await this.sendRpc('page.pressKey', {
-          origin: normalizeOrigin(input.origin),
-          handle: input.handle,
-          key: input.key,
-          ...postActionSnapshotOptions(input)
-        });
+        response = await this.sendRpc('operator.runtime.tab.locator', runtimeHandleActionParams({
+          ...input,
+          ...this.agentContext(input)
+        }, 'pressKey', {
+          key: input.key
+        }));
         break;
       case 'codex_chrome_click':
-        response = await this.sendRpc('page.click', {
-          origin: normalizeOrigin(input.origin),
-          handle: input.handle,
-          ...postActionSnapshotOptions(input)
-        });
+        response = await this.sendRpc('operator.runtime.tab.locator', runtimeHandleActionParams({
+          ...input,
+          ...this.agentContext(input)
+        }, 'click'));
         break;
       case 'codex_chrome_approvals_list':
         response = await this.sendRpc('operator.approvals.list', {

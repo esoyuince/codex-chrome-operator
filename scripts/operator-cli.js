@@ -36,6 +36,7 @@ function usage() {
   node scripts/operator-cli.js approve <origin>
   node scripts/operator-cli.js revoke <origin>
   node scripts/operator-cli.js audit-tail [limit]
+  node scripts/operator-cli.js audit-timeline [limit]
   node scripts/operator-cli.js screenshots-cleanup [olderThanMs]
   node scripts/operator-cli.js emergency-stop [reason]
   node scripts/operator-cli.js emergency-clear
@@ -169,7 +170,7 @@ function buildRpcRequest(argv) {
     case 'open-observe':
       requireArgs(args, 1);
       return {
-        method: 'page.observe',
+        method: 'operator.runtime.tab.observe',
         params: {
           url: args[0],
           origin: new URL(args[0]).origin,
@@ -253,6 +254,16 @@ function buildRpcRequest(argv) {
       }
       return {
         method: 'operator.audit.tail',
+        params: {
+          limit: args[0] === undefined ? 20 : Number(args[0])
+        }
+      };
+    case 'audit-timeline':
+      if (args[0] !== undefined && !Number.isFinite(Number(args[0]))) {
+        throw usageError();
+      }
+      return {
+        method: 'operator.audit.timeline',
         params: {
           limit: args[0] === undefined ? 20 : Number(args[0])
         }
@@ -1661,27 +1672,51 @@ async function openObserve({
     };
   }
 
-  const sessionTab = await sendRpcFn({
-    baseUrl: settings.baseUrl,
-    token: settings.token,
-    request: {
-      id: `${request.id}_session_tab`,
-      method: 'operator.tabs.create',
-      params: {}
+  let sessionTab = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    sessionTab = await sendRpcFn({
+      baseUrl: settings.baseUrl,
+      token: settings.token,
+      request: {
+        id: attempt === 0 ? `${request.id}_session_tab` : `${request.id}_session_tab_retry_${attempt}`,
+        method: 'operator.tabs.create',
+        params: {}
+      }
+    });
+    if (sessionTab && sessionTab.ok) {
+      break;
     }
-  });
+    const code = sessionTab && sessionTab.error && sessionTab.error.code;
+    if (!['TIMEOUT', 'TAB_CREATE_FAILED'].includes(code)) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  if (!sessionTab || !sessionTab.ok) {
+    return sessionTab;
+  }
+  const tabId = sessionTab.result && sessionTab.result.tab && sessionTab.result.tab.id;
+  if (!Number.isInteger(tabId)) {
+    return {
+      id: request.id,
+      ok: false,
+      error: {
+        code: 'SESSION_TAB_CREATE_FAILED',
+        message: 'open-observe could not create a session-owned tab.',
+        sessionTab
+      }
+    };
+  }
 
   const navigation = await sendRpcFn({
     baseUrl: settings.baseUrl,
     token: settings.token,
     request: {
       id: `${request.id}_navigate`,
-      method: 'page.navigate',
+      method: 'operator.runtime.tab.goto',
       params: {
-        url,
-        origin,
-        timeoutMs: request.params.timeoutMs,
-        pollIntervalMs: request.params.pollIntervalMs
+        tabId,
+        url
       }
     }
   });
@@ -1727,9 +1762,9 @@ async function openObserve({
     token: settings.token,
     request: {
       id: `${request.id}_observe`,
-      method: 'page.observe',
+      method: 'operator.runtime.tab.observe',
       params: {
-        origin,
+        tabId,
         ...(request.params.mode === undefined ? {} : { mode: request.params.mode }),
         ...(request.params.maxActionableHandles === undefined ? {} : {
           maxActionableHandles: request.params.maxActionableHandles
@@ -1755,8 +1790,7 @@ async function openObserve({
       url,
       prepared: prepared.result,
       readiness: waitResponse.result,
-      ...(sessionTab && sessionTab.ok ? { sessionTab: sessionTab.result } : {}),
-      ...(sessionTab && !sessionTab.ok ? { sessionTabWarning: sessionTab.error } : {}),
+      sessionTab: sessionTab.result,
       ...(sessionTabs && sessionTabs.ok ? { sessionTabs: sessionTabs.result.tabs } : {}),
       ...(sessionTabs && !sessionTabs.ok ? { sessionTabsWarning: sessionTabs.error } : {}),
       navigation: navigation.result,

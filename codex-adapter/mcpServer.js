@@ -16,7 +16,7 @@ const {
 
 const DEFAULT_MCP_PROTOCOL_VERSION = '2025-06-18';
 const SERVER_NAME = 'codex-chrome-operator';
-const SERVER_VERSION = '0.2.12';
+const SERVER_VERSION = '0.2.13';
 
 function makeSessionId() {
   return `task_${Date.now()}_${Math.random().toString(16).slice(2)}`;

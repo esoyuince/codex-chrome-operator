@@ -111,6 +111,31 @@ function extractCleanSmokeEvidence(stdout) {
   addDefined(evidence, 'mockCommerceStoppedBeforeCheckout', smoke.mockCommerceStoppedBeforeCheckout);
   addDefined(evidence, 'mockCommerceCheckoutBlocked', smoke.mockCommerceCheckoutBlocked);
   addDefined(evidence, 'mockCommerceExcludedReasons', smoke.mockCommerceExcludedReasons);
+  addDefined(evidence, 'dynamicRuntimeTabTitle', smoke.dynamicRuntimeTabTitle);
+  addDefined(evidence, 'dynamicRuntimeReadContainsControlledValue', smoke.dynamicRuntimeReadContainsControlledValue);
+  addDefined(evidence, 'dynamicRuntimeStaleRecovery', smoke.dynamicRuntimeStaleRecovery);
+  addDefined(evidence, 'dynamicRuntimeClickVerified', smoke.dynamicRuntimeClickVerified);
+  addDefined(evidence, 'dynamicRuntimeDialogOpened', smoke.dynamicRuntimeDialogOpened);
+  addDefined(evidence, 'dynamicRuntimeDialogHandled', smoke.dynamicRuntimeDialogHandled);
+  addDefined(evidence, 'dynamicRuntimeControlledValue', smoke.dynamicRuntimeControlledValue);
+  addDefined(evidence, 'dynamicRuntimeControlledVerified', smoke.dynamicRuntimeControlledVerified);
+  addDefined(evidence, 'dynamicRuntimeScrollY', smoke.dynamicRuntimeScrollY);
+  addDefined(evidence, 'dynamicRuntimeScrolled', smoke.dynamicRuntimeScrolled);
+  addDefined(evidence, 'concurrentTwoTabOk', smoke.concurrentTwoTabOk);
+  if (Array.isArray(smoke.concurrentTwoTabAgents)) {
+    evidence.concurrentTwoTabAgents = smoke.concurrentTwoTabAgents.map((agent) => {
+      const summary = {};
+      addDefined(summary, 'agentId', agent && agent.agentId);
+      addDefined(summary, 'tabId', agent && agent.tabId);
+      addDefined(summary, 'readContainsAgentId', agent && agent.readContainsAgentId);
+      addDefined(summary, 'fillVerified', agent && agent.fillVerified);
+      addDefined(summary, 'clickVerified', agent && agent.clickVerified);
+      addDefined(summary, 'dialogOpened', agent && agent.dialogOpened);
+      addDefined(summary, 'dialogClosed', agent && agent.dialogClosed);
+      addDefined(summary, 'scrolled', agent && agent.scrolled);
+      return summary;
+    }).filter((agent) => Object.keys(agent).length > 0);
+  }
   addDefined(evidence, 'highRiskBlocked', smoke.highRiskBlocked);
   addDefined(evidence, 'highRiskApprovalReplay', smoke.highRiskApprovalReplay);
   addDefined(evidence, 'screenshotCleanupRemoved', smoke.screenshotCleanupRemoved);

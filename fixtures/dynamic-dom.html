@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Operator Dynamic DOM Fixture</title>
+  <style>
+    body {
+      margin: 0;
+      font: 16px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #18202a;
+      background: #f6f8fb;
+    }
+
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 32px 24px 720px;
+    }
+
+    section {
+      margin-block: 22px;
+      padding: 18px;
+      background: #fff;
+      border: 1px solid #d8dee8;
+      border-radius: 6px;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      min-height: 40px;
+      padding: 8px 14px;
+      border: 1px solid #7b8798;
+      border-radius: 5px;
+      color: #101828;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    input {
+      width: min(100%, 420px);
+      min-height: 38px;
+      padding: 7px 10px;
+      border: 1px solid #8c97a8;
+      border-radius: 5px;
+    }
+
+    #status,
+    #controlledState {
+      min-height: 24px;
+      margin-top: 12px;
+      font-weight: 600;
+    }
+
+    #scrollTarget {
+      margin-top: 620px;
+      outline: 2px solid #2563eb;
+      outline-offset: 4px;
+    }
+  </style>
+</head>
+<body>
+  <main id="dynamic-dom-fixture" data-fixture="dynamic-dom">
+    <h1>Dynamic DOM Fixture</h1>
+    <p id="fixtureIntro">Runtime tab tools should survive dynamic page churn.</p>
+    <button id="agentMarker" type="button" data-testid="agent-marker">Agent marker: none</button>
+
+    <section aria-labelledby="actionsTitle">
+      <h2 id="actionsTitle">Reordering action</h2>
+      <div id="dynamic-actions">
+        <button id="dynamicSave" type="button" data-testid="dynamic-save" data-live-target="true">Save dynamic action</button>
+        <button id="secondaryAction" type="button" data-testid="secondary-action">Secondary action</button>
+      </div>
+      <p id="status" role="status">Waiting for runtime action</p>
+    </section>
+
+    <section aria-labelledby="controlledTitle">
+      <h2 id="controlledTitle">Controlled field</h2>
+      <label for="controlledField">Controlled value</label>
+      <input id="controlledField" name="controlledField" data-controlled-field="true" autocomplete="off">
+      <p id="controlledState">Controlled value: empty</p>
+    </section>
+
+    <section aria-labelledby="dialogTitle">
+      <h2 id="dialogTitle">Dialog target</h2>
+      <button id="openDialog" type="button" data-testid="open-dialog">Open runtime dialog</button>
+      <dialog id="dynamicDialog" role="dialog" aria-labelledby="dynamicDialogTitle">
+        <h3 id="dynamicDialogTitle">Runtime dialog opened</h3>
+        <p>The dynamic fixture dialog is open.</p>
+        <button id="dialogClose" type="button" data-testid="dialog-close">Close runtime dialog</button>
+      </dialog>
+    </section>
+
+    <section aria-labelledby="scrollTitle">
+      <h2 id="scrollTitle">Scroll target</h2>
+      <button id="scrollTarget" type="button" data-testid="scroll-target">Scroll verification target</button>
+    </section>
+  </main>
+
+  <script>
+    const actions = document.getElementById('dynamic-actions');
+    const status = document.getElementById('status');
+    const controlledField = document.getElementById('controlledField');
+    const controlledState = document.getElementById('controlledState');
+    const dialog = document.getElementById('dynamicDialog');
+    const agentMarker = document.getElementById('agentMarker');
+    const agentId = new URLSearchParams(location.search).get('agent') || 'none';
+    agentMarker.textContent = `Agent marker: ${agentId}`;
+    document.body.dataset.agentId = agentId;
+
+    function markStatus(text) {
+      status.textContent = text;
+      document.body.dataset.lastStatus = text;
+    }
+
+    function saveDynamicAction() {
+      markStatus('Dynamic action saved');
+    }
+
+    function wireSave(button) {
+      button.addEventListener('click', saveDynamicAction);
+      return button;
+    }
+
+    wireSave(document.getElementById('dynamicSave'));
+
+    controlledField.addEventListener('input', () => {
+      controlledState.textContent = `Controlled value: ${controlledField.value || 'empty'}`;
+      controlledField.dataset.controlledValue = controlledField.value;
+    });
+
+    document.getElementById('openDialog').addEventListener('click', () => {
+      markStatus('Runtime dialog opened');
+      if (typeof dialog.showModal === 'function') {
+        dialog.showModal();
+      } else {
+        dialog.setAttribute('open', '');
+      }
+    });
+
+    document.getElementById('dialogClose').addEventListener('click', () => {
+      markStatus('Dialog closed');
+      if (typeof dialog.close === 'function') {
+        dialog.close();
+      } else {
+        dialog.removeAttribute('open');
+      }
+    });
+
+    window.__codexDynamicSmokeReplaceAction = function replaceDynamicAction() {
+      const replacement = document.createElement('button');
+      replacement.id = 'dynamicSaveRecovered';
+      replacement.type = 'button';
+      replacement.dataset.testid = 'dynamic-save';
+      replacement.dataset.liveTarget = 'true';
+      replacement.textContent = 'Save dynamic action';
+
+      const duplicate = document.createElement('button');
+      duplicate.id = 'dynamicSaveShadow';
+      duplicate.type = 'button';
+      duplicate.dataset.testid = 'dynamic-shadow';
+      duplicate.textContent = 'Shadow action';
+
+      actions.replaceChildren(wireSave(replacement), duplicate);
+      markStatus('Action target replaced');
+      return true;
+    };
+  </script>
+</body>
+</html>

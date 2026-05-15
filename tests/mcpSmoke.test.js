@@ -22,7 +22,7 @@ test('buildMcpSmokeMessages sends initialize then tools/list over stdio JSON-RPC
         protocolVersion: '2025-06-18',
         clientInfo: {
           name: 'codex-chrome-operator-mcp-smoke',
-          version: '0.2.12'
+          version: '0.2.13'
         }
       }
     },
@@ -57,7 +57,7 @@ test('buildMcpSmokeReport summarizes required adapter tool availability', () => 
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_policy_status'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_policy_update'));
 
-  const toolSchemaVersion = '2026-05-01.m1';
+  const toolSchemaVersion = '2026-05-15.session-tabs';
   const responses = [
     {
       jsonrpc: '2.0',
@@ -66,7 +66,7 @@ test('buildMcpSmokeReport summarizes required adapter tool availability', () => 
         protocolVersion: '2025-06-18',
         serverInfo: {
           name: 'codex-chrome-operator',
-          version: '0.2.12'
+          version: '0.2.13'
         },
         adapterProtocolVersion: '1.0',
         toolDefinitionsHash: 'a'.repeat(64)
@@ -95,7 +95,7 @@ test('buildMcpSmokeReport summarizes required adapter tool availability', () => 
   assert.deepEqual(buildMcpSmokeReport(responses), {
     ok: true,
     serverName: 'codex-chrome-operator',
-    serverVersion: '0.2.12',
+    serverVersion: '0.2.13',
     protocolVersion: '2025-06-18',
     adapterProtocolVersion: '1.0',
     toolDefinitionsHash: 'a'.repeat(64),
@@ -124,7 +124,7 @@ test('buildMcpSmokeReport fails closed when adapter contract proof is not pinned
         protocolVersion: '2025-06-18',
         serverInfo: {
           name: 'codex-chrome-operator',
-          version: '0.2.12'
+          version: '0.2.13'
         },
         adapterProtocolVersion: '1.0'
       }

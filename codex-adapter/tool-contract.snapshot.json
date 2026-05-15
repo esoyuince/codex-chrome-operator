@@ -1,8 +1,8 @@
 {
   "adapterProtocolVersion": "1.0",
-  "toolSchemaVersion": "2026-05-01.m1",
-  "toolDefinitionsHash": "4f1b9dbfcd69b6bba01922461a2d6f485e9680077b4edab6f22b5026c3dad0b9",
-  "toolCount": 60,
+  "toolSchemaVersion": "2026-05-15.session-tabs",
+  "toolDefinitionsHash": "39c66dcf7ef5d6efb35b47c97a94dee3450f60355dc3acf83125f824f827bf3e",
+  "toolCount": 65,
   "toolNames": [
     "codex_chrome_status",
     "codex_chrome_prepare_origin",
@@ -27,6 +27,11 @@
     "codex_chrome_finalize_tabs",
     "codex_chrome_policy_status",
     "codex_chrome_policy_update",
+    "codex_chrome_audit_timeline",
+    "codex_chrome_chat_watcher_start",
+    "codex_chrome_chat_watcher_status",
+    "codex_chrome_chat_watcher_poll",
+    "codex_chrome_chat_watcher_control",
     "codex_chrome_tab_screenshot",
     "codex_chrome_tab_handle_dialog",
     "codex_chrome_tab_goto",
@@ -259,6 +264,9 @@
           },
           "claim": {
             "type": "boolean"
+          },
+          "agentId": {
+            "type": "string"
           }
         },
         "required": []
@@ -330,6 +338,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "tabId": {
             "type": "number",
             "minimum": 0
@@ -349,7 +360,11 @@
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
-        "properties": {},
+        "properties": {
+          "agentId": {
+            "type": "string"
+          }
+        },
         "required": []
       },
       "outputContract": {
@@ -363,6 +378,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "tabId": {
             "type": "number",
             "minimum": 0
@@ -383,6 +401,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "tabId": {
             "type": "number",
             "minimum": 0
@@ -407,6 +428,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "tabId": {
             "type": "number",
             "minimum": 0
@@ -459,7 +483,11 @@
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
-        "properties": {},
+        "properties": {
+          "agentId": {
+            "type": "string"
+          }
+        },
         "required": []
       },
       "outputContract": {
@@ -492,6 +520,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "keep": {
             "type": "array",
             "items": {
@@ -560,11 +591,138 @@
       }
     },
     {
+      "name": "codex_chrome_audit_timeline",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_chat_watcher_start",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "origin": {
+            "type": "string"
+          },
+          "unreadSelector": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "intervalMs": {
+            "type": "number",
+            "minimum": 5000
+          },
+          "screenshotOnUnread": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tabId",
+          "origin",
+          "unreadSelector"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_chat_watcher_status",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": []
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_chat_watcher_poll",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "watcherId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "watcherId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_chat_watcher_control",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "watcherId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "pause",
+              "resume",
+              "stop"
+            ]
+          }
+        },
+        "required": [
+          "watcherId",
+          "action"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
       "name": "codex_chrome_tab_screenshot",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "tabId": {
             "type": "number",
             "minimum": 0
@@ -597,6 +755,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "tabId": {
             "type": "number",
             "minimum": 0
@@ -624,6 +785,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "tabId": {
             "type": "number",
             "minimum": 0
@@ -649,6 +813,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "tabId": {
             "type": "number",
             "minimum": 0
@@ -698,6 +865,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "tabId": {
             "type": "number",
             "minimum": 0
@@ -739,9 +909,15 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "tabId": {
             "type": "number",
             "minimum": 0
+          },
+          "handle": {
+            "type": "string"
           },
           "selector": {
             "type": "string"
@@ -757,10 +933,29 @@
               "type",
               "fill",
               "focus",
-              "clear"
+              "clear",
+              "select",
+              "check",
+              "scroll",
+              "pressKey"
             ]
           },
           "textValue": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "checked": {
+            "type": "boolean"
+          },
+          "deltaX": {
+            "type": "number"
+          },
+          "deltaY": {
+            "type": "number"
+          },
+          "key": {
             "type": "string"
           },
           "includeFormValues": {
@@ -1053,6 +1248,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "tabId": {
             "type": "number",
             "minimum": 0
@@ -1086,6 +1284,9 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "agentId": {
+            "type": "string"
+          },
           "tabId": {
             "type": "number",
             "minimum": 0
@@ -1172,8 +1373,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "agentId": {
             "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
           },
           "mode": {
             "type": "string",
@@ -1206,7 +1411,7 @@
           }
         },
         "required": [
-          "origin"
+          "tabId"
         ]
       },
       "outputContract": {
@@ -1220,8 +1425,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "agentId": {
             "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
           },
           "filter": {
             "type": "string"
@@ -1246,7 +1455,7 @@
           }
         },
         "required": [
-          "origin"
+          "tabId"
         ]
       },
       "outputContract": {
@@ -1287,8 +1496,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "agentId": {
             "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
           },
           "actions": {
             "type": "array",
@@ -1627,7 +1840,7 @@
           }
         },
         "required": [
-          "origin",
+          "tabId",
           "actions"
         ]
       },
@@ -1992,8 +2205,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "agentId": {
             "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
           },
           "handle": {
             "type": "string"
@@ -2270,7 +2487,7 @@
           }
         },
         "required": [
-          "origin",
+          "tabId",
           "handle",
           "text"
         ]
@@ -2286,8 +2503,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "agentId": {
             "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
           },
           "handle": {
             "type": "string"
@@ -2564,7 +2785,7 @@
           }
         },
         "required": [
-          "origin",
+          "tabId",
           "handle",
           "text"
         ]
@@ -2580,8 +2801,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "agentId": {
             "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
           },
           "handle": {
             "type": "string"
@@ -2855,7 +3080,7 @@
           }
         },
         "required": [
-          "origin",
+          "tabId",
           "handle"
         ]
       },
@@ -2870,8 +3095,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "agentId": {
             "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
           },
           "handle": {
             "type": "string"
@@ -3145,7 +3374,7 @@
           }
         },
         "required": [
-          "origin",
+          "tabId",
           "handle"
         ]
       },
@@ -3160,8 +3389,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "agentId": {
             "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
           },
           "handle": {
             "type": "string"
@@ -3438,7 +3671,7 @@
           }
         },
         "required": [
-          "origin",
+          "tabId",
           "handle",
           "value"
         ]
@@ -3454,8 +3687,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "agentId": {
             "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
           },
           "handle": {
             "type": "string"
@@ -3732,7 +3969,7 @@
           }
         },
         "required": [
-          "origin",
+          "tabId",
           "handle",
           "checked"
         ]
@@ -3748,8 +3985,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "agentId": {
             "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
           },
           "handle": {
             "type": "string"
@@ -4029,7 +4270,7 @@
           }
         },
         "required": [
-          "origin",
+          "tabId",
           "handle",
           "deltaX",
           "deltaY"
@@ -4046,8 +4287,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "agentId": {
             "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
           },
           "handle": {
             "type": "string"
@@ -4324,7 +4569,7 @@
           }
         },
         "required": [
-          "origin",
+          "tabId",
           "handle",
           "key"
         ]
@@ -4340,8 +4585,12 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "agentId": {
             "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
           },
           "handle": {
             "type": "string"
@@ -4615,7 +4864,7 @@
           }
         },
         "required": [
-          "origin",
+          "tabId",
           "handle"
         ]
       },

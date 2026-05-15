@@ -88,10 +88,12 @@ test('side panel exposes action permissions, purchase approval, and blocked-site
   assert.match(html, /session-tabs-count/);
   assert.match(html, /last-command/);
   assert.match(html, /download-watch-status/);
+  assert.match(html, /chat-watch-status/);
   assert.match(html, /token-total/);
   assert.match(html, /token-input/);
   assert.match(html, /token-output/);
   assert.match(js, /renderTokenUsage/);
+  assert.match(js, /renderChatWatcher/);
   assert.match(html, /pending-approvals/);
   assert.match(js, /operator\.blockedOriginsStatus/);
   assert.match(js, /operator\.daemonStatus/);
@@ -719,6 +721,7 @@ test('background exposes guarded session tab commands for hybrid operator mode',
   assert.match(background, /operator\.session\.name/);
   assert.match(background, /isClaimableUserTab/);
   assert.match(background, /chrome\.tabs\.group/);
+  assert.match(background, /boundedChromePromise/);
   assert.match(background, /Codex Deliverables/);
   assert.match(background, /originMetadata/);
   assert.match(background, /syncSessionGroupMetadataFromChrome/);
@@ -726,6 +729,39 @@ test('background exposes guarded session tab commands for hybrid operator mode',
   assert.match(background, /TAB_NOT_CLAIMABLE/);
   assert.match(background, /favIconUrl/);
   assert.match(background, /lastAccessed/);
+});
+
+test('background bounds session tab creation so native RPCs do not hang indefinitely', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const helperStart = background.indexOf('async function createSessionChromeTab');
+  const helperEnd = background.indexOf('async function handleSessionTabCommand', helperStart);
+  const helperBlock = background.slice(helperStart, helperEnd);
+  const createStart = background.indexOf("if (method === 'operator.tabs.create')");
+  const createEnd = background.indexOf("if (method === 'operator.tabs.listSession')", createStart);
+  const createBlock = background.slice(createStart, createEnd);
+
+  assert.ok(helperStart !== -1 && helperEnd !== -1, 'bounded tab creation helper should be present');
+  assert.match(helperBlock, /boundedChromePromise\(chrome\.tabs\.create/);
+  assert.match(createBlock, /createSessionChromeTab\(\)/);
+  assert.match(createBlock, /if \(!tab\)/);
+  assert.match(createBlock, /TAB_CREATE_FAILED/);
+});
+
+test('background bounds session tab metadata refresh calls', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const groupStart = background.indexOf('async function tabGroupTitlesById');
+  const groupEnd = background.indexOf('function userTabInfo', groupStart);
+  const groupBlock = background.slice(groupStart, groupEnd);
+  const syncStart = background.indexOf('async function syncSessionGroupMetadataFromChrome');
+  const syncEnd = background.indexOf('async function refreshSessionTabsFromChrome', syncStart);
+  const syncBlock = background.slice(syncStart, syncEnd);
+  const refreshStart = background.indexOf('async function refreshSessionTabsFromChrome');
+  const refreshEnd = background.indexOf('async function createSessionChromeTab', refreshStart);
+  const refreshBlock = background.slice(refreshStart, refreshEnd);
+
+  assert.match(groupBlock, /boundedChromePromise\(chrome\.tabGroups\.get/);
+  assert.match(syncBlock, /boundedChromePromise\(chrome\.tabs\.get/);
+  assert.match(refreshBlock, /boundedChromePromise\(chrome\.tabs\.get/);
 });
 
 test('background exposes browser context, download wait, session recovery, and target cue handlers', () => {
@@ -803,8 +839,35 @@ test('background forwards targetContract into debugger stale-handle recovery tar
   assert.ok(helperStart !== -1 && helperEnd !== -1, 'targetForActionParams helper should be present');
   assert.match(helperBlock, /targetContract/);
   assert.match(helperBlock, /accessibleName/);
+  assert.match(helperBlock, /dataRisk/);
+  assert.match(helperBlock, /data\.risk/);
   assert.match(actionBlock, /targetForActionParams\(params\)/);
   assert.match(actionBlock, /target:\s*requestedTarget/);
+});
+
+test('background lets runtime handle locators use targetContract for stale recovery', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const helperStart = background.indexOf('async function resolveRuntimeTabLocator');
+  const helperEnd = background.indexOf('async function dispatchRuntimeTabLocatorAction', helperStart);
+  const helperBlock = background.slice(helperStart, helperEnd);
+
+  assert.ok(helperStart !== -1 && helperEnd !== -1, 'runtime locator resolver should be present');
+  assert.match(helperBlock, /targetForActionParams\(params\)/);
+  assert.match(helperBlock, /targetContract/);
+  assert.match(helperBlock, /STALE_HANDLE/);
+});
+
+test('background blocks debugger actions from a supplied high-risk target before dispatch', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const helperStart = background.indexOf('async function preflightDebuggerAction');
+  const helperEnd = background.indexOf('async function handleOperatorCommand', helperStart);
+  const helperBlock = background.slice(helperStart, helperEnd);
+
+  assert.ok(helperStart !== -1 && helperEnd !== -1, 'debugger preflight helper should be present');
+  assert.match(helperBlock, /requestedRisk/);
+  assert.match(helperBlock, /params\.target[\s\S]*CodexActionPolicy\.classifyActionRisk/);
+  assert.match(helperBlock, /requestedRisk[\s\S]*return \{ ok: false, error: requestedRisk \}/);
+  assert.match(helperBlock, /effectiveRisk/);
 });
 
 test('background exposes guarded CDP commands without arbitrary runtime evaluation', () => {

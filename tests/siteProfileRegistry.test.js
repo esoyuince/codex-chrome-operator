@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const {
@@ -67,4 +69,43 @@ test('assertCartProfileAllowed rejects unknown profiles and origin mismatches', 
   });
   assert.equal(mismatch.ok, false);
   assert.equal(mismatch.error.reason, 'ORIGIN_NOT_ALLOWED');
+});
+
+test('loadSiteProfiles rejects cart profiles without terminal-stop evidence contracts', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-site-profile-'));
+  const profile = {
+    id: 'broken.profile',
+    kind: 'ecommerce-cart-preparation',
+    displayName: 'Broken Profile',
+    enabled: true,
+    realSiteEnabled: false,
+    origins: ['https://example.com'],
+    originPatterns: [],
+    riskPolicy: {
+      allowAddToCart: true,
+      blockedActionKinds: ['checkout', 'payment', 'order-placement'],
+      stopAfter: 'checkout'
+    },
+    evidenceRequirements: ['product-card-extraction']
+  };
+  fs.writeFileSync(path.join(dir, 'broken.profile.json'), JSON.stringify(profile, null, 2));
+
+  assert.throws(
+    () => loadSiteProfiles({ profileDir: dir }),
+    /riskPolicy\.blockedActionKinds must include address-change/
+  );
+
+  profile.riskPolicy.blockedActionKinds.push('address-change');
+  fs.writeFileSync(path.join(dir, 'broken.profile.json'), JSON.stringify(profile, null, 2));
+  assert.throws(
+    () => loadSiteProfiles({ profileDir: dir }),
+    /riskPolicy\.stopAfter must be cart-verification/
+  );
+
+  profile.riskPolicy.stopAfter = 'cart-verification';
+  fs.writeFileSync(path.join(dir, 'broken.profile.json'), JSON.stringify(profile, null, 2));
+  assert.throws(
+    () => loadSiteProfiles({ profileDir: dir }),
+    /evidenceRequirements must include detail-recheck/
+  );
 });

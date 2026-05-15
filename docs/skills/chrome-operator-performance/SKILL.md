@@ -70,10 +70,10 @@ status/readiness -> open or observe target -> verify target -> draft action -> a
 
 Use the MCP surface by intent, and keep payloads small:
 
-- Status and policy: `codex_chrome_status`, `codex_chrome_approvals_list`, policy tools when exposed.
+- Status, policy, audit, and watcher diagnostics: `codex_chrome_status`, `codex_chrome_approvals_list`, policy tools, `codex_chrome_audit_timeline`, and chat watcher tools when exposed. The audit timeline is redacted local metadata; use it for debugging flow, not for reading page content. Chat watchers are observe-only, allowlisted, and session-tab leased.
 - Session tabs: `codex_chrome_session_tabs`, `codex_chrome_claim_tab`, `codex_chrome_tab_focus`, `codex_chrome_new_tab`, `codex_chrome_finalize_tabs`, `codex_chrome_name_session`. Use tab-scoped tools for live smoke so grouped or background tabs do not confuse the run.
-- Observation: `codex_chrome_tab_observe`, `codex_chrome_tab_read_page`, `codex_chrome_visual_observe`. Prefer `tiny` or `medium`, `summaryMaxChars`, `maxActionableHandles`, and targeted `read_page` filters.
-- Narrow actions: prefer `codex_chrome_tab_locator` for selector or text-based resolve/action in session tabs. Use direct handle tools (`codex_chrome_fill`, `codex_chrome_type`, `codex_chrome_clear`, `codex_chrome_click`, `codex_chrome_focus`, `codex_chrome_check`) when a fresh handle is already proven.
+- Observation: `codex_chrome_tab_observe`, `codex_chrome_tab_read_page`, `codex_chrome_visual_observe`. Prefer `tiny` or `medium`, `summaryMaxChars`, `maxActionableHandles`, and targeted `read_page` filters. Warm-cache hits are tab-scoped; still re-observe after navigation or mutation.
+- Narrow actions: prefer `codex_chrome_tab_locator` for handle, selector, or text-based resolve/action in session tabs. Use direct handle tools (`codex_chrome_fill`, `codex_chrome_type`, `codex_chrome_clear`, `codex_chrome_click`, `codex_chrome_focus`, `codex_chrome_check`) with a session-owned `tabId` when a fresh handle is already proven.
 - Verification: for mutating actions, use `requireVerified`, explicit `verify` conditions such as `valueEquals` or `textAppears`, `postActionSnapshot: "delta"`, and `actionTrace` labels. Report provider, verification evidence, focused element value, gates, and content script version.
 - Discovery: if a needed tool is not callable in the current context, call `tool_search` for the exact `codex_chrome_*` tool before switching to CLI or another browser layer.
 
@@ -129,7 +129,7 @@ Patch for measured failure modes:
 - Occlusion checks should use multiple hit-test points and treat wrapper or ancestor hits that contain the target as reachable, not as blockers.
 - Debugger runtime verification is stronger than unchanged post-action snapshots for input actions. Preserve `text-value` and `text-inserted` verification evidence instead of overwriting it with inconclusive snapshot deltas.
 - `targetContract` data should improve recovery without bloating observations. Keep contracts compact and prefer stable attributes over repeated full DOM dumps.
-- DOM quiet waits are release-gate material for dynamic pages; keep `smoke:dynamic-dom` in broad verification when page wait behavior changes.
+- `smoke:dynamic-dom` is helper-level DOM quiet coverage. For live dynamic page proof, run `smoke:clean`; it drives the dynamic fixture through Chrome, the extension, native messaging, and `operator.runtime.tab.*`.
 - Fill/check/select/type hardening should remain fail-closed: a mutation is not successful unless the runtime can verify the requested value or state.
 
 ## Verification Set

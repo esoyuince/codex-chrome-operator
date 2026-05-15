@@ -271,6 +271,60 @@ test('mock commerce fixture exposes product cards, cart, and blocked checkout co
   assert.equal((html.match(/<article[\s\S]*?data-visual-card="product"/g) || []).length, 4);
 });
 
+test('clean smoke passes observed high-risk targets into guard checks', () => {
+  const script = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'clean-smoke.js'), 'utf8');
+  const policyStart = script.indexOf("postRpcJson('operator.policy.update'");
+  const playStart = script.indexOf('const sendForReviewTarget = findElementSummary');
+  const playEnd = script.indexOf("const mockCommerceObservation = await runCliJsonAsync", playStart);
+  const commerceStart = script.indexOf('const checkoutTarget = findElementSummary');
+  const commerceEnd = script.indexOf('const dynamicRuntime = await runDynamicRuntimeSmoke', commerceStart);
+  const playBlock = script.slice(playStart, playEnd);
+  const commerceBlock = script.slice(commerceStart, commerceEnd);
+
+  assert.ok(policyStart !== -1, 'clean smoke should enable guarded action policy inside the transient run');
+  assert.match(script.slice(policyStart, policyStart + 260), /guardedActionsEnabled:\s*true/);
+  assert.ok(playStart !== -1 && playEnd !== -1, 'mock Play high-risk target block should be present');
+  assert.ok(commerceStart !== -1 && commerceEnd !== -1, 'mock commerce high-risk target block should be present');
+  assert.match(playBlock, /postRpcJson\('page\.click'/);
+  assert.match(playBlock, /targetContract:\s*sendForReviewTarget\.targetContract/);
+  assert.match(commerceBlock, /postRpcJson\('page\.click'/);
+  assert.match(commerceBlock, /targetContract:\s*checkoutTarget\.targetContract/);
+});
+
+test('dynamic DOM fixture exposes runtime-tab smoke controls', () => {
+  const html = readFixture('dynamic-dom.html');
+  const script = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'clean-smoke.js'), 'utf8');
+
+  assertIncludesAll(html, [
+    '<title>Codex Operator Dynamic DOM Fixture</title>',
+    'id="dynamic-dom-fixture"',
+    'data-fixture="dynamic-dom"',
+    'id="agentMarker"',
+    'document.body.dataset.agentId = agentId',
+    'id="dynamic-actions"',
+    'data-testid="dynamic-save"',
+    'data-live-target="true"',
+    'id="controlledField"',
+    'data-controlled-field="true"',
+    'id="openDialog"',
+    'data-testid="open-dialog"',
+    'id="dynamicDialog"',
+    'role="dialog"',
+    'id="dialogClose"',
+    'data-testid="dialog-close"',
+    'id="scrollTarget"',
+    'data-testid="scroll-target"',
+    '__codexDynamicSmokeReplaceAction'
+  ]);
+  assertIncludesAll(script, [
+    "const { runConcurrentTwoTabSmoke } = require('./live-smoke')",
+    'const concurrentTwoTab = await runConcurrentTwoTabSmoke',
+    'Concurrent two-tab smoke failed',
+    'concurrentTwoTabOk: concurrentTwoTab.ok',
+    'concurrentTwoTabAgents: concurrentTwoTab.agents.map'
+  ]);
+});
+
 test('extension wires upload and cart helpers into background and content scripts', () => {
   const background = fs.readFileSync(path.join(__dirname, '..', 'extension', 'background.js'), 'utf8');
   const contentScript = fs.readFileSync(path.join(__dirname, '..', 'extension', 'contentScript.js'), 'utf8');

@@ -125,6 +125,71 @@ test('runCdpCommand executes allowlisted CDP method with scoped attach and detac
   ]);
 });
 
+test('debugger operations are serialized across tabs', async () => {
+  const calls = [];
+  let releaseFirstCommand;
+  const chromeApi = {
+    runtime: {},
+    debugger: {
+      attach(target, protocolVersion, callback) {
+        calls.push({ method: 'attach', tabId: target.tabId, protocolVersion });
+        callback();
+      },
+      detach(target, callback) {
+        calls.push({ method: 'detach', tabId: target.tabId });
+        callback();
+      },
+      sendCommand(target, method, params, callback) {
+        calls.push({ method, tabId: target.tabId, params });
+        if (target.tabId === 7 && method === 'Page.getLayoutMetrics') {
+          releaseFirstCommand = () => callback({
+            layoutViewport: { pageX: 0, pageY: 0, clientWidth: 800, clientHeight: 600 }
+          });
+          return;
+        }
+        callback({
+          layoutViewport: { pageX: 0, pageY: 0, clientWidth: 1280, clientHeight: 720 }
+        });
+      }
+    }
+  };
+
+  const first = runCdpCommand({
+    chromeApi,
+    tab: { id: 7, url: 'https://example.com/one' },
+    method: 'Page.getLayoutMetrics',
+    params: {}
+  });
+  await Promise.resolve();
+  const second = runCdpCommand({
+    chromeApi,
+    tab: { id: 8, url: 'https://example.com/two' },
+    method: 'Page.getLayoutMetrics',
+    params: {}
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.deepEqual(calls.map((call) => `${call.method}:${call.tabId}`), [
+    'attach:7',
+    'Page.getLayoutMetrics:7'
+  ]);
+
+  releaseFirstCommand();
+  const firstResult = await first;
+  const secondResult = await second;
+
+  assert.equal(firstResult.ok, true);
+  assert.equal(secondResult.ok, true);
+  assert.deepEqual(calls.map((call) => `${call.method}:${call.tabId}`), [
+    'attach:7',
+    'Page.getLayoutMetrics:7',
+    'detach:7',
+    'attach:8',
+    'Page.getLayoutMetrics:8',
+    'detach:8'
+  ]);
+});
+
 test('managed CDP attach keeps later execute on the same debugger session until detach', async () => {
   const { chromeApi, calls } = makeChrome({
     commandResults: {
@@ -558,6 +623,106 @@ test('runDebuggerAction clicks with Chrome input pointer events', async () => {
   assert.deepEqual(pointerCalls.map((call) => [call.params.x, call.params.y]), [[180, 240], [180, 240], [180, 240]]);
 });
 
+test('runDebuggerAction falls back to runtime click when viewport hit testing is unavailable', async () => {
+  const { chromeApi, calls } = makeChrome({
+    evaluateValues: [
+      {
+        ok: true,
+        result: {
+          action: 'resolved-pointer-target',
+          handle: 'el_abc_1',
+          x: -146,
+          y: -42,
+          actionability: {
+            visible: true,
+            enabled: true,
+            receivesEvents: null,
+            reason: 'VIEWPORT_HIT_TEST_UNAVAILABLE'
+          }
+        }
+      },
+      {
+        ok: true,
+        result: {
+          action: 'clicked',
+          handle: 'el_abc_1'
+        }
+      }
+    ]
+  });
+
+  const result = await runDebuggerAction({
+    chromeApi,
+    tab: { id: 7, url: 'https://example.com/form' },
+    action: 'click',
+    params: { handle: 'el_abc_1' }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.provider, 'chrome.debugger.Runtime.evaluate');
+  assert.equal(result.result.action, 'clicked');
+  assert.equal(result.result.actionability.reason, 'VIEWPORT_HIT_TEST_UNAVAILABLE');
+  assert.deepEqual(calls.map((call) => call.method), [
+    'attach',
+    'Runtime.enable',
+    'Runtime.evaluate',
+    'Runtime.evaluate',
+    'detach'
+  ]);
+});
+
+test('runDebuggerAction activates the target tab before CDP pointer input', async () => {
+  const { chromeApi, calls } = makeChrome({
+    evaluateValue: {
+      ok: true,
+      result: {
+        action: 'resolved-pointer-target',
+        handle: 'el_state_2',
+        x: 180,
+        y: 240
+      }
+    }
+  });
+  chromeApi.tabs = {
+    update(tabId, params, callback) {
+      calls.push({ method: 'tabs.update', tabId, params });
+      callback({ id: tabId, active: true, url: 'https://example.com/products' });
+    }
+  };
+
+  const result = await runDebuggerAction({
+    chromeApi,
+    tab: { id: 7, url: 'https://example.com/products', active: true },
+    action: 'click',
+    params: {
+      handle: 'el_state_2',
+      target: {
+        tag: 'a',
+        testid: 'product-link',
+        href: 'https://example.com/products/keyboard',
+        label: 'Keyboard'
+      }
+    }
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls.map((call) => call.method), [
+    'tabs.update',
+    'attach',
+    'Runtime.enable',
+    'Runtime.evaluate',
+    'Input.dispatchMouseEvent',
+    'Input.dispatchMouseEvent',
+    'Input.dispatchMouseEvent',
+    'detach'
+  ]);
+  assert.deepEqual(calls[0], {
+    method: 'tabs.update',
+    tabId: 7,
+    params: { active: true }
+  });
+});
+
 test('runtime scroll action scrolls the resolved element when a handle is present', () => {
   const scrollable = {
     tagName: 'DIV',
@@ -743,6 +908,246 @@ test('runtime fill reports a verification failure when the value is not retained
   assert.equal(result.error.actual, '');
   assert.equal(input.lastAssigned, 'ender@example.com');
   assert.deepEqual(events, ['input', 'change']);
+});
+
+test('runtime text actions reject occluded recovered targets', () => {
+  let value = '';
+  const events = [];
+  const coveredInput = {
+    tagName: 'INPUT',
+    id: 'composer',
+    disabled: false,
+    get value() {
+      return value;
+    },
+    set value(next) {
+      value = String(next ?? '');
+    },
+    focus() {
+      this.focused = true;
+    },
+    dispatchEvent(event) {
+      events.push(event.type);
+    },
+    scrollIntoView() {},
+    contains(target) {
+      return target === this;
+    },
+    getAttribute(name) {
+      if (name === 'type') return 'text';
+      if (name === 'aria-label') return 'Metni gönderi olarak yayınla';
+      return '';
+    },
+    getBoundingClientRect() {
+      return { left: 20, top: 80, right: 320, bottom: 120, width: 300, height: 40 };
+    }
+  };
+  const overlay = {
+    tagName: 'DIV',
+    id: 'overlay',
+    contains() {
+      return false;
+    },
+    getAttribute() {
+      return '';
+    },
+    getBoundingClientRect() {
+      return { left: 20, top: 80, right: 320, bottom: 120, width: 300, height: 40 };
+    }
+  };
+  const expression = buildRuntimeActionExpression({
+    action: 'type',
+    handle: 'el_oldstate_0',
+    target: {
+      tag: 'input',
+      id: 'composer',
+      type: 'text',
+      label: 'Metni gönderi olarak yayınla'
+    },
+    text: 'Draft from operator'
+  });
+  const context = {
+    URL,
+    Event: function Event(type) {
+      this.type = type;
+    },
+    InputEvent: function InputEvent(type, options = {}) {
+      this.type = type;
+      this.inputType = options.inputType || '';
+      this.data = options.data ?? null;
+    },
+    location: { href: 'https://x.com/compose/post' },
+    document: {
+      title: 'Compose',
+      querySelectorAll() {
+        return [coveredInput];
+      },
+      elementFromPoint() {
+        return overlay;
+      }
+    },
+    window: {
+      innerWidth: 1280,
+      innerHeight: 720,
+      devicePixelRatio: 1,
+      scrollX: 0,
+      scrollY: 0,
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block', pointerEvents: 'auto' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'ACTIONABILITY_FAILED');
+  assert.equal(result.error.reason, 'TARGET_OCCLUDED');
+  assert.equal(value, '');
+  assert.deepEqual(events, []);
+});
+
+test('runtime text actions allow verified fill when viewport hit testing is unavailable', () => {
+  let value = '';
+  const events = [];
+  const input = {
+    tagName: 'INPUT',
+    id: 'postGateValue',
+    disabled: false,
+    get value() {
+      return value;
+    },
+    set value(next) {
+      value = String(next ?? '');
+    },
+    focus() {
+      this.focused = true;
+    },
+    dispatchEvent(event) {
+      events.push(event.type);
+    },
+    scrollIntoView() {},
+    contains(target) {
+      return target === this;
+    },
+    getAttribute(name) {
+      if (name === 'aria-label') return 'Post-gate value';
+      if (name === 'name') return 'postGateValue';
+      if (name === 'type') return 'text';
+      return '';
+    },
+    getBoundingClientRect() {
+      return { left: 48, top: 116, right: 288, bottom: 140, width: 240, height: 24 };
+    }
+  };
+  const expression = buildRuntimeActionExpression({
+    action: 'fill',
+    handle: 'el_oldstate_0',
+    target: {
+      tag: 'input',
+      name: 'postGateValue',
+      type: 'text',
+      label: 'Post-gate value'
+    },
+    text: 'Manual gate complete'
+  });
+  const context = {
+    URL,
+    Event: function Event(type) {
+      this.type = type;
+    },
+    InputEvent: function InputEvent(type, options = {}) {
+      this.type = type;
+      this.inputType = options.inputType || '';
+      this.data = options.data ?? null;
+    },
+    location: { href: 'http://127.0.0.1:18180/gate-form.html' },
+    document: {
+      title: 'Gate',
+      querySelectorAll() {
+        return [input];
+      },
+      elementFromPoint() {
+        return null;
+      }
+    },
+    window: {
+      innerWidth: 0,
+      innerHeight: 0,
+      devicePixelRatio: 1,
+      scrollX: 0,
+      scrollY: 0,
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block', pointerEvents: 'auto' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.action, 'filled');
+  assert.equal(value, 'Manual gate complete');
+  assert.deepEqual(events, ['input', 'change']);
+});
+
+test('runtime pointer resolution keeps target center when viewport hit testing is unavailable', () => {
+  const button = {
+    tagName: 'BUTTON',
+    id: 'safeAfterGate',
+    innerText: 'Save After Gate',
+    disabled: false,
+    scrollIntoView() {},
+    contains(target) {
+      return target === this;
+    },
+    getAttribute() {
+      return '';
+    },
+    getBoundingClientRect() {
+      return { left: 64, top: 160, right: 224, bottom: 192, width: 160, height: 32 };
+    }
+  };
+  const expression = buildRuntimeActionExpression({
+    action: 'resolvePointerTarget',
+    handle: 'el_oldstate_1',
+    target: {
+      tag: 'button',
+      id: 'safeAfterGate',
+      label: 'Save After Gate'
+    }
+  });
+  const context = {
+    URL,
+    location: { href: 'http://127.0.0.1:18180/gate-form.html' },
+    document: {
+      title: 'Gate',
+      querySelectorAll() {
+        return [button];
+      },
+      elementFromPoint() {
+        return null;
+      }
+    },
+    window: {
+      innerWidth: 0,
+      innerHeight: 0,
+      devicePixelRatio: 1,
+      scrollX: 0,
+      scrollY: 0,
+      getComputedStyle() {
+        return { visibility: 'visible', display: 'block', pointerEvents: 'auto' };
+      }
+    }
+  };
+
+  const result = require('node:vm').runInNewContext(expression, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.x, 144);
+  assert.equal(result.result.y, 176);
+  assert.equal(result.result.actionability.receivesEvents, null);
+  assert.equal(result.result.actionability.reason, 'VIEWPORT_HIT_TEST_UNAVAILABLE');
 });
 
 test('runtime fill updates controlled input app state with native input semantics', () => {

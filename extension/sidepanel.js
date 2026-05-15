@@ -17,6 +17,7 @@ const els = {
   sessionTabsCount: document.getElementById('session-tabs-count'),
   lastCommand: document.getElementById('last-command'),
   downloadWatchStatus: document.getElementById('download-watch-status'),
+  chatWatchStatus: document.getElementById('chat-watch-status'),
   tokenTotal: document.getElementById('token-total'),
   tokenInput: document.getElementById('token-input'),
   tokenOutput: document.getElementById('token-output'),
@@ -328,6 +329,26 @@ function renderTokenUsage(tokenUsage) {
   setText(els.tokenLastCommand, usage.lastMethod || 'none');
 }
 
+function renderChatWatcher(chatWatcher) {
+  const state = chatWatcher && typeof chatWatcher === 'object' ? chatWatcher : {};
+  const allowlistedOriginCount = Number(state.allowlistedOriginCount || 0);
+  const watcherCount = Number(state.watcherCount || 0);
+  const pausedCount = Number(state.pausedCount || 0);
+  const eventCount = Number(state.eventCount || 0);
+  if (allowlistedOriginCount <= 0) {
+    setText(els.chatWatchStatus, 'No allowlisted origins');
+    return;
+  }
+  if (watcherCount <= 0) {
+    setText(els.chatWatchStatus, `${allowlistedOriginCount} origin${allowlistedOriginCount === 1 ? '' : 's'} allowlisted`);
+    return;
+  }
+  setText(
+    els.chatWatchStatus,
+    `${watcherCount} active, ${pausedCount} paused, ${eventCount} unread event${eventCount === 1 ? '' : 's'}`
+  );
+}
+
 async function refresh() {
   const now = Date.now();
   if (refreshInFlight) {
@@ -399,6 +420,7 @@ async function refreshNow() {
     : null;
   setText(els.lastCommand, recentEvent && recentEvent.method ? recentEvent.method : 'none');
   setText(els.downloadWatchStatus, 'Available via codex_chrome_download_wait');
+  renderChatWatcher(daemonResult && daemonResult.chatWatcher);
   renderTokenUsage(daemonResult && daemonResult.tokenUsage ? daemonResult.tokenUsage : status && status.tokenUsage);
   renderApprovals(approvals, approvalsStatus.statusError || null);
   els.blockedSites.value = blockedStatus.blockedOrigins.join('\n');

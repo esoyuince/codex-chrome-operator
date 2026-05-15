@@ -75,6 +75,11 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   const tabHandleDialog = tools.find((tool) => tool.name === 'codex_chrome_tab_handle_dialog');
   const tabShowTarget = tools.find((tool) => tool.name === 'codex_chrome_tab_show_target');
   const tabOperatorIndicator = tools.find((tool) => tool.name === 'codex_chrome_tab_operator_indicator');
+  const auditTimeline = tools.find((tool) => tool.name === 'codex_chrome_audit_timeline');
+  const chatWatcherStart = tools.find((tool) => tool.name === 'codex_chrome_chat_watcher_start');
+  const chatWatcherStatus = tools.find((tool) => tool.name === 'codex_chrome_chat_watcher_status');
+  const chatWatcherPoll = tools.find((tool) => tool.name === 'codex_chrome_chat_watcher_poll');
+  const chatWatcherControl = tools.find((tool) => tool.name === 'codex_chrome_chat_watcher_control');
 
   assert.equal(ADAPTER_PROTOCOL_VERSION, '1.0');
   assert.ok(status);
@@ -128,13 +133,15 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.equal(extract.inputSchema.properties.maxCandidates.minimum, 1);
   assert.match(extract.description, /intent-scoped/i);
   assert.ok(readPage);
-  assert.deepEqual(readPage.inputSchema.required, ['origin']);
+  assert.deepEqual(readPage.inputSchema.required, ['tabId']);
+  assert.equal(readPage.inputSchema.properties.tabId.type, 'number');
   assert.equal(readPage.inputSchema.properties.maxChars.type, 'number');
   assert.equal(readPage.inputSchema.properties.refId.type, 'string');
   assert.equal(readPage.inputSchema.properties.includeFormValues.type, 'boolean');
   assert.equal(readPage.inputSchema.properties.maxFieldValueChars.type, 'number');
   assert.ok(batch);
-  assert.deepEqual(batch.inputSchema.required, ['origin', 'actions']);
+  assert.deepEqual(batch.inputSchema.required, ['tabId', 'actions']);
+  assert.equal(batch.inputSchema.properties.tabId.type, 'number');
   assert.equal(batch.inputSchema.properties.actions.type, 'array');
   assert.equal(batch.inputSchema.properties.actions.items.additionalProperties, false);
   assert.ok(visualObserve);
@@ -194,7 +201,18 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.deepEqual(tabReadPage.inputSchema.required, ['tabId']);
   assert.ok(tabLocator);
   assert.deepEqual(tabLocator.inputSchema.required, ['tabId']);
-  assert.deepEqual(tabLocator.inputSchema.properties.action.enum, ['resolve', 'click', 'type', 'fill', 'focus', 'clear']);
+  assert.deepEqual(tabLocator.inputSchema.properties.action.enum, [
+    'resolve',
+    'click',
+    'type',
+    'fill',
+    'focus',
+    'clear',
+    'select',
+    'check',
+    'scroll',
+    'pressKey'
+  ]);
   assert.ok(recentTabs);
   assert.deepEqual(recentTabs.inputSchema.required, []);
   assert.ok(historySearch);
@@ -224,6 +242,18 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.equal(tabShowTarget.inputSchema.properties.durationMs.minimum, 100);
   assert.ok(tabOperatorIndicator);
   assert.deepEqual(tabOperatorIndicator.inputSchema.required, ['tabId']);
+  assert.ok(auditTimeline);
+  assert.deepEqual(auditTimeline.inputSchema.required, []);
+  assert.equal(auditTimeline.inputSchema.properties.limit.minimum, 1);
+  assert.ok(chatWatcherStart);
+  assert.deepEqual(chatWatcherStart.inputSchema.required, ['tabId', 'origin', 'unreadSelector']);
+  assert.equal(chatWatcherStart.inputSchema.properties.screenshotOnUnread.type, 'boolean');
+  assert.ok(chatWatcherStatus);
+  assert.deepEqual(chatWatcherStatus.inputSchema.required, []);
+  assert.ok(chatWatcherPoll);
+  assert.deepEqual(chatWatcherPoll.inputSchema.required, ['watcherId']);
+  assert.ok(chatWatcherControl);
+  assert.deepEqual(chatWatcherControl.inputSchema.properties.action.enum, ['pause', 'resume', 'stop']);
   assert.match(toolDefinitionsHash(), /^[a-f0-9]{64}$/);
   assert.equal(toolDefinitionsHash(), toolDefinitionsHash());
 });
@@ -266,14 +296,14 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     maxActionableHandles: 0
   }).error.code, 'INVALID_TOOL_INPUT');
   assert.equal(validateToolInput('codex_chrome_observe', {
-    origin: 'https://example.com/path',
+    tabId: 7,
     mode: 'tiny',
     maxActionableHandles: 12,
     summaryMaxChars: 300,
     sincePageStateId: 'state_1'
   }).ok, true);
   assert.equal(validateToolInput('codex_chrome_observe', {
-    origin: 'https://example.com',
+    tabId: 7,
     summaryMaxChars: 0
   }).error.code, 'INVALID_TOOL_INPUT');
   assert.equal(validateToolInput('codex_chrome_status', {}).ok, true);
@@ -286,10 +316,11 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   assert.equal(validateToolInput('codex_chrome_user_tabs', {}).ok, true);
   assert.equal(validateToolInput('codex_chrome_session_tabs', {}).ok, true);
   assert.equal(validateToolInput('codex_chrome_new_tab', {}).ok, true);
-  assert.equal(validateToolInput('codex_chrome_claim_tab', { tabId: 7 }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_claim_tab', { tabId: 7, agentId: 'agent-alpha' }).ok, true);
   assert.equal(validateToolInput('codex_chrome_claim_tab', {}).error.code, 'INVALID_TOOL_INPUT');
   assert.equal(validateToolInput('codex_chrome_name_session', { name: 'Firebase' }).ok, true);
   assert.equal(validateToolInput('codex_chrome_finalize_tabs', {
+    agentId: 'agent-alpha',
     keep: [{ tabId: 7, status: 'handoff' }]
   }).ok, true);
   assert.equal(validateToolInput('codex_chrome_finalize_tabs', {
@@ -372,8 +403,20 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     active: true,
     label: 'Codex is active'
   }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_audit_timeline', { limit: 20 }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_chat_watcher_start', {
+    agentId: 'agent-alpha',
+    tabId: 7,
+    origin: 'https://chat.example',
+    unreadSelector: '[data-unread]',
+    screenshotOnUnread: true
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_chat_watcher_control', {
+    watcherId: 'chat_watch_1',
+    action: 'pause'
+  }).ok, true);
   assert.equal(validateToolInput('codex_chrome_click', {
-    origin: 'https://example.com',
+    tabId: 7,
     handle: 'el_state_0',
     targetContract: SAVE_TARGET_CONTRACT,
     actionTrace: true,
@@ -381,7 +424,7 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     actionTraceDurationMs: 1000
   }).ok, true);
   assert.equal(validateToolInput('codex_chrome_click', {
-    origin: 'https://example.com',
+    tabId: 7,
     handle: 'el_state_0',
     targetContract: {
       version: 1,
@@ -390,7 +433,7 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
     }
   }).error.code, 'INVALID_TOOL_INPUT');
   assert.equal(validateToolInput('codex_chrome_click', {
-    origin: 'https://x.com',
+    tabId: 7,
     handle: 'el_state_post',
     postActionSnapshot: 'delta',
     requireVerified: true,
@@ -502,7 +545,7 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   );
   assert.equal(
     validateToolInput('codex_chrome_read_page', {
-      origin: 'https://example.com/path',
+      tabId: 7,
       filter: 'interactive',
       depth: 4,
       maxChars: 12000,
@@ -554,7 +597,7 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   );
   assert.equal(
     validateToolInput('codex_chrome_batch', {
-      origin: 'https://example.com',
+      tabId: 7,
       actions: [{
         action: 'observe',
         sincePageStateId: 'state_previous',
@@ -581,14 +624,14 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   );
   assert.equal(
     validateToolInput('codex_chrome_batch', {
-      origin: 'https://example.com',
+      tabId: 7,
       actions: []
     }).error.code,
     'INVALID_TOOL_INPUT'
   );
   assert.equal(
     validateToolInput('codex_chrome_fill', {
-      origin: 'https://example.com',
+      tabId: 7,
       handle: 'el_state_0',
       text: 'Draft',
       verify: {
@@ -613,7 +656,7 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   );
   assert.equal(
     validateToolInput('codex_chrome_click', {
-      origin: 'https://example.com',
+      tabId: 7,
       handle: 'el_state_0',
       postActionSnapshot: 'delta',
       verify: {
@@ -627,7 +670,7 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   );
   assert.equal(
     validateToolInput('codex_chrome_batch', {
-      origin: 'https://example.com',
+      tabId: 7,
       actions: [{
         action: 'observe',
         sincePageStateId: 'state_previous'
@@ -637,7 +680,7 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   );
   assert.equal(
     validateToolInput('codex_chrome_fill', {
-      origin: 'https://example.com',
+      tabId: 7,
       handle: 'el_state_0',
       text: 'Draft',
       postActionSnapshot: 'delta',
@@ -649,7 +692,7 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   );
   assert.equal(
     validateToolInput('codex_chrome_fill', {
-      origin: 'https://example.com',
+      tabId: 7,
       handle: 'el_state_0',
       text: 'Draft',
       postActionSnapshot: 'full'
@@ -658,7 +701,7 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   );
   assert.equal(
     validateToolInput('codex_chrome_batch', {
-      origin: 'https://example.com',
+      tabId: 7,
       actions: [{
         action: 'fill',
         handle: 'el_state_0',
@@ -691,7 +734,7 @@ test('CodexChromeToolAdapter forwards explicit form value observe and read-page 
   const observed = await adapter.executeTool({
     toolName: 'codex_chrome_observe',
     input: {
-      origin: 'https://example.com/form',
+      tabId: 7,
       mode: 'full',
       includeFormValues: true,
       maxFieldValueChars: 64
@@ -700,7 +743,7 @@ test('CodexChromeToolAdapter forwards explicit form value observe and read-page 
   const read = await adapter.executeTool({
     toolName: 'codex_chrome_read_page',
     input: {
-      origin: 'https://example.com/form',
+      tabId: 7,
       filter: 'all',
       includeFormValues: true,
       maxFieldValueChars: 32
@@ -721,12 +764,12 @@ test('CodexChromeToolAdapter forwards explicit form value observe and read-page 
   assert.equal(read.ok, true);
   assert.equal(visual.ok, true);
   assert.deepEqual(calls.map((call) => call.params), [{
-    origin: 'https://example.com',
+    tabId: 7,
     mode: 'full',
     includeFormValues: true,
     maxFieldValueChars: 64
   }, {
-    origin: 'https://example.com',
+    tabId: 7,
     filter: 'all',
     includeFormValues: true,
     maxFieldValueChars: 32
@@ -824,22 +867,22 @@ test('CodexChromeToolAdapter routes session tab tools to operator tab RPC method
   });
 
   await adapter.executeTool({ toolName: 'codex_chrome_user_tabs', input: {} });
-  await adapter.executeTool({ toolName: 'codex_chrome_claim_tab', input: { tabId: 7 } });
-  await adapter.executeTool({ toolName: 'codex_chrome_session_tabs', input: {} });
-  await adapter.executeTool({ toolName: 'codex_chrome_new_tab', input: {} });
+  await adapter.executeTool({ toolName: 'codex_chrome_claim_tab', input: { tabId: 7, agentId: 'agent-alpha' } });
+  await adapter.executeTool({ toolName: 'codex_chrome_session_tabs', input: { agentId: 'agent-alpha' } });
+  await adapter.executeTool({ toolName: 'codex_chrome_new_tab', input: { agentId: 'agent-alpha' } });
   await adapter.executeTool({ toolName: 'codex_chrome_name_session', input: { name: 'Firebase cleanup' } });
   await adapter.executeTool({
     toolName: 'codex_chrome_finalize_tabs',
-    input: { keep: [{ tabId: 7, status: 'deliverable' }] }
+    input: { agentId: 'agent-alpha', keep: [{ tabId: 7, status: 'deliverable' }] }
   });
 
   assert.deepEqual(calls.map((call) => [call.method, call.params]), [
     ['operator.tabs.listUser', {}],
-    ['operator.tabs.claim', { tabId: 7 }],
-    ['operator.tabs.listSession', {}],
-    ['operator.tabs.create', {}],
+    ['operator.tabs.claim', { tabId: 7, agentId: 'agent-alpha' }],
+    ['operator.tabs.listSession', { agentId: 'agent-alpha' }],
+    ['operator.tabs.create', { agentId: 'agent-alpha' }],
     ['operator.session.name', { name: 'Firebase cleanup' }],
-    ['operator.tabs.finalize', { keep: [{ tabId: 7, status: 'deliverable' }] }]
+    ['operator.tabs.finalize', { agentId: 'agent-alpha', keep: [{ tabId: 7, status: 'deliverable' }] }]
   ]);
 });
 
@@ -953,19 +996,20 @@ test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
 
   await adapter.executeTool({
     toolName: 'codex_chrome_tab_goto',
-    input: { tabId: 7, url: 'https://example.com/app' }
+    input: { agentId: 'agent-alpha', tabId: 7, url: 'https://example.com/app' }
   });
   await adapter.executeTool({
     toolName: 'codex_chrome_tab_observe',
-    input: { tabId: 7, mode: 'tiny' }
+    input: { agentId: 'agent-alpha', tabId: 7, mode: 'tiny' }
   });
   await adapter.executeTool({
     toolName: 'codex_chrome_tab_read_page',
-    input: { tabId: 7, filter: 'interactive', maxChars: 500 }
+    input: { agentId: 'agent-alpha', tabId: 7, filter: 'interactive', maxChars: 500 }
   });
   await adapter.executeTool({
     toolName: 'codex_chrome_tab_locator',
     input: {
+      agentId: 'agent-alpha',
       tabId: 7,
       selector: 'button[data-testid="save"]',
       action: 'click',
@@ -979,6 +1023,7 @@ test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
   await adapter.executeTool({
     toolName: 'codex_chrome_tab_operator_indicator',
     input: {
+      agentId: 'agent-alpha',
       tabId: 7,
       active: true,
       label: 'Codex is active in this tab'
@@ -986,10 +1031,11 @@ test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
   });
 
   assert.deepEqual(calls.map((call) => [call.method, call.params]), [
-    ['operator.runtime.tab.goto', { tabId: 7, url: 'https://example.com/app' }],
-    ['operator.runtime.tab.observe', { tabId: 7, mode: 'tiny' }],
-    ['operator.runtime.tab.readPage', { tabId: 7, filter: 'interactive', maxChars: 500 }],
+    ['operator.runtime.tab.goto', { agentId: 'agent-alpha', tabId: 7, url: 'https://example.com/app' }],
+    ['operator.runtime.tab.observe', { agentId: 'agent-alpha', tabId: 7, mode: 'tiny' }],
+    ['operator.runtime.tab.readPage', { agentId: 'agent-alpha', tabId: 7, filter: 'interactive', maxChars: 500 }],
     ['operator.runtime.tab.locator', {
+      agentId: 'agent-alpha',
       tabId: 7,
       selector: 'button[data-testid="save"]',
       action: 'click',
@@ -1000,6 +1046,7 @@ test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
       targetContract: SAVE_TARGET_CONTRACT
     }],
     ['operator.runtime.tab.indicator', {
+      agentId: 'agent-alpha',
       tabId: 7,
       active: true,
       label: 'Codex is active in this tab'
@@ -1007,7 +1054,7 @@ test('CodexChromeToolAdapter routes safe runtime tab helpers', async () => {
   ]);
 });
 
-test('CodexChromeToolAdapter routes compact read page and batch actions with normalized origins', async () => {
+test('CodexChromeToolAdapter routes compact read page and batch actions through runtime tabs', async () => {
   const calls = [];
   const adapter = new CodexChromeToolAdapter({
     settings: {
@@ -1030,7 +1077,8 @@ test('CodexChromeToolAdapter routes compact read page and batch actions with nor
   const readPage = await adapter.executeTool({
     toolName: 'codex_chrome_read_page',
     input: {
-      origin: 'https://example.com/path?x=1',
+      agentId: 'agent-alpha',
+      tabId: 7,
       filter: 'interactive',
       depth: 3,
       maxChars: 12000,
@@ -1040,7 +1088,8 @@ test('CodexChromeToolAdapter routes compact read page and batch actions with nor
   const batch = await adapter.executeTool({
     toolName: 'codex_chrome_batch',
     input: {
-      origin: 'https://example.com/form',
+      agentId: 'agent-alpha',
+      tabId: 7,
       stopOnError: true,
       actions: [{
         action: 'fill',
@@ -1057,16 +1106,18 @@ test('CodexChromeToolAdapter routes compact read page and batch actions with nor
 
   assert.equal(readPage.ok, true);
   assert.equal(batch.ok, true);
-  assert.deepEqual(calls.map((call) => call.method), ['page.readPage', 'page.batch']);
+  assert.deepEqual(calls.map((call) => call.method), ['operator.runtime.tab.readPage', 'operator.runtime.tab.batch']);
   assert.deepEqual(calls[0].params, {
-    origin: 'https://example.com',
+    agentId: 'agent-alpha',
+    tabId: 7,
     filter: 'interactive',
     depth: 3,
     maxChars: 12000,
     refId: 'el_state_0'
   });
   assert.deepEqual(calls[1].params, {
-    origin: 'https://example.com',
+    agentId: 'agent-alpha',
+    tabId: 7,
     stopOnError: true,
     actions: [{
       action: 'fill',
@@ -1498,7 +1549,7 @@ test('CodexChromeToolAdapter routes browser context, download, recovery, and tar
   });
 });
 
-test('CodexChromeToolAdapter forwards observe options with normalized origins', async () => {
+test('CodexChromeToolAdapter forwards observe options through runtime tabs', async () => {
   const calls = [];
   const adapter = new CodexChromeToolAdapter({
     settings: {
@@ -1521,7 +1572,7 @@ test('CodexChromeToolAdapter forwards observe options with normalized origins', 
   const response = await adapter.executeTool({
     toolName: 'codex_chrome_observe',
     input: {
-      origin: 'https://example.com/path?x=1',
+      tabId: 7,
       mode: 'medium',
       maxActionableHandles: 15,
       summaryMaxChars: 600,
@@ -1532,14 +1583,14 @@ test('CodexChromeToolAdapter forwards observe options with normalized origins', 
 
   assert.equal(response.ok, true);
   assert.deepEqual(response.result.params, {
-    origin: 'https://example.com',
+    tabId: 7,
     mode: 'medium',
     maxActionableHandles: 15,
     summaryMaxChars: 600,
     sincePageStateId: 'state_previous',
     includeAx: true
   });
-  assert.equal(calls[0].method, 'page.observe');
+  assert.equal(calls[0].method, 'operator.runtime.tab.observe');
 });
 
 test('CodexChromeToolAdapter telemetry gates compact observe result size', async () => {
@@ -1571,7 +1622,7 @@ test('CodexChromeToolAdapter telemetry gates compact observe result size', async
   const response = await adapter.executeTool({
     toolName: 'codex_chrome_observe',
     input: {
-      origin: 'https://example.com',
+      tabId: 7,
       mode: 'tiny'
     }
   });
@@ -1580,6 +1631,130 @@ test('CodexChromeToolAdapter telemetry gates compact observe result size', async
   assert.equal(response.telemetry.budgetName, 'codex_chrome_observe');
   assert.ok(response.telemetry.resultChars < 8000, 'tiny observe should stay under the compact result budget');
   assert.ok(response.telemetry.approxResultTokens < 2000, 'tiny observe should stay under the compact token budget');
+});
+
+test('CodexChromeToolAdapter requires tabId for legacy MCP page reads and actions', () => {
+  assert.equal(validateToolInput('codex_chrome_observe', {
+    origin: 'https://example.com',
+    mode: 'tiny'
+  }).ok, false);
+  assert.equal(validateToolInput('codex_chrome_read_page', {
+    origin: 'https://example.com',
+    filter: 'interactive'
+  }).ok, false);
+  assert.equal(validateToolInput('codex_chrome_click', {
+    origin: 'https://example.com',
+    handle: 'el_state_0'
+  }).ok, false);
+  assert.equal(validateToolInput('codex_chrome_batch', {
+    origin: 'https://example.com',
+    actions: [{ action: 'click', handle: 'el_state_0' }]
+  }).ok, false);
+  assert.equal(validateToolInput('codex_chrome_read_page', {
+    tabId: 7,
+    filter: 'interactive'
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_observe', {
+    tabId: 7,
+    mode: 'tiny'
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_click', {
+    tabId: 7,
+    handle: 'el_state_0'
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_batch', {
+    tabId: 7,
+    actions: [{ action: 'click', handle: 'el_state_0' }]
+  }).ok, true);
+});
+
+test('CodexChromeToolAdapter routes legacy MCP page reads and actions through runtime tabs', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          method: request.method,
+          params: request.params
+        }
+      };
+    }
+  });
+
+  await adapter.executeTool({
+    toolName: 'codex_chrome_read_page',
+    input: {
+      tabId: 7,
+      filter: 'interactive',
+      maxChars: 800,
+      refId: 'el_state_0'
+    }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_click',
+    input: {
+      tabId: 7,
+      handle: 'el_state_0',
+      postActionSnapshot: 'delta'
+    }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_fill',
+    input: {
+      tabId: 7,
+      handle: 'el_state_1',
+      text: 'Draft'
+    }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_batch',
+    input: {
+      tabId: 7,
+      stopOnError: true,
+      actions: [{
+        action: 'click',
+        handle: 'el_state_2',
+        targetContract: SAVE_TARGET_CONTRACT
+      }]
+    }
+  });
+
+  assert.deepEqual(calls.map((call) => [call.method, call.params]), [
+    ['operator.runtime.tab.readPage', {
+      tabId: 7,
+      filter: 'interactive',
+      maxChars: 800,
+      refId: 'el_state_0'
+    }],
+    ['operator.runtime.tab.locator', {
+      tabId: 7,
+      handle: 'el_state_0',
+      action: 'click',
+      postActionSnapshot: 'delta'
+    }],
+    ['operator.runtime.tab.locator', {
+      tabId: 7,
+      handle: 'el_state_1',
+      action: 'fill',
+      textValue: 'Draft'
+    }],
+    ['operator.runtime.tab.batch', {
+      tabId: 7,
+      stopOnError: true,
+      actions: [{
+        action: 'click',
+        handle: 'el_state_2',
+        targetContract: SAVE_TARGET_CONTRACT
+      }]
+    }]
+  ]);
 });
 
 test('CodexChromeToolAdapter adds interaction hints from observed page structure', async () => {
@@ -1641,7 +1816,7 @@ test('CodexChromeToolAdapter adds interaction hints from observed page structure
   const response = await adapter.executeTool({
     toolName: 'codex_chrome_observe',
     input: {
-      origin: 'https://example.com'
+      tabId: 7
     }
   });
 
@@ -1885,8 +2060,8 @@ test('CodexChromeToolAdapter exposes and routes basic DOM action tools', async (
   });
 
   const checks = [
-    ['codex_chrome_type', 'page.type', {
-      origin: 'https://example.com/form?draft=1',
+    ['codex_chrome_type', {
+      tabId: 7,
       handle: 'el_0',
       text: 'hello',
       postActionSnapshot: 'delta',
@@ -1896,25 +2071,34 @@ test('CodexChromeToolAdapter exposes and routes basic DOM action tools', async (
       actionTrace: true,
       actionTraceLabel: 'Typing hello',
       targetContract: SAVE_TARGET_CONTRACT
+    }, {
+      tabId: 7,
+      handle: 'el_0',
+      action: 'type',
+      textValue: 'hello',
+      postActionSnapshot: 'delta',
+      sincePageStateId: 'state_previous',
+      maxActionableHandles: 8,
+      postActionVerifyDelayMs: 250,
+      actionTrace: true,
+      actionTraceLabel: 'Typing hello',
+      targetContract: SAVE_TARGET_CONTRACT
     }],
-    ['codex_chrome_clear', 'page.clear', { origin: 'https://example.com/form?draft=1', handle: 'el_0' }],
-    ['codex_chrome_focus', 'page.focus', { origin: 'https://example.com/form?draft=1', handle: 'el_0' }],
-    ['codex_chrome_select', 'page.select', { origin: 'https://example.com/form?draft=1', handle: 'el_1', value: 'tr' }],
-    ['codex_chrome_check', 'page.check', { origin: 'https://example.com/form?draft=1', handle: 'el_2', checked: false }],
-    ['codex_chrome_scroll', 'page.scroll', { origin: 'https://example.com/form?draft=1', handle: 'el_4', deltaX: 0, deltaY: 240 }],
-    ['codex_chrome_press_key', 'page.pressKey', { origin: 'https://example.com/form?draft=1', handle: 'el_0', key: 'Enter' }]
+    ['codex_chrome_clear', { tabId: 7, handle: 'el_0' }, { tabId: 7, handle: 'el_0', action: 'clear' }],
+    ['codex_chrome_focus', { tabId: 7, handle: 'el_0' }, { tabId: 7, handle: 'el_0', action: 'focus' }],
+    ['codex_chrome_select', { tabId: 7, handle: 'el_1', value: 'tr' }, { tabId: 7, handle: 'el_1', action: 'select', value: 'tr' }],
+    ['codex_chrome_check', { tabId: 7, handle: 'el_2', checked: false }, { tabId: 7, handle: 'el_2', action: 'check', checked: false }],
+    ['codex_chrome_scroll', { tabId: 7, handle: 'el_4', deltaX: 0, deltaY: 240 }, { tabId: 7, handle: 'el_4', action: 'scroll', deltaX: 0, deltaY: 240 }],
+    ['codex_chrome_press_key', { tabId: 7, handle: 'el_0', key: 'Enter' }, { tabId: 7, handle: 'el_0', action: 'pressKey', key: 'Enter' }]
   ];
 
-  for (const [toolName, method, input] of checks) {
+  for (const [toolName, input, expectedParams] of checks) {
     const response = await adapter.executeTool({ toolName, input });
     assert.equal(response.ok, true);
-    assert.equal(response.result.method, method);
-    assert.deepEqual(response.result.params, {
-      ...input,
-      origin: 'https://example.com'
-    });
+    assert.equal(response.result.method, 'operator.runtime.tab.locator');
+    assert.deepEqual(response.result.params, expectedParams);
   }
-  assert.deepEqual(calls.map((request) => request.method), checks.map(([, method]) => method));
+  assert.deepEqual(calls.map((request) => request.method), checks.map(() => 'operator.runtime.tab.locator'));
 });
 
 test('CodexChromeToolAdapter exposes approval lifecycle tools with explicit user decisions', async () => {
@@ -1976,6 +2160,100 @@ test('CodexChromeToolAdapter exposes approval lifecycle tools with explicit user
     assert.deepEqual(response.result.params, params);
   }
   assert.deepEqual(calls.map((request) => request.method), checks.map(([, method]) => method));
+});
+
+test('CodexChromeToolAdapter routes audit timeline without raw audit params', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          timeline: [{
+            requestId: 'req_1',
+            method: 'operator.runtime.tab.locator',
+            result: 'error',
+            errorCode: 'HIGH_RISK_BLOCKED'
+          }]
+        }
+      };
+    }
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_audit_timeline',
+    input: { limit: 10 }
+  });
+
+  assert.equal(response.ok, true);
+  assert.deepEqual(calls.map((call) => [call.method, call.params]), [
+    ['operator.audit.timeline', { limit: 10 }]
+  ]);
+  assert.equal(response.result.timeline[0].errorCode, 'HIGH_RISK_BLOCKED');
+});
+
+test('CodexChromeToolAdapter routes observe-only chat watcher tools', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator',
+      agentId: 'agent-alpha'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          method: request.method,
+          params: request.params,
+          watcher: { watcherId: 'chat_watch_1', mode: 'observe-only' }
+        }
+      };
+    }
+  });
+
+  await adapter.executeTool({
+    toolName: 'codex_chrome_chat_watcher_start',
+    input: {
+      tabId: 7,
+      origin: 'https://chat.example',
+      unreadSelector: '[data-unread]',
+      screenshotOnUnread: true
+    }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_chat_watcher_status',
+    input: { limit: 5 }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_chat_watcher_poll',
+    input: { watcherId: 'chat_watch_1' }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_chat_watcher_control',
+    input: { watcherId: 'chat_watch_1', action: 'pause' }
+  });
+
+  assert.deepEqual(calls.map((call) => [call.method, call.params]), [
+    ['operator.chatWatcher.start', {
+      agentId: 'agent-alpha',
+      tabId: 7,
+      origin: 'https://chat.example',
+      unreadSelector: '[data-unread]',
+      screenshotOnUnread: true
+    }],
+    ['operator.chatWatcher.status', { limit: 5 }],
+    ['operator.chatWatcher.poll', { watcherId: 'chat_watch_1' }],
+    ['operator.chatWatcher.pause', { watcherId: 'chat_watch_1' }]
+  ]);
 });
 
 test('CodexChromeToolAdapter refuses approval decision tools with mismatched decision text', async () => {

@@ -43,6 +43,22 @@ function runInstall(installDir, extraArgs = []) {
   ]);
 }
 
+function runInstallWithExtensionCopy(installDir, extraArgs = []) {
+  return runPowerShell([
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    INSTALL_SCRIPT,
+    '-InstallDir',
+    installDir,
+    '-RepoRoot',
+    ROOT,
+    '-SkipRegistry',
+    ...extraArgs
+  ]);
+}
+
 function runDoctor(installDir, extraArgs = []) {
   return runPowerShell([
     '-NoProfile',
@@ -143,6 +159,27 @@ test('doctor fails when installed config extension id drifts from the manifest i
   assert.ok(report.failedCodes.includes('CONFIG_EXTENSION_ID'));
   assert.equal(report.checks.configExtensionIdMatches.ok, false);
   assert.equal(report.checks.extensionIdFileMatches.ok, true);
+});
+
+test('doctor fails when installed unpacked extension drifts from repo extension', () => {
+  const installDir = tempInstallDir();
+  const install = runInstallWithExtensionCopy(installDir);
+  assert.equal(install.status, 0, install.stderr || install.stdout);
+
+  const installedBackground = path.join(installDir, 'extension-unpacked', 'background.js');
+  fs.appendFileSync(installedBackground, '\n// stale installed extension fixture\n', 'utf8');
+
+  const doctor = runDoctor(installDir);
+
+  assert.equal(doctor.status, 1);
+  const report = JSON.parse(doctor.stdout);
+  assert.equal(report.checks.installedExtensionSync.ok, false);
+  assert.ok(report.failedCodes.includes('INSTALLED_EXTENSION_SYNC'));
+  assert.notEqual(
+    report.checks.installedExtensionSync.details.repoHash,
+    report.checks.installedExtensionSync.details.installedHash
+  );
+  assert.ok(report.checks.installedExtensionSync.details.differentFiles.includes('background.js'));
 });
 
 test('uninstall removes runtime artifacts while preserving audit and screenshot logs by default', () => {

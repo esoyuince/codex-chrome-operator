@@ -135,7 +135,18 @@ test('MCP handler lists strict adapter tool schemas', async () => {
   assert.deepEqual(tabReadPage.inputSchema.required, ['tabId']);
   assert.ok(tabLocator);
   assert.deepEqual(tabLocator.inputSchema.required, ['tabId']);
-  assert.deepEqual(tabLocator.inputSchema.properties.action.enum, ['resolve', 'click', 'type', 'fill', 'focus', 'clear']);
+  assert.deepEqual(tabLocator.inputSchema.properties.action.enum, [
+    'resolve',
+    'click',
+    'type',
+    'fill',
+    'focus',
+    'clear',
+    'select',
+    'check',
+    'scroll',
+    'pressKey'
+  ]);
 });
 
 test('MCP handler calls session tab tools through the adapter', async () => {
@@ -510,7 +521,7 @@ test('MCP handler enriches approval, gate, policy, and manual handoff tool error
     params: {
       name: 'codex_chrome_click',
       arguments: {
-        origin: 'https://example.com',
+        tabId: 7,
         handle: 'el_1'
       }
     }
@@ -529,7 +540,7 @@ test('MCP handler enriches approval, gate, policy, and manual handoff tool error
     params: {
       name: 'codex_chrome_click',
       arguments: {
-        origin: 'https://example.com',
+        tabId: 7,
         handle: 'el_1'
       }
     }
@@ -545,7 +556,7 @@ test('MCP handler enriches approval, gate, policy, and manual handoff tool error
     params: {
       name: 'codex_chrome_observe',
       arguments: {
-        origin: 'https://example.com'
+        tabId: 7
       }
     }
   });

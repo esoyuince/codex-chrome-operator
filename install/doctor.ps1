@@ -154,6 +154,101 @@ function Test-TokenSecretStorage {
   }
 }
 
+function Get-Sha256FileHash {
+  param([string] $Path)
+
+  $stream = [System.IO.File]::OpenRead($Path)
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $digest = $sha.ComputeHash($stream)
+    return -join ($digest | ForEach-Object { $_.ToString("x2") })
+  } finally {
+    $stream.Dispose()
+    $sha.Dispose()
+  }
+}
+
+function Get-ExtensionTreeState {
+  param([string] $Path)
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return [ordered]@{
+      exists = $false
+      hash = $null
+      files = @{}
+    }
+  }
+
+  $root = [System.IO.Path]::GetFullPath($Path).TrimEnd("\")
+  $files = [ordered]@{}
+  $entries = @()
+  foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File | Sort-Object FullName)) {
+    $fullName = [System.IO.Path]::GetFullPath($file.FullName)
+    $relative = $fullName.Substring($root.Length).TrimStart("\").Replace("\", "/")
+    $hash = Get-Sha256FileHash $fullName
+    $files[$relative] = $hash
+    $entries += "$relative`0$hash"
+  }
+
+  $text = $entries -join "`n"
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($text)
+    $digest = $sha.ComputeHash($bytes)
+    $treeHash = -join ($digest | ForEach-Object { $_.ToString("x2") })
+  } finally {
+    $sha.Dispose()
+  }
+
+  return [ordered]@{
+    exists = $true
+    hash = $treeHash
+    files = $files
+  }
+}
+
+function Compare-ExtensionTrees {
+  param(
+    [string] $RepoExtensionDir,
+    [string] $InstalledExtensionDir
+  )
+
+  $repo = Get-ExtensionTreeState $RepoExtensionDir
+  $installed = Get-ExtensionTreeState $InstalledExtensionDir
+
+  if (-not $installed.exists) {
+    return [ordered]@{
+      ok = $true
+      skipped = $true
+      reason = "installed-extension-copy-missing"
+      repoHash = $repo.hash
+      installedHash = $null
+      missingFiles = @()
+      extraFiles = @()
+      differentFiles = @()
+    }
+  }
+
+  $repoNames = @($repo.files.Keys)
+  $installedNames = @($installed.files.Keys)
+  $missing = @($repoNames | Where-Object { -not $installed.files.Contains($_) } | Sort-Object)
+  $extra = @($installedNames | Where-Object { -not $repo.files.Contains($_) } | Sort-Object)
+  $different = @($repoNames | Where-Object {
+    $installed.files.Contains($_) -and $installed.files[$_] -ne $repo.files[$_]
+  } | Sort-Object)
+
+  return [ordered]@{
+    ok = $repo.exists -and $installed.exists -and $repo.hash -eq $installed.hash
+    skipped = $false
+    reason = $null
+    repoHash = $repo.hash
+    installedHash = $installed.hash
+    missingFiles = $missing
+    extraFiles = $extra
+    differentFiles = $different
+  }
+}
+
 $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
 $nodeVersion = $null
 $nodeMajorOk = $false
@@ -191,6 +286,7 @@ if (-not $NoInstallCheck) {
   $tokenPath = Join-Path $InstallDir "token.txt"
   $configPath = Join-Path $InstallDir "config.json"
   $extensionIdPath = Join-Path $InstallDir "extension-id.txt"
+  $extensionTarget = Join-Path $InstallDir "extension-unpacked"
   $registryPath = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.codex.chrome_operator"
 
   Add-Check "installDir" (Test-Path -LiteralPath $InstallDir) "INSTALL_DIR" "Install directory exists." ([ordered]@{ path = $InstallDir })
@@ -225,6 +321,18 @@ if (-not $NoInstallCheck) {
     path = $extensionIdPath
     installedExtensionId = $installedExtensionId
     manifestExtensionId = $expectedExtensionId
+  })
+
+  $extensionSync = Compare-ExtensionTrees (Join-Path $repoRoot "extension") $extensionTarget
+  Add-Check "installedExtensionSync" $extensionSync.ok "INSTALLED_EXTENSION_SYNC" "Installed unpacked extension matches the checked-in extension tree when present." ([ordered]@{
+    path = $extensionTarget
+    skipped = $extensionSync.skipped
+    reason = $extensionSync.reason
+    repoHash = $extensionSync.repoHash
+    installedHash = $extensionSync.installedHash
+    missingFiles = $extensionSync.missingFiles
+    extraFiles = $extensionSync.extraFiles
+    differentFiles = $extensionSync.differentFiles
   })
 
   $launcherContent = if (Test-Path -LiteralPath $launcherPath) { Get-Content -LiteralPath $launcherPath -Raw } else { $null }

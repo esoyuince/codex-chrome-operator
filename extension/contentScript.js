@@ -346,6 +346,105 @@ function isOccludedElement(element, rect) {
   }
 }
 
+function stableActionIdentityForElement(element) {
+  if (!element || !element.tagName || typeof element.getAttribute !== 'function') {
+    return '';
+  }
+  const tag = element.tagName.toLowerCase();
+  const type = String(element.getAttribute('type') || '').toLowerCase();
+  const role = implicitRoleForElement(element) || '';
+  const testid = element.getAttribute('data-testid') ||
+    element.getAttribute('data-test-id') ||
+    element.getAttribute('data-test') ||
+    '';
+  const id = element.id || '';
+  const name = element.getAttribute('name') || '';
+  const href = typeof element.href === 'string' && element.href
+    ? element.href
+    : element.getAttribute('href') || '';
+  const productId = element.getAttribute('data-product-id') || '';
+  const label = element.getAttribute('aria-label') ||
+    element.getAttribute('title') ||
+    element.getAttribute('placeholder') ||
+    '';
+  if (![testid, id, name, href, productId, label].some(Boolean)) {
+    return '';
+  }
+  return [
+    tag,
+    role,
+    type,
+    testid,
+    id,
+    name,
+    href,
+    productId,
+    label
+  ].join('|');
+}
+
+function preferReachableDuplicateElements(elements) {
+  const entries = elements.map((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      element,
+      identity: stableActionIdentityForElement(element),
+      occluded: isOccludedElement(element, rect) === true
+    };
+  });
+  const byIdentity = new Map();
+  for (const entry of entries) {
+    if (!entry.identity) {
+      continue;
+    }
+    const group = byIdentity.get(entry.identity) || [];
+    group.push(entry);
+    byIdentity.set(entry.identity, group);
+  }
+  const dropped = new Set();
+  for (const group of byIdentity.values()) {
+    if (group.length <= 1 || !group.some((entry) => !entry.occluded)) {
+      continue;
+    }
+    for (const entry of group) {
+      if (entry.occluded) {
+        dropped.add(entry.element);
+      }
+    }
+  }
+  return entries
+    .filter((entry) => !dropped.has(entry.element))
+    .map((entry) => entry.element);
+}
+
+function actionabilityErrorForElement(element, action) {
+  const rect = element && typeof element.getBoundingClientRect === 'function'
+    ? element.getBoundingClientRect()
+    : null;
+  if (!rect || rect.width <= 0 || rect.height <= 0 || !isVisible(element)) {
+    return {
+      code: 'ACTIONABILITY_FAILED',
+      message: 'The target element is not visible enough for this action.',
+      reason: 'TARGET_NOT_VISIBLE',
+      action
+    };
+  }
+  if (isOccludedElement(element, rect) === true) {
+    return {
+      code: 'ACTIONABILITY_FAILED',
+      message: 'The target element is covered by another element at the input location.',
+      reason: 'TARGET_OCCLUDED',
+      action,
+      freshObservationRequired: true
+    };
+  }
+  return null;
+}
+
+function actionRequiresReachableTarget(action) {
+  return ['type', 'fill', 'clear', 'focus', 'pressKey'].includes(action);
+}
+
 function elementSummary(element, handle, options = {}) {
   const rect = element.getBoundingClientRect();
   const dataRisk = element.getAttribute('data-risk') || null;
@@ -610,12 +709,12 @@ function collectFrameSummaries() {
 }
 
 function collectObservedElements() {
-  return [...new Set([
+  return preferReachableDuplicateElements([...new Set([
     ...collectFocusedElements(),
     ...collectInteractiveElements(),
     ...collectVisualElements(),
     ...collectUploadElements()
-  ])].slice(0, 300);
+  ])]).slice(0, 300);
 }
 
 var lastObservationSummaries = globalThis.__codexLastObservationSummaries || new Map();
@@ -1943,6 +2042,13 @@ async function runAction(message) {
     return { ok: false, error: resolved.error };
   }
   const element = resolved.element;
+
+  if (actionRequiresReachableTarget(message.action)) {
+    const actionabilityError = actionabilityErrorForElement(element, message.action);
+    if (actionabilityError) {
+      return { ok: false, error: actionabilityError };
+    }
+  }
 
   if (message.action === 'click') {
     if (!(message.policy && message.policy.highRiskEnabled === false)) {

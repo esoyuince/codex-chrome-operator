@@ -136,6 +136,35 @@ class AuditLog {
         }
       });
   }
+
+  timeline({ limit = 50 } = {}) {
+    return this.tail({ limit }).map((entry) => {
+      const timelineEntry = {
+        timestamp: entry.timestamp || null,
+        requestId: entry.requestId || null,
+        sessionId: entry.sessionId || null,
+        agentId: entry.agentId || null,
+        connectionId: entry.connectionId || null,
+        bridgeInstanceId: entry.bridgeInstanceId || null,
+        tabId: Number.isInteger(entry.tabId) ? entry.tabId : null,
+        method: entry.method || null,
+        mode: entry.mode || null,
+        origin: entry.origin || null,
+        actionKind: entry.actionKind || null,
+        result: entry.result || null
+      };
+      if (entry.errorCode) {
+        timelineEntry.errorCode = entry.errorCode;
+      }
+      if (entry.targetSummary) {
+        timelineEntry.targetSummary = entry.targetSummary;
+      }
+      if (entry.boundedFullAuto) {
+        timelineEntry.boundedFullAuto = entry.boundedFullAuto;
+      }
+      return timelineEntry;
+    });
+  }
 }
 
 module.exports = {

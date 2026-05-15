@@ -1,7 +1,7 @@
 'use strict';
 
 const ADAPTER_PROTOCOL_VERSION = '1.0';
-const TOOL_SCHEMA_VERSION = '2026-05-01.m1';
+const TOOL_SCHEMA_VERSION = '2026-05-15.session-tabs';
 
 const READ_PAGE_PROPERTIES = {
   origin: { type: 'string' },
@@ -11,6 +11,26 @@ const READ_PAGE_PROPERTIES = {
   refId: { type: 'string' },
   includeFormValues: { type: 'boolean' },
   maxFieldValueChars: { type: 'number', minimum: 0 }
+};
+
+const AGENT_CONTEXT_PROPERTIES = {
+  agentId: { type: 'string' }
+};
+
+const TAB_READ_PAGE_PROPERTIES = {
+  ...AGENT_CONTEXT_PROPERTIES,
+  tabId: { type: 'number', minimum: 0 },
+  filter: READ_PAGE_PROPERTIES.filter,
+  depth: READ_PAGE_PROPERTIES.depth,
+  maxChars: READ_PAGE_PROPERTIES.maxChars,
+  refId: READ_PAGE_PROPERTIES.refId,
+  includeFormValues: READ_PAGE_PROPERTIES.includeFormValues,
+  maxFieldValueChars: READ_PAGE_PROPERTIES.maxFieldValueChars
+};
+
+const TAB_ACTION_CONTEXT_PROPERTIES = {
+  ...AGENT_CONTEXT_PROPERTIES,
+  tabId: { type: 'number', minimum: 0 }
 };
 
 const OBSERVE_OPTION_PROPERTIES = {
@@ -404,7 +424,8 @@ const TOOL_DEFINITIONS = [
       additionalProperties: false,
       properties: {
         sessionId: { type: 'string' },
-        claim: { type: 'boolean' }
+        claim: { type: 'boolean' },
+        ...AGENT_CONTEXT_PROPERTIES
       },
       required: []
     },
@@ -456,6 +477,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
+        ...AGENT_CONTEXT_PROPERTIES,
         tabId: { type: 'number', minimum: 0 }
       },
       required: ['tabId']
@@ -471,7 +493,9 @@ const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: {},
+      properties: {
+        ...AGENT_CONTEXT_PROPERTIES
+      },
       required: []
     },
     outputContract: {
@@ -486,6 +510,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
+        ...AGENT_CONTEXT_PROPERTIES,
         tabId: { type: 'number', minimum: 0 }
       },
       required: ['tabId']
@@ -502,6 +527,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
+        ...AGENT_CONTEXT_PROPERTIES,
         tabId: { type: 'number', minimum: 0 },
         pinned: { type: 'boolean' }
       },
@@ -519,6 +545,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
+        ...AGENT_CONTEXT_PROPERTIES,
         tabId: { type: 'number', minimum: 0 },
         index: { type: 'number', minimum: 0 },
         windowId: { type: 'number', minimum: 0 }
@@ -553,7 +580,9 @@ const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: {},
+      properties: {
+        ...AGENT_CONTEXT_PROPERTIES
+      },
       required: []
     },
     outputContract: {
@@ -584,6 +613,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
+        ...AGENT_CONTEXT_PROPERTIES,
         keep: {
           type: 'array',
           items: SESSION_TAB_KEEP_SCHEMA
@@ -628,13 +658,100 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'codex_chrome_audit_timeline',
+    description: 'Return a redacted local timeline of operator observe/action/policy/approval events without raw params.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        limit: { type: 'number', minimum: 1 }
+      },
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_chat_watcher_start',
+    description: 'Start an experimental observe-only watcher for an allowlisted chat origin on a session-owned tab.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        ...AGENT_CONTEXT_PROPERTIES,
+        tabId: { type: 'number', minimum: 0 },
+        origin: { type: 'string' },
+        unreadSelector: { type: 'string' },
+        label: { type: 'string' },
+        intervalMs: { type: 'number', minimum: 5000 },
+        screenshotOnUnread: { type: 'boolean' }
+      },
+      required: ['tabId', 'origin', 'unreadSelector']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_chat_watcher_status',
+    description: 'Return redacted observe-only chat watcher state and unread event metadata.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        limit: { type: 'number', minimum: 0 }
+      },
+      required: []
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_chat_watcher_poll',
+    description: 'Poll an experimental observe-only chat watcher for unread events, optionally capturing artifact-backed screenshots when configured.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        watcherId: { type: 'string' }
+      },
+      required: ['watcherId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_chat_watcher_control',
+    description: 'Pause, resume, or stop an experimental observe-only chat watcher.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        watcherId: { type: 'string' },
+        action: { type: 'string', enum: ['pause', 'resume', 'stop'] }
+      },
+      required: ['watcherId', 'action']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
     name: 'codex_chrome_tab_screenshot',
     description: 'Capture an artifact-backed screenshot of a session-owned Chrome tab through the guarded CDP path.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        tabId: { type: 'number', minimum: 0 },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         format: { type: 'string', enum: ['png', 'jpeg', 'webp'] },
         quality: { type: 'number', minimum: 1 }
       },
@@ -652,7 +769,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        tabId: { type: 'number', minimum: 0 },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         accept: { type: 'boolean' },
         promptText: { type: 'string' }
       },
@@ -670,7 +787,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        tabId: { type: 'number', minimum: 0 },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         url: { type: 'string', format: 'uri' }
       },
       required: ['tabId', 'url']
@@ -687,7 +804,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        tabId: { type: 'number', minimum: 0 },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         ...OBSERVE_OPTION_PROPERTIES
       },
       required: ['tabId']
@@ -704,7 +821,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        tabId: { type: 'number', minimum: 0 },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         filter: READ_PAGE_PROPERTIES.filter,
         depth: READ_PAGE_PROPERTIES.depth,
         maxChars: READ_PAGE_PROPERTIES.maxChars,
@@ -726,14 +843,20 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        tabId: { type: 'number', minimum: 0 },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
+        handle: { type: 'string' },
         selector: { type: 'string' },
         text: { type: 'string' },
         action: {
           type: 'string',
-          enum: ['resolve', 'click', 'type', 'fill', 'focus', 'clear']
+          enum: ['resolve', 'click', 'type', 'fill', 'focus', 'clear', 'select', 'check', 'scroll', 'pressKey']
         },
         textValue: { type: 'string' },
+        value: { type: 'string' },
+        checked: { type: 'boolean' },
+        deltaX: { type: 'number' },
+        deltaY: { type: 'number' },
+        key: { type: 'string' },
         includeFormValues: OBSERVE_OPTION_PROPERTIES.includeFormValues,
         maxFieldValueChars: OBSERVE_OPTION_PROPERTIES.maxFieldValueChars,
         ...POST_ACTION_SNAPSHOT_PROPERTIES
@@ -752,7 +875,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        tabId: { type: 'number', minimum: 0 },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         handle: { type: 'string' },
         selector: { type: 'string' },
         text: { type: 'string' },
@@ -772,7 +895,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        tabId: { type: 'number', minimum: 0 },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         active: { type: 'boolean' },
         label: { type: 'string' },
         stopReason: { type: 'string' }
@@ -805,15 +928,15 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'codex_chrome_observe',
-    description: 'Return a DOM observation for an approved active tab origin.',
+    description: 'Return a DOM observation from a session-owned Chrome tab.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        origin: { type: 'string' },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         ...OBSERVE_OPTION_PROPERTIES
       },
-      required: ['origin']
+      required: ['tabId']
     },
     outputContract: {
       untrusted: true,
@@ -822,12 +945,12 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'codex_chrome_read_page',
-    description: 'Return compact accessibility-like page text for an approved active tab origin.',
+    description: 'Return compact accessibility-like page text from a session-owned Chrome tab.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: READ_PAGE_PROPERTIES,
-      required: ['origin']
+      properties: TAB_READ_PAGE_PROPERTIES,
+      required: ['tabId']
     },
     outputContract: {
       untrusted: true,
@@ -859,7 +982,7 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        origin: { type: 'string' },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         actions: {
           type: 'array',
           minItems: 1,
@@ -867,7 +990,7 @@ const TOOL_DEFINITIONS = [
         },
         stopOnError: { type: 'boolean' }
       },
-      required: ['origin', 'actions']
+      required: ['tabId', 'actions']
     },
     outputContract: {
       untrusted: true,
@@ -1071,12 +1194,12 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        origin: { type: 'string' },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         handle: { type: 'string' },
         text: { type: 'string' },
         ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
-      required: ['origin', 'handle', 'text']
+      required: ['tabId', 'handle', 'text']
     },
     outputContract: {
       untrusted: true,
@@ -1090,12 +1213,12 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        origin: { type: 'string' },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         handle: { type: 'string' },
         text: { type: 'string' },
         ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
-      required: ['origin', 'handle', 'text']
+      required: ['tabId', 'handle', 'text']
     },
     outputContract: {
       untrusted: true,
@@ -1109,11 +1232,11 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        origin: { type: 'string' },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         handle: { type: 'string' },
         ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
-      required: ['origin', 'handle']
+      required: ['tabId', 'handle']
     },
     outputContract: {
       untrusted: true,
@@ -1127,11 +1250,11 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        origin: { type: 'string' },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         handle: { type: 'string' },
         ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
-      required: ['origin', 'handle']
+      required: ['tabId', 'handle']
     },
     outputContract: {
       untrusted: true,
@@ -1145,12 +1268,12 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        origin: { type: 'string' },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         handle: { type: 'string' },
         value: { type: 'string' },
         ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
-      required: ['origin', 'handle', 'value']
+      required: ['tabId', 'handle', 'value']
     },
     outputContract: {
       untrusted: true,
@@ -1164,12 +1287,12 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        origin: { type: 'string' },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         handle: { type: 'string' },
         checked: { type: 'boolean' },
         ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
-      required: ['origin', 'handle', 'checked']
+      required: ['tabId', 'handle', 'checked']
     },
     outputContract: {
       untrusted: true,
@@ -1183,13 +1306,13 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        origin: { type: 'string' },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         handle: { type: 'string' },
         deltaX: { type: 'number' },
         deltaY: { type: 'number' },
         ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
-      required: ['origin', 'handle', 'deltaX', 'deltaY']
+      required: ['tabId', 'handle', 'deltaX', 'deltaY']
     },
     outputContract: {
       untrusted: true,
@@ -1203,12 +1326,12 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        origin: { type: 'string' },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         handle: { type: 'string' },
         key: { type: 'string' },
         ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
-      required: ['origin', 'handle', 'key']
+      required: ['tabId', 'handle', 'key']
     },
     outputContract: {
       untrusted: true,
@@ -1222,11 +1345,11 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       additionalProperties: false,
       properties: {
-        origin: { type: 'string' },
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
         handle: { type: 'string' },
         ...POST_ACTION_SNAPSHOT_PROPERTIES
       },
-      required: ['origin', 'handle']
+      required: ['tabId', 'handle']
     },
     outputContract: {
       untrusted: true,

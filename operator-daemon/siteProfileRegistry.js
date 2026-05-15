@@ -4,6 +4,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { ERROR_CODES } = require('./protocol');
 
+const REQUIRED_CART_BLOCKED_ACTIONS = Object.freeze([
+  'checkout',
+  'payment',
+  'order-placement',
+  'address-change'
+]);
+
+const REQUIRED_CART_EVIDENCE = Object.freeze([
+  'product-card-extraction',
+  'detail-recheck',
+  'cart-verification',
+  'checkout-blocked'
+]);
+
 function defaultSiteProfileDir() {
   return path.resolve(__dirname, '..', 'siteProfiles');
 }
@@ -63,9 +77,18 @@ function normalizeProfile(profile, file) {
     throw validationError(file, 'riskPolicy.allowAddToCart must be true.');
   }
   requireStringArray(profile.riskPolicy, file, 'blockedActionKinds');
-  for (const action of ['checkout', 'payment', 'order-placement']) {
+  for (const action of REQUIRED_CART_BLOCKED_ACTIONS) {
     if (!profile.riskPolicy.blockedActionKinds.includes(action)) {
       throw validationError(file, `riskPolicy.blockedActionKinds must include ${action}.`);
+    }
+  }
+  if (profile.riskPolicy.stopAfter !== 'cart-verification') {
+    throw validationError(file, 'riskPolicy.stopAfter must be cart-verification.');
+  }
+  requireStringArray(profile, file, 'evidenceRequirements');
+  for (const evidence of REQUIRED_CART_EVIDENCE) {
+    if (!profile.evidenceRequirements.includes(evidence)) {
+      throw validationError(file, `evidenceRequirements must include ${evidence}.`);
     }
   }
 

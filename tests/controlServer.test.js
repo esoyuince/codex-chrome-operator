@@ -50,8 +50,8 @@ function verifiedHello(capabilities = ['observe.v1', 'visualObserve.v1']) {
     type: 'HELLO',
     protocolVersion: '1.0',
     extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-    extensionVersion: '0.2.12',
-    bridgeVersion: '0.2.12',
+    extensionVersion: '0.2.13',
+    bridgeVersion: '0.2.13',
     sessionBootstrapId: `boot_${Date.now()}`,
     profileBindingState: 'bound',
     profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -77,6 +77,27 @@ function boundedFullAutoContract(overrides = {}) {
     },
     auditRequired: true,
     emergencyStopRequired: true,
+    ...overrides
+  };
+}
+
+function approvalTargetContract(overrides = {}) {
+  return {
+    version: 1,
+    handle: 'el_state_a_0',
+    tag: 'button',
+    role: 'button',
+    label: 'Publish',
+    accessibleName: 'Publish',
+    testid: 'publish-button',
+    data: { testid: 'publish-button' },
+    bbox: { x: 10, y: 20, width: 90, height: 30 },
+    context: {
+      url: 'http://127.0.0.1:18888/page-a',
+      viewport: { width: 1280, height: 720 },
+      scroll: { x: 0, y: 0 },
+      devicePixelRatio: 1
+    },
     ...overrides
   };
 }
@@ -393,6 +414,23 @@ test('extension.hello and tab updates expose active tab in operator.status', asy
   });
 });
 
+test('operator.status exposes the loaded Chrome extension version and hash from HELLO', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    const hello = verifiedHello();
+    hello.loadedExtensionHash = 'sha256:loaded-fixture-hash';
+
+    const connected = await postJson(baseUrl, 'extension.hello', { hello });
+    assert.equal(connected.body.ok, true);
+
+    const status = await postJson(baseUrl, 'operator.status', { detail: 'compact' });
+    assert.equal(status.body.ok, true);
+    assert.equal(status.body.result.version.extensionVersion, '0.2.13');
+    assert.equal(status.body.result.version.loadedExtensionVersion, '0.2.13');
+    assert.equal(status.body.result.version.loadedBridgeVersion, '0.2.13');
+    assert.equal(status.body.result.version.loadedExtensionHash, 'sha256:loaded-fixture-hash');
+  });
+});
+
 test('extension active-tab warmup caches observe and compact read results without queueing', async () => {
   await withServer(makeSession(), async (baseUrl) => {
     await connectAndAuthorize(baseUrl);
@@ -585,7 +623,8 @@ test('warm session observe cache is bypassed for explicit non-matching compact o
     assert.deepEqual(command.body.result.command.params, {
       origin: 'https://example.com',
       mode: 'full',
-      sincePageStateId: 'previous_state'
+      sincePageStateId: 'previous_state',
+      expectedActiveTabId: 7
     });
 
     await postJson(baseUrl, 'bridge.deliver', {
@@ -1049,8 +1088,8 @@ test('extension.hello connects without requiring profile binding', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1077,8 +1116,8 @@ test('extension.hello accepts unbound legacy state and unlocks guarded page work
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_setup',
         profileBindingState: 'missing',
         profileBindingSource: 'chrome.storage.local',
@@ -1118,7 +1157,7 @@ test('extension.hello rejects daemon extension bridge version mismatch', async (
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
         extensionVersion: '0.3.0',
-        bridgeVersion: '0.2.12',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1134,10 +1173,10 @@ test('extension.hello rejects daemon extension bridge version mismatch', async (
     const status = await postJson(baseUrl, 'operator.status');
     assert.equal(status.body.result.connectionState, 'DAEMON_RUNNING_EXTENSION_DISCONNECTED');
     assert.equal(status.body.result.version.protocolVersion, '1.0');
-    assert.equal(status.body.result.version.extensionVersion, '0.2.12');
-    assert.equal(status.body.result.version.bridgeVersion, '0.2.12');
+    assert.equal(status.body.result.version.extensionVersion, '0.2.13');
+    assert.equal(status.body.result.version.bridgeVersion, '0.2.13');
     assert.equal(status.body.result.version.lastMismatch.code, ERROR_CODES.EXTENSION_VERSION_MISMATCH);
-    assert.equal(status.body.result.version.lastMismatch.expectedExtensionVersion, '0.2.12');
+    assert.equal(status.body.result.version.lastMismatch.expectedExtensionVersion, '0.2.13');
     assert.equal(status.body.result.version.lastMismatch.actualExtensionVersion, '0.3.0');
   });
 });
@@ -1149,8 +1188,8 @@ test('page.observe queues once profile and domain are ready without per-site hos
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1559,8 +1598,8 @@ test('page.visualObserve queues once profile and domain are ready without per-si
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1606,8 +1645,8 @@ test('page.observe queues extension command and resolves from bridge delivery', 
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -1926,8 +1965,8 @@ test('page.visualObserve queues extension command and resolves from bridge deliv
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2089,8 +2128,8 @@ test('operator.screenshots.cleanup removes stored visual artifacts', async () =>
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2585,8 +2624,8 @@ test('operator.emergencyStop cancels pending page actions and blocks new ones un
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2665,8 +2704,8 @@ test('extension disconnect cancels pending commands and reconnect requires a fre
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2724,8 +2763,8 @@ test('extension disconnect cancels pending commands and reconnect requires a fre
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_def',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2747,8 +2786,8 @@ test('successful page command clears stale lastError', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2808,8 +2847,8 @@ test('local high-risk click can be approved and replayed once', async () => {
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2878,6 +2917,223 @@ test('local high-risk click can be approved and replayed once', async () => {
   });
 });
 
+test('approval replay fails when the approved target page state changed', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: verifiedHello(['observe.v1']),
+      activeTab: {
+        id: 7,
+        windowId: 1,
+        url: 'http://127.0.0.1:18888/page-a',
+        title: 'Publish A',
+        status: 'complete'
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'http://127.0.0.1:18888'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'http://127.0.0.1:18888'
+    });
+
+    const targetContract = approvalTargetContract();
+    const clickPromise = postJson(baseUrl, 'page.click', {
+      origin: 'http://127.0.0.1:18888',
+      handle: 'el_state_a_0',
+      targetContract
+    });
+    const blockedCommand = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(blockedCommand.body.result.command.method, 'page.click');
+    assert.equal(blockedCommand.body.result.command.params.expectedActiveTabId, 7);
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: blockedCommand.body.result.command.commandId,
+      activeTab: {
+        id: 7,
+        windowId: 1,
+        url: 'http://127.0.0.1:18888/page-a',
+        title: 'Publish A',
+        status: 'complete'
+      },
+      response: {
+        ok: false,
+        error: {
+          code: ERROR_CODES.HIGH_RISK_BLOCKED,
+          approvalKind: 'publish',
+          targetSummary: 'button: Publish'
+        }
+      }
+    });
+
+    const blocked = await clickPromise;
+    const approvalId = blocked.body.error.approvalId;
+    const approvals = await postJson(baseUrl, 'operator.approvals.list');
+    const approvalRecord = approvals.body.result.approvals.find((approval) => approval.approvalId === approvalId);
+    assert.equal(approvalRecord.sessionId.startsWith('session_'), true);
+    assert.match(approvalRecord.connectionId, /^conn_/);
+    assert.equal(approvalRecord.tabId, 7);
+    assert.equal(approvalRecord.expectedActiveTabId, 7);
+    assert.equal(approvalRecord.url, 'http://127.0.0.1:18888/page-a');
+    assert.equal(approvalRecord.pageStateId, 'state_a');
+    assert.match(approvalRecord.targetContractHash, /^[a-f0-9]{64}$/);
+    assert.match(approvalRecord.paramsHash, /^[a-f0-9]{64}$/);
+    assert.equal(Number.isFinite(Date.parse(approvalRecord.expiresAt)), true);
+    await postJson(baseUrl, 'operator.approvals.approve', { approvalId });
+
+    const runPromise = postJson(baseUrl, 'operator.approvals.run', { approvalId });
+    const reobserveCommand = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(reobserveCommand.body.result.command.method, 'page.observe');
+    assert.equal(reobserveCommand.body.result.command.params.expectedActiveTabId, 7);
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: reobserveCommand.body.result.command.commandId,
+      activeTab: {
+        id: 7,
+        windowId: 1,
+        url: 'http://127.0.0.1:18888/page-a',
+        title: 'Publish A',
+        status: 'complete'
+      },
+      response: {
+        ok: true,
+        result: {
+          origin: 'http://127.0.0.1:18888',
+          url: 'http://127.0.0.1:18888/page-a',
+          title: 'Publish A',
+          pageStateId: 'state_b',
+          elements: [{
+            handle: 'el_state_b_0',
+            label: 'Publish',
+            targetContract: approvalTargetContract({
+              handle: 'el_state_b_0'
+            })
+          }]
+        }
+      }
+    });
+
+    const replayed = await runPromise;
+    assert.equal(replayed.body.ok, false);
+    assert.equal(replayed.body.error.code, 'APPROVAL_CONTEXT_MISMATCH');
+    assert.equal(replayed.body.error.approvalId, approvalId);
+    assert.equal(replayed.body.error.reason, 'page-state-mismatch');
+
+    const emptyQueue = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(emptyQueue.body.result.command, null);
+  });
+});
+
+test('approval replay fails when the active same-origin tab changed before replay', async () => {
+  await withServer(makeSession(), async (baseUrl) => {
+    await postJson(baseUrl, 'extension.hello', {
+      hello: verifiedHello(['observe.v1']),
+      activeTab: {
+        id: 7,
+        windowId: 1,
+        url: 'http://127.0.0.1:18888/page-a',
+        title: 'Publish A',
+        status: 'complete'
+      }
+    });
+    await postJson(baseUrl, 'operator.approveDomain', {
+      origin: 'http://127.0.0.1:18888'
+    });
+    await postJson(baseUrl, 'extension.hostPermissionGranted', {
+      origin: 'http://127.0.0.1:18888'
+    });
+
+    const clickPromise = postJson(baseUrl, 'page.click', {
+      origin: 'http://127.0.0.1:18888',
+      handle: 'el_state_a_0',
+      targetContract: approvalTargetContract()
+    });
+    const blockedCommand = await postJson(baseUrl, 'bridge.poll');
+    await postJson(baseUrl, 'bridge.deliver', {
+      commandId: blockedCommand.body.result.command.commandId,
+      activeTab: {
+        id: 7,
+        windowId: 1,
+        url: 'http://127.0.0.1:18888/page-a',
+        title: 'Publish A',
+        status: 'complete'
+      },
+      response: {
+        ok: false,
+        error: {
+          code: ERROR_CODES.HIGH_RISK_BLOCKED,
+          approvalKind: 'publish',
+          targetSummary: 'button: Publish'
+        }
+      }
+    });
+
+    const blocked = await clickPromise;
+    const approvalId = blocked.body.error.approvalId;
+    await postJson(baseUrl, 'extension.activeTabUpdated', {
+      activeTab: {
+        id: 8,
+        windowId: 1,
+        url: 'http://127.0.0.1:18888/page-b',
+        title: 'Publish B',
+        status: 'complete'
+      }
+    });
+    await postJson(baseUrl, 'operator.approvals.approve', { approvalId });
+
+    const replayed = await postJson(baseUrl, 'operator.approvals.run', { approvalId });
+    assert.equal(replayed.body.ok, false);
+    assert.equal(replayed.body.error.code, 'APPROVAL_CONTEXT_MISMATCH');
+    assert.equal(replayed.body.error.approvalId, approvalId);
+    assert.equal(replayed.body.error.reason, 'active-tab-mismatch');
+
+    const emptyQueue = await postJson(baseUrl, 'bridge.poll');
+    assert.equal(emptyQueue.body.result.command, null);
+  });
+});
+
+test('emergency stop invalidates pending and approved approval records', async () => {
+  await withServer(makeSession(), async (baseUrl, session) => {
+    const now = new Date().toISOString();
+    session.pendingApprovals.set('approval_pending', {
+      approvalId: 'approval_pending',
+      status: 'pending',
+      method: 'page.click',
+      origin: 'http://127.0.0.1:18888',
+      params: { origin: 'http://127.0.0.1:18888', handle: 'el_state_a_0' },
+      approvalKind: 'publish',
+      targetSummary: 'button: Publish',
+      createdAt: now
+    });
+    session.pendingApprovals.set('approval_approved', {
+      approvalId: 'approval_approved',
+      status: 'approved',
+      method: 'page.click',
+      origin: 'http://127.0.0.1:18888',
+      params: { origin: 'http://127.0.0.1:18888', handle: 'el_state_a_1' },
+      approvalKind: 'publish',
+      targetSummary: 'button: Publish',
+      createdAt: now,
+      approvedAt: now
+    });
+
+    const stopped = await postJson(baseUrl, 'operator.emergencyStop', {
+      reason: 'unit test stop'
+    });
+    assert.equal(stopped.body.ok, true);
+    assert.equal(stopped.body.result.invalidatedApprovals, 2);
+
+    const approvals = await postJson(baseUrl, 'operator.approvals.list');
+    const byId = new Map(approvals.body.result.approvals.map((approval) => [approval.approvalId, approval]));
+    assert.equal(byId.get('approval_pending').status, 'invalidated');
+    assert.equal(byId.get('approval_pending').invalidationReason, 'emergency-stop');
+    assert.equal(byId.get('approval_approved').status, 'invalidated');
+    assert.equal(byId.get('approval_approved').invalidationReason, 'emergency-stop');
+
+    const pending = await postJson(baseUrl, 'operator.approvals.list', { status: 'pending' });
+    assert.deepEqual(pending.body.result.approvals, []);
+    const approved = await postJson(baseUrl, 'operator.approvals.list', { status: 'approved' });
+    assert.deepEqual(approved.body.result.approvals, []);
+  });
+});
+
 test('real-origin high-risk approval is blocked when profile confidence is low', async () => {
   await withServer(makeSession(), async (baseUrl, session) => {
     await postJson(baseUrl, 'extension.hello', {
@@ -2885,8 +3141,8 @@ test('real-origin high-risk approval is blocked when profile confidence is low',
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',
@@ -2940,8 +3196,8 @@ test('gate handoff errors pause actions without creating approval requests', asy
         type: 'HELLO',
         protocolVersion: '1.0',
         extensionId: 'abcdefghijklmnopabcdefghijklmnop',
-        extensionVersion: '0.2.12',
-        bridgeVersion: '0.2.12',
+        extensionVersion: '0.2.13',
+        bridgeVersion: '0.2.13',
         sessionBootstrapId: 'boot_abc',
         profileBindingState: 'bound',
         profileBindingId: 'profbind_8Qw3z6NqfK2p9xV1',

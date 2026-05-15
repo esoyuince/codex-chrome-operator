@@ -441,7 +441,7 @@ function loadContentScript(rootElement) {
     chrome: {
       runtime: {
         getManifest() {
-          return { version: '0.2.12' };
+          return { version: '0.2.13' };
         },
         sendMessage(message) {
           runtimeMessages.push(message);
@@ -964,7 +964,7 @@ test('content script tolerates duplicate injection without duplicate listener re
   const observed = await content.send({ type: 'content.observe' });
 
   assert.equal(observed.origin, 'https://example.com');
-  assert.equal(observed.contentScriptVersion, '0.2.12');
+  assert.equal(observed.contentScriptVersion, '0.2.13');
   assert.equal(observed.elements.length, 1);
 });
 
@@ -1297,6 +1297,39 @@ test('content observe marks UI graph nodes occluded when hit testing finds an ov
 
   assert.equal(node.states.occluded, true);
   assert.ok(node.evidence.includes('hit-test-occluded'));
+});
+
+test('content locator skips occluded duplicate rich text editors', async () => {
+  const staleComposer = element('div', {
+    role: 'textbox',
+    contenteditable: 'true',
+    'data-testid': 'tweetTextarea_0',
+    text: 'Stale composer'
+  });
+  staleComposer.getBoundingClientRect = () => ({ x: 470, y: 111, width: 514, height: 204 });
+  const visibleComposer = element('div', {
+    role: 'textbox',
+    contenteditable: 'true',
+    'data-testid': 'tweetTextarea_0',
+    text: ''
+  });
+  visibleComposer.getBoundingClientRect = () => ({ x: 470, y: 111, width: 514, height: 204 });
+  const root = element('main', {}, [staleComposer, visibleComposer]);
+  const content = loadContentScript(root);
+
+  const observed = await content.send({
+    type: 'content.observe',
+    maxActionableHandles: 10
+  });
+  const resolved = await content.send({
+    type: 'content.resolveLocator',
+    selector: '[data-testid="tweetTextarea_0"]',
+    maxActionableHandles: 10
+  });
+
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.result.target.handle, observed.elements.find((entry) => entry.label === '').handle);
+  assert.equal(observed.elements.some((entry) => entry.label === 'Stale composer'), false);
 });
 
 test('content observe reports inaccessible cross-origin iframe boundaries', async () => {

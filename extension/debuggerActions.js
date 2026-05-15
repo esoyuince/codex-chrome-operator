@@ -20,6 +20,16 @@
   const RUNTIME_TEXT_PREFERENCE_TTL_MS = 2 * 60 * 1000;
   const RUNTIME_TEXT_PREFERENCE_LIMIT = 64;
   const runtimeTextPreferences = new Map();
+  let debuggerOperationLock = Promise.resolve();
+
+  function withDebuggerOperationLock(operation) {
+    const previous = debuggerOperationLock;
+    const next = previous
+      .catch(() => null)
+      .then(operation);
+    debuggerOperationLock = next.catch(() => null);
+    return next;
+  }
 
   function compactIdentityValue(value) {
     const text = String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -221,6 +231,28 @@
       `chrome.debugger.sendCommand(${method})`,
       (done) => chromeApi.debugger.sendCommand(target, method, params, done),
       timeoutMs
+    );
+  }
+
+  function actionUsesCdpInput(action) {
+    return action === 'click' || action === 'type';
+  }
+
+  async function activateTabForCdpInput(chromeApi, tab, timeoutMs) {
+    if (
+      !chromeApi ||
+      !chromeApi.tabs ||
+      typeof chromeApi.tabs.update !== 'function' ||
+      !tab ||
+      !Number.isInteger(tab.id)
+    ) {
+      return null;
+    }
+    return callbackApi(
+      chromeApi,
+      'chrome.tabs.update(active)',
+      (done) => chromeApi.tabs.update(tab.id, { active: true }, done),
+      Math.min(timeoutMs || DEBUGGER_TIMEOUT_MS, 3000)
     );
   }
 
@@ -445,7 +477,19 @@
       };
     }
 
+    function viewportHitTestingAvailable() {
+      const viewportWidth = Number(window.innerWidth);
+      const viewportHeight = Number(window.innerHeight);
+      return Number.isFinite(viewportWidth) &&
+        Number.isFinite(viewportHeight) &&
+        viewportWidth > 1 &&
+        viewportHeight > 1;
+    }
+
     function clampPointerPoint(point, box) {
+      if (!viewportHitTestingAvailable()) {
+        return point;
+      }
       const viewportWidth = Number(window.innerWidth);
       const viewportHeight = Number(window.innerHeight);
       const maxX = Math.max(1, (Number.isFinite(viewportWidth) && viewportWidth > 0
@@ -570,6 +614,18 @@
           }
         };
       }
+      if (!viewportHitTestingAvailable()) {
+        return {
+          ok: true,
+          point: center,
+          actionability: {
+            visible: true,
+            enabled: true,
+            receivesEvents: null,
+            reason: 'VIEWPORT_HIT_TEST_UNAVAILABLE'
+          }
+        };
+      }
 
       let firstBlocked = null;
       for (let index = 0; index < candidates.length; index += 1) {
@@ -595,6 +651,81 @@
       return actionabilityFailure(
         'TARGET_OCCLUDED',
         'The target element is covered by another element at the pointer location.',
+        {
+          blocker: elementDescriptor(firstBlocked && firstBlocked.hit),
+          point: firstBlocked ? firstBlocked.point : center
+        }
+      );
+    }
+
+    function actionRequiresReachableTarget(action) {
+      return ['type', 'fill', 'clear', 'focus', 'pressKey'].includes(action);
+    }
+
+    function resolveInputActionability(element, box, target) {
+      const candidates = pointerPointCandidates(box);
+      const center = candidates[0] || boxCenter(box);
+      if (targetReportsCurrentOcclusion(target, element)) {
+        return actionabilityFailure(
+          'TARGET_OCCLUDED',
+          'The current observation marked the target as occluded.',
+          {
+            blocker: null,
+            point: center,
+            observedOccluded: true
+          }
+        );
+      }
+      if (typeof document.elementFromPoint !== 'function') {
+        return {
+          ok: true,
+          actionability: {
+            visible: true,
+            enabled: true,
+            receivesEvents: null,
+            reason: 'ELEMENT_FROM_POINT_UNAVAILABLE'
+          }
+        };
+      }
+      if (!viewportHitTestingAvailable()) {
+        return {
+          ok: true,
+          actionability: {
+            visible: true,
+            enabled: true,
+            receivesEvents: null,
+            reason: 'VIEWPORT_HIT_TEST_UNAVAILABLE'
+          }
+        };
+      }
+
+      let firstBlocked = null;
+      for (let index = 0; index < candidates.length; index += 1) {
+        const point = candidates[index];
+        const hit = document.elementFromPoint(point.x, point.y);
+        if (
+          hit === element ||
+          (element && typeof element.contains === 'function' && element.contains(hit)) ||
+          (hit && typeof hit.contains === 'function' && hit.contains(element))
+        ) {
+          return {
+            ok: true,
+            actionability: {
+              visible: true,
+              enabled: true,
+              receivesEvents: true,
+              pointStrategy: index === 0 ? 'center' : 'alternate'
+            }
+          };
+        }
+        if (!firstBlocked) {
+          firstBlocked = { point, hit };
+        }
+      }
+
+      return actionabilityFailure(
+        'TARGET_OCCLUDED',
+        'The target element is covered by another element at the input location.',
         {
           blocker: elementDescriptor(firstBlocked && firstBlocked.hit),
           point: firstBlocked ? firstBlocked.point : center
@@ -1371,6 +1502,20 @@
 
     element.scrollIntoView({ block: 'center', inline: 'center' });
 
+    if (actionRequiresReachableTarget(payload.action)) {
+      const box = elementBox(element);
+      if (!box) {
+        return actionabilityFailure(
+          'TARGET_NOT_VISIBLE',
+          'The target element has no input box.'
+        );
+      }
+      const inputActionability = resolveInputActionability(element, box, payload.target);
+      if (!inputActionability.ok) {
+        return inputActionability;
+      }
+    }
+
     if (payload.action === 'resolvePointerTarget') {
       const box = elementBox(element);
       if (!box) {
@@ -1556,7 +1701,11 @@
     return value;
   }
 
-  async function attachCdpSession({
+  async function attachCdpSession(options) {
+    return withDebuggerOperationLock(() => attachCdpSessionLocked(options));
+  }
+
+  async function attachCdpSessionLocked({
     chromeApi,
     tab,
     timeoutMs = DEBUGGER_TIMEOUT_MS
@@ -1603,7 +1752,11 @@
     }
   }
 
-  async function detachCdpSession({
+  async function detachCdpSession(options) {
+    return withDebuggerOperationLock(() => detachCdpSessionLocked(options));
+  }
+
+  async function detachCdpSessionLocked({
     chromeApi,
     tab,
     timeoutMs = DEBUGGER_TIMEOUT_MS
@@ -1648,7 +1801,11 @@
     }
   }
 
-  async function detachAllCdpSessions({
+  async function detachAllCdpSessions(options) {
+    return withDebuggerOperationLock(() => detachAllCdpSessionsLocked(options));
+  }
+
+  async function detachAllCdpSessionsLocked({
     chromeApi,
     timeoutMs = DEBUGGER_TIMEOUT_MS
   }) {
@@ -1963,7 +2120,11 @@
     return Math.ceil(clean.length * 3 / 4);
   }
 
-  async function runCdpCommand({
+  async function runCdpCommand(options) {
+    return withDebuggerOperationLock(() => runCdpCommandLocked(options));
+  }
+
+  async function runCdpCommandLocked({
     chromeApi,
     tab,
     method,
@@ -2066,7 +2227,11 @@
     }
   }
 
-  async function runDebuggerAction({
+  async function runDebuggerAction(options) {
+    return withDebuggerOperationLock(() => runDebuggerActionLocked(options));
+  }
+
+  async function runDebuggerActionLocked({
     chromeApi,
     tab,
     action,
@@ -2083,6 +2248,9 @@
     const target = { tabId: tab.id };
     let attached = false;
     try {
+      if (actionUsesCdpInput(action)) {
+        await activateTabForCdpInput(chromeApi, tab, timeoutMs);
+      }
       await attachDebugger(chromeApi, target, timeoutMs);
       attached = true;
       await sendCommand(chromeApi, target, 'Runtime.enable', {}, timeoutMs);
@@ -2095,6 +2263,34 @@
         const value = normalizeRuntimeActionValue(response && response.result && response.result.value);
         if (!value.ok) {
           return value;
+        }
+        if (
+          value.result &&
+          value.result.actionability &&
+          value.result.actionability.reason === 'VIEWPORT_HIT_TEST_UNAVAILABLE'
+        ) {
+          const runtimeClickResponse = await sendCommand(chromeApi, target, 'Runtime.evaluate', {
+            expression: buildRuntimeActionExpression({ action: 'click', ...params }),
+            awaitPromise: true,
+            returnByValue: true
+          }, timeoutMs);
+          const runtimeClickValue = normalizeRuntimeActionValue(
+            runtimeClickResponse &&
+            runtimeClickResponse.result &&
+            runtimeClickResponse.result.value
+          );
+          if (!runtimeClickValue.ok) {
+            return runtimeClickValue;
+          }
+          return {
+            ok: true,
+            result: {
+              provider: DEBUGGER_ACTION_PROVIDER,
+              ...runtimeClickValue.result,
+              actionability: value.result.actionability,
+              pointer: false
+            }
+          };
         }
         const x = Number(value.result && value.result.x);
         const y = Number(value.result && value.result.y);

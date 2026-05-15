@@ -6,6 +6,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { ensureExtensionKey } = require('./ensure-extension-key');
+const { runConcurrentTwoTabSmoke } = require('./live-smoke');
 const { defaultInstallDir, resolveCliSettings } = require('./operator-cli');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -256,11 +257,16 @@ async function withCdp(target, fn) {
   }
 }
 
-async function pageTarget(config) {
+async function pageTarget(config, expectedUrl) {
   const targets = await waitForTargets(config.debugBaseUrl);
-  const target = targets.find((entry) => entry.type === 'page');
+  const target = targets.find((entry) => (
+    entry.type === 'page' &&
+    (!expectedUrl || entry.url === expectedUrl)
+  ));
   if (!target) {
-    throw new Error('Chrome page target not found.');
+    throw new Error(expectedUrl
+      ? `Chrome page target not found for ${expectedUrl}.`
+      : 'Chrome page target not found.');
   }
   return target;
 }
@@ -340,6 +346,10 @@ async function postRpcJson(method, params, settings) {
   return response.json();
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function bindSmokeProfile(config, settings, runCliJsonFn = runCliJson) {
   const profileBind = runCliJsonFn([
     'profile-bind',
@@ -354,6 +364,10 @@ function bindSmokeProfile(config, settings, runCliJsonFn = runCliJson) {
 }
 
 function findElementHandle(observation, predicate, label) {
+  return findElementSummary(observation, predicate, label).handle;
+}
+
+function findElementSummary(observation, predicate, label) {
   const elements = observation && observation.result && Array.isArray(observation.result.elements)
     ? observation.result.elements
     : [];
@@ -361,7 +375,21 @@ function findElementHandle(observation, predicate, label) {
   if (!element || !element.handle) {
     throw new Error(`Could not find handle for ${label}: ${JSON.stringify(observation)}`);
   }
-  return element.handle;
+  return element;
+}
+
+function targetActionParams(target, label, extra = {}) {
+  if (!target || !target.handle) {
+    throw new Error(`Missing target handle for ${label}.`);
+  }
+  if (!target.targetContract) {
+    throw new Error(`Missing target contract for ${label}: ${JSON.stringify(target)}`);
+  }
+  return {
+    handle: target.handle,
+    targetContract: target.targetContract,
+    ...extra
+  };
 }
 
 function pngBuffer({ width, height, colorType }) {
@@ -399,9 +427,211 @@ async function waitForStatus(settings, predicate, timeoutMs = 10000) {
     } catch (error) {
       lastStatus = { waiting: error.message };
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await sleep(250);
   }
   throw new Error(`Timed out waiting for daemon status. Last status: ${JSON.stringify(lastStatus)}`);
+}
+
+function assertRpcOk(label, response) {
+  if (!response || response.ok !== true) {
+    throw new Error(`${label} failed: ${JSON.stringify(response)}`);
+  }
+  return response;
+}
+
+async function waitForRuntimeObservation({
+  settings,
+  tabId,
+  expectedTitle,
+  timeoutMs = 10000,
+  pollIntervalMs = 250,
+  mode = 'medium'
+}) {
+  const started = Date.now();
+  let lastResponse = null;
+  while (Date.now() - started < timeoutMs) {
+    lastResponse = await postRpcJson('operator.runtime.tab.observe', {
+      tabId,
+      mode,
+      includeFormValues: true,
+      maxActionableHandles: 80,
+      summaryMaxChars: 2000
+    }, settings);
+    if (
+      lastResponse &&
+      lastResponse.ok === true &&
+      (!expectedTitle || lastResponse.result.title === expectedTitle)
+    ) {
+      return lastResponse;
+    }
+    await sleep(pollIntervalMs);
+  }
+  throw new Error(`Timed out waiting for runtime tab observation: ${JSON.stringify(lastResponse)}`);
+}
+
+function verificationSucceeded(response) {
+  return Boolean(
+    response &&
+    response.result &&
+    response.result.verification &&
+    response.result.verification.status === 'succeeded'
+  );
+}
+
+async function keepOnlySessionTab(settings, tabId) {
+  if (!Number.isInteger(tabId)) {
+    return null;
+  }
+  return assertRpcOk('session tab cleanup', await postRpcJson('operator.tabs.finalize', {
+    keep: [{ tabId, status: 'handoff' }]
+  }, settings));
+}
+
+async function runDynamicRuntimeSmoke(config, settings) {
+  const dynamicUrl = `${config.origin}/dynamic-dom.html`;
+  const basicUrl = `${config.origin}/basic-form.html`;
+  const created = assertRpcOk('dynamic runtime tab create', await postRpcJson('operator.tabs.create', {}, settings));
+  const tabId = created.result && created.result.tab && created.result.tab.id;
+  if (!Number.isInteger(tabId)) {
+    throw new Error(`Dynamic runtime tab did not return a tab id: ${JSON.stringify(created)}`);
+  }
+
+  assertRpcOk('dynamic runtime tab goto', await postRpcJson('operator.runtime.tab.goto', {
+    tabId,
+    url: dynamicUrl
+  }, settings));
+  const observed = await waitForRuntimeObservation({
+    settings,
+    tabId,
+    expectedTitle: 'Codex Operator Dynamic DOM Fixture'
+  });
+  const saveTarget = findElementSummary(
+    observed,
+    (element) => element.id === 'dynamicSave' && element.data && element.data.testid === 'dynamic-save',
+    'dynamic save action'
+  );
+  if (!saveTarget.targetContract) {
+    throw new Error(`Dynamic save target did not include a target contract: ${JSON.stringify(saveTarget)}`);
+  }
+
+  const controlled = assertRpcOk('dynamic runtime controlled type', await postRpcJson('operator.runtime.tab.locator', {
+    tabId,
+    selector: '#controlledField',
+    action: 'type',
+    textValue: 'Runtime tab smoke',
+    requireVerified: true,
+    postActionSnapshot: 'delta',
+    verify: {
+      oneOf: [{ type: 'valueEquals', value: 'Runtime tab smoke' }]
+    }
+  }, settings));
+
+  await withCdp(await pageTarget(config, dynamicUrl), async (send) => {
+    const result = await send('Runtime.evaluate', {
+      expression: 'window.__codexDynamicSmokeReplaceAction && window.__codexDynamicSmokeReplaceAction()',
+      awaitPromise: true,
+      returnByValue: true
+    });
+    if (!result.result || !result.result.result || result.result.result.value !== true) {
+      throw new Error(`Dynamic fixture replacement did not run: ${JSON.stringify(result)}`);
+    }
+  });
+
+  const staleRecoveredClick = assertRpcOk('dynamic runtime stale click', await postRpcJson('operator.runtime.tab.locator', {
+    tabId,
+    handle: saveTarget.handle,
+    action: 'click',
+    actionTrace: true,
+    actionTraceLabel: 'dynamic stale save',
+    postActionSnapshot: 'delta',
+    requireVerified: true,
+    targetContract: saveTarget.targetContract,
+    verify: {
+      oneOf: [{ type: 'textAppears', text: 'Dynamic action saved' }]
+    }
+  }, settings));
+
+  const dialogOpen = assertRpcOk('dynamic runtime dialog open', await postRpcJson('operator.runtime.tab.locator', {
+    tabId,
+    selector: '#openDialog',
+    action: 'click',
+    postActionSnapshot: 'delta',
+    requireVerified: true,
+    verify: {
+      oneOf: [{ type: 'textAppears', text: 'Runtime dialog opened' }]
+    }
+  }, settings));
+  const dialogClose = assertRpcOk('dynamic runtime dialog close', await postRpcJson('operator.runtime.tab.locator', {
+    tabId,
+    selector: '#dialogClose',
+    action: 'click',
+    postActionSnapshot: 'delta',
+    requireVerified: true,
+    verify: {
+      oneOf: [{ type: 'textAppears', text: 'Dialog closed' }]
+    }
+  }, settings));
+
+  const scroll = assertRpcOk('dynamic runtime scroll', await postRpcJson('operator.runtime.tab.locator', {
+    tabId,
+    selector: '#scrollTarget',
+    action: 'scroll',
+    deltaX: 0,
+    deltaY: 620,
+    postActionSnapshot: 'delta'
+  }, settings));
+
+  const readPage = assertRpcOk('dynamic runtime read page', await postRpcJson('operator.runtime.tab.readPage', {
+    tabId,
+    filter: 'all',
+    maxChars: 5000,
+    includeFormValues: true,
+    maxFieldValueChars: 120
+  }, settings));
+
+  const dom = await withCdp(await pageTarget(config, dynamicUrl), async (send) => {
+    const result = await send('Runtime.evaluate', {
+      expression: `({
+        controlledValue: document.getElementById('controlledField').value,
+        controlledState: document.getElementById('controlledState').textContent,
+        status: document.getElementById('status').textContent,
+        scrollY: window.scrollY,
+        dialogOpen: document.getElementById('dynamicDialog').open
+      })`,
+      returnByValue: true
+    });
+    return result.result.result.value;
+  });
+
+  assertRpcOk('dynamic runtime return to basic fixture', await postRpcJson('operator.runtime.tab.goto', {
+    tabId,
+    url: basicUrl
+  }, settings));
+  await waitForRuntimeObservation({
+    settings,
+    tabId,
+    expectedTitle: 'Codex Operator Basic Fixture',
+    mode: 'tiny'
+  });
+  await keepOnlySessionTab(settings, tabId);
+
+  return {
+    tabId,
+    title: observed.result.title,
+    readContainsControlledValue: String(readPage.result.pageContent || '').includes('Runtime tab smoke'),
+    staleRecovery: staleRecoveredClick.result &&
+      staleRecoveredClick.result.actionTrace &&
+      staleRecoveredClick.result.actionTrace.recovery &&
+      staleRecoveredClick.result.actionTrace.recovery.strategy || null,
+    clickVerified: verificationSucceeded(staleRecoveredClick),
+    dialogOpened: verificationSucceeded(dialogOpen),
+    dialogHandled: verificationSucceeded(dialogClose) && dom.dialogOpen === false,
+    controlledValue: dom.controlledValue,
+    controlledVerified: verificationSucceeded(controlled),
+    scrollY: dom.scrollY,
+    scrolled: dom.scrollY > 0 && scroll.ok === true,
+    finalStatus: dom.status
+  };
 }
 
 function acceptPermissionPrompt(profileDir) {
@@ -476,6 +706,12 @@ async function runCleanSmoke(options = {}) {
     chromeStarted = true;
     await waitForStatus(settings, (status) => status.connectionState === 'EXTENSION_CONNECTED');
     bindSmokeProfile(config, settings);
+    const policyUpdate = await postRpcJson('operator.policy.update', {
+      guardedActionsEnabled: true
+    }, settings);
+    if (!policyUpdate.ok || policyUpdate.result.policy.guardedActionsEnabled !== true) {
+      throw new Error(`Clean smoke could not enable guarded actions: ${JSON.stringify(policyUpdate)}`);
+    }
 
     const preflightRevoke = runCliJson(['revoke', config.origin], settings);
     if (!preflightRevoke.ok) {
@@ -525,12 +761,17 @@ async function runCleanSmoke(options = {}) {
       openedObservation.result.origin !== config.origin ||
       openedObservation.result.url !== `${config.origin}/basic-form.html` ||
       !openedObservation.result.navigation ||
-      openedObservation.result.navigation.url !== `${config.origin}/basic-form.html` ||
+      (
+        openedObservation.result.navigation.url !== `${config.origin}/basic-form.html` &&
+        (!openedObservation.result.navigation.tab ||
+          openedObservation.result.navigation.tab.url !== `${config.origin}/basic-form.html`)
+      ) ||
       !openedObservation.result.observation ||
       openedObservation.result.observation.title !== 'Codex Operator Basic Fixture'
     ) {
       throw new Error(`open-observe did not navigate and observe the fixture: ${JSON.stringify(openedObservation)}`);
     }
+    await keepOnlySessionTab(settings, openedObservation.result.sessionTab.tab.id);
 
     await withCdp(await pageTarget(config), async (send) => {
       await send('Page.navigate', { url: `${config.origin}/gate-form.html` });
@@ -603,7 +844,15 @@ async function runCleanSmoke(options = {}) {
       'safe after gate button'
     );
     const gateFill = runCliJson(['fill', config.origin, postGateValueHandle, 'Manual gate complete'], settings);
-    const gateSafeClick = runCliJson(['click', config.origin, safeAfterGateHandle], settings);
+    const gateSafeClick = await postRpcJson('page.click', {
+      origin: config.origin,
+      handle: safeAfterGateHandle,
+      postActionSnapshot: 'delta',
+      requireVerified: true,
+      verify: {
+        oneOf: [{ type: 'textAppears', text: 'Gate resumed' }]
+      }
+    }, settings);
     if (!gateFill.ok || !gateSafeClick.ok) {
       throw new Error(`Post-gate action failed: ${JSON.stringify({ gateFill, gateSafeClick })}`);
     }
@@ -698,6 +947,7 @@ async function runCleanSmoke(options = {}) {
     ) {
       throw new Error(`Mock Play Console observation failed: ${JSON.stringify(mockPlayObservation)}`);
     }
+    await keepOnlySessionTab(settings, mockPlayObservation.result.sessionTab.tab.id);
     const appIconUploadHandle = findElementHandle(
       { result: mockPlayObservation.result.observation },
       (element) => element.id === 'appIconDropzone' &&
@@ -782,13 +1032,25 @@ async function runCleanSmoke(options = {}) {
       throw new Error(`Expected invalid mock asset to be blocked: ${JSON.stringify(invalidAssetUpload)}`);
     }
 
-    const mockPlayPostUploadObservation = runCliJson(['observe', config.origin], settings);
-    const sendForReviewHandle = findElementHandle(
+    const mockPlayPostUploadObservation = assertRpcOk('mock Play post-upload observe', await postRpcJson('page.observe', {
+      origin: config.origin,
+      mode: 'medium'
+    }, settings));
+    const sendForReviewTarget = findElementSummary(
       mockPlayPostUploadObservation,
       (element) => element.id === 'sendForReviewButton',
       'mock Play send for review button'
     );
-    const mockPlaySendForReview = runCliJson(['click', config.origin, sendForReviewHandle], settings);
+    if (!sendForReviewTarget.targetContract) {
+      throw new Error(`Mock Play send-for-review target did not include a target contract: ${JSON.stringify(sendForReviewTarget)}`);
+    }
+    const mockPlaySendForReview = await postRpcJson('page.click', {
+      origin: config.origin,
+      handle: sendForReviewTarget.handle,
+      targetContract: sendForReviewTarget.targetContract,
+      postActionSnapshot: 'delta',
+      requireVerified: true
+    }, settings);
     if (
       mockPlaySendForReview.ok ||
       mockPlaySendForReview.error.code !== 'HIGH_RISK_BLOCKED'
@@ -809,6 +1071,7 @@ async function runCleanSmoke(options = {}) {
     ) {
       throw new Error(`Mock commerce observation failed: ${JSON.stringify(mockCommerceObservation)}`);
     }
+    await keepOnlySessionTab(settings, mockCommerceObservation.result.sessionTab.tab.id);
     const mockCommerceCart = runCliJson([
       'cart-prepare',
       config.origin,
@@ -834,18 +1097,39 @@ async function runCleanSmoke(options = {}) {
     ) {
       throw new Error(`Mock commerce cart preparation failed: ${JSON.stringify(mockCommerceCart)}`);
     }
-    const mockCommercePostObservation = runCliJson(['observe', config.origin], settings);
-    const checkoutHandle = findElementHandle(
+    const mockCommercePostObservation = assertRpcOk('mock commerce post-cart observe', await postRpcJson('page.observe', {
+      origin: config.origin,
+      mode: 'medium'
+    }, settings));
+    const checkoutTarget = findElementSummary(
       mockCommercePostObservation,
       (element) => element.id === 'checkoutButton',
       'mock commerce checkout button'
     );
-    const mockCommerceCheckoutClick = runCliJson(['click', config.origin, checkoutHandle], settings);
+    if (!checkoutTarget.targetContract) {
+      throw new Error(`Mock commerce checkout target did not include a target contract: ${JSON.stringify(checkoutTarget)}`);
+    }
+    const mockCommerceCheckoutClick = await postRpcJson('page.click', {
+      origin: config.origin,
+      handle: checkoutTarget.handle,
+      targetContract: checkoutTarget.targetContract,
+      postActionSnapshot: 'delta',
+      requireVerified: true
+    }, settings);
     if (
       mockCommerceCheckoutClick.ok ||
       mockCommerceCheckoutClick.error.code !== 'HIGH_RISK_BLOCKED'
     ) {
       throw new Error(`Expected mock commerce checkout to be high-risk blocked: ${JSON.stringify(mockCommerceCheckoutClick)}`);
+    }
+
+    const dynamicRuntime = await runDynamicRuntimeSmoke(config, settings);
+    const concurrentTwoTab = await runConcurrentTwoTabSmoke({
+      fixtureUrl: `${config.origin}/dynamic-dom.html`,
+      settings
+    });
+    if (!concurrentTwoTab.ok) {
+      throw new Error(`Concurrent two-tab smoke failed: ${JSON.stringify(concurrentTwoTab)}`);
     }
 
     await withCdp(await pageTarget(config), async (send) => {
@@ -865,38 +1149,41 @@ async function runCleanSmoke(options = {}) {
     if (!emergencyClear.ok || emergencyClear.result.active !== false) {
       throw new Error(`Emergency clear failed: ${JSON.stringify(emergencyClear)}`);
     }
-    const postEmergencyObserve = runCliJson(['observe', config.origin], settings);
+    const postEmergencyObserve = assertRpcOk('post emergency observe', await postRpcJson('page.observe', {
+      origin: config.origin,
+      mode: 'medium'
+    }, settings));
     if (!postEmergencyObserve.ok) {
       throw new Error(`Observe failed after emergency clear: ${JSON.stringify(postEmergencyObserve)}`);
     }
     const postReconnectObserve = postEmergencyObserve;
-    const basicHandles = {
-      appName: findElementHandle(
+    const basicTargets = {
+      appName: findElementSummary(
         postReconnectObserve,
         (element) => element.name === 'appName',
         'app name input'
       ),
-      description: findElementHandle(
+      description: findElementSummary(
         postReconnectObserve,
         (element) => element.name === 'description',
         'description textarea'
       ),
-      locale: findElementHandle(
+      locale: findElementSummary(
         postReconnectObserve,
         (element) => element.name === 'locale',
         'locale select'
       ),
-      enableBeta: findElementHandle(
+      enableBeta: findElementSummary(
         postReconnectObserve,
         (element) => element.name === 'enableBeta',
         'enable beta checkbox'
       ),
-      saveDraft: findElementHandle(
+      saveDraft: findElementSummary(
         postReconnectObserve,
         (element) => element.id === 'saveDraft',
         'save draft button'
       ),
-      publish: findElementHandle(
+      publish: findElementSummary(
         postReconnectObserve,
         (element) => element.id === 'publish',
         'publish button'
@@ -922,16 +1209,40 @@ async function runCleanSmoke(options = {}) {
     ) {
       throw new Error(`Active tab status did not match fixture: ${JSON.stringify(activeTabStatus)}`);
     }
-    const basicActionResults = {
-      focus: runCliJson(['focus', config.origin, basicHandles.appName], settings),
-      type: runCliJson(['type', config.origin, basicHandles.appName, 'Typed Smoke App'], settings),
-      typeBeforeClear: runCliJson(['type', config.origin, basicHandles.description, 'Temporary text'], settings),
-      clear: runCliJson(['clear', config.origin, basicHandles.description], settings),
-      select: runCliJson(['select', config.origin, basicHandles.locale, 'tr'], settings),
-      check: runCliJson(['check', config.origin, basicHandles.enableBeta], settings),
-      pressKey: runCliJson(['press-key', config.origin, basicHandles.appName, 'Enter'], settings),
-      scroll: runCliJson(['scroll', config.origin, basicHandles.saveDraft, '0', '240'], settings)
-    };
+    const basicActionResults = {};
+    basicActionResults.focus = await postRpcJson('page.focus', {
+      origin: config.origin,
+      ...targetActionParams(basicTargets.appName, 'app name input')
+    }, settings);
+    basicActionResults.type = await postRpcJson('page.type', {
+      origin: config.origin,
+      ...targetActionParams(basicTargets.appName, 'app name input', { text: 'Typed Smoke App' })
+    }, settings);
+    basicActionResults.typeBeforeClear = await postRpcJson('page.type', {
+      origin: config.origin,
+      ...targetActionParams(basicTargets.description, 'description textarea', { text: 'Temporary text' })
+    }, settings);
+    basicActionResults.clear = await postRpcJson('page.clear', {
+      origin: config.origin,
+      ...targetActionParams(basicTargets.description, 'description textarea')
+    }, settings);
+    basicActionResults.select = await postRpcJson('page.select', {
+      origin: config.origin,
+      ...targetActionParams(basicTargets.locale, 'locale select', { value: 'tr' })
+    }, settings);
+    basicActionResults.check = await postRpcJson('page.check', {
+      origin: config.origin,
+      ...targetActionParams(basicTargets.enableBeta, 'enable beta checkbox', { checked: true })
+    }, settings);
+    basicActionResults.pressKey = await postRpcJson('page.pressKey', {
+      origin: config.origin,
+      ...targetActionParams(basicTargets.appName, 'app name input', { key: 'Enter' })
+    }, settings);
+    basicActionResults.scroll = await postRpcJson('page.scroll', {
+      origin: config.origin,
+      deltaX: 0,
+      deltaY: 240
+    }, settings);
     for (const [action, result] of Object.entries(basicActionResults)) {
       if (!result.ok) {
         throw new Error(`Basic DOM action failed (${action}): ${JSON.stringify(result)}`);
@@ -985,10 +1296,43 @@ async function runCleanSmoke(options = {}) {
     if (!boundedFullAutoStart.ok || boundedFullAutoStart.result.active !== true) {
       throw new Error(`Bounded Full Auto start failed: ${JSON.stringify(boundedFullAutoStart)}`);
     }
-    runCliJson(['fill', config.origin, basicHandles.appName, 'Clean Smoke App'], settings);
-    runCliJson(['fill', config.origin, basicHandles.description, 'Single command smoke test.'], settings);
-    runCliJson(['click', config.origin, basicHandles.saveDraft], settings);
-    const highRiskClick = runCliJson(['click', config.origin, basicHandles.publish], settings);
+    const boundedFillAppName = await postRpcJson('page.fill', {
+      origin: config.origin,
+      ...targetActionParams(basicTargets.appName, 'app name input', { text: 'Clean Smoke App' })
+    }, settings);
+    const boundedFillDescription = await postRpcJson('page.fill', {
+      origin: config.origin,
+      ...targetActionParams(basicTargets.description, 'description textarea', { text: 'Single command smoke test.' })
+    }, settings);
+    const boundedSaveDraft = await postRpcJson('page.click', {
+      origin: config.origin,
+      ...targetActionParams(basicTargets.saveDraft, 'save draft button', {
+        postActionSnapshot: 'delta',
+        requireVerified: true,
+        verify: {
+          oneOf: [{ type: 'textAppears', text: 'Draft saved' }]
+        }
+      })
+    }, settings);
+    for (const [action, result] of Object.entries({
+      boundedFillAppName,
+      boundedFillDescription,
+      boundedSaveDraft
+    })) {
+      if (!result.ok) {
+        throw new Error(`Bounded Full Auto setup action failed (${action}): ${JSON.stringify(result)}`);
+      }
+    }
+    const highRiskClick = await postRpcJson('operator.runtime.tab.locator', {
+      tabId: dynamicRuntime.tabId,
+      selector: '#publish',
+      action: 'click',
+      postActionSnapshot: 'delta',
+      requireVerified: true,
+      verify: {
+        oneOf: [{ type: 'textAppears', text: 'Published' }]
+      }
+    }, settings);
     if (highRiskClick.ok || highRiskClick.error.code !== 'HIGH_RISK_BLOCKED' || !highRiskClick.error.approvalId) {
       throw new Error(`Expected HIGH_RISK_BLOCKED for publish click: ${JSON.stringify(highRiskClick)}`);
     }
@@ -1005,9 +1349,10 @@ async function runCleanSmoke(options = {}) {
     }
     const auditTail = runCliJson(['audit-tail', '40'], settings);
     const auditedBoundedAction = auditTail.ok && auditTail.result.entries.some((entry) => (
-      entry.method === 'page.click' &&
+      (entry.method === 'page.click' || entry.method === 'operator.runtime.tab.locator') &&
       entry.mode === 'bounded-full-auto-v1' &&
-      entry.origin === config.origin &&
+      (entry.origin === config.origin ||
+        (entry.method === 'operator.runtime.tab.locator' && entry.tabId === dynamicRuntime.tabId)) &&
       entry.boundedFullAuto &&
       entry.boundedFullAuto.counters &&
       entry.boundedFullAuto.counters.browserActions === 4
@@ -1122,6 +1467,27 @@ async function runCleanSmoke(options = {}) {
       mockCommerceStoppedBeforeCheckout: mockCommerceCart.result.stoppedBeforeCheckout,
       mockCommerceCheckoutBlocked: mockCommerceCheckoutClick.error.code,
       mockCommerceExcludedReasons: mockCommerceCart.result.excluded.map((item) => item.reason),
+      dynamicRuntimeTabTitle: dynamicRuntime.title,
+      dynamicRuntimeReadContainsControlledValue: dynamicRuntime.readContainsControlledValue,
+      dynamicRuntimeStaleRecovery: dynamicRuntime.staleRecovery,
+      dynamicRuntimeClickVerified: dynamicRuntime.clickVerified,
+      dynamicRuntimeDialogOpened: dynamicRuntime.dialogOpened,
+      dynamicRuntimeDialogHandled: dynamicRuntime.dialogHandled,
+      dynamicRuntimeControlledValue: dynamicRuntime.controlledValue,
+      dynamicRuntimeControlledVerified: dynamicRuntime.controlledVerified,
+      dynamicRuntimeScrollY: dynamicRuntime.scrollY,
+      dynamicRuntimeScrolled: dynamicRuntime.scrolled,
+      concurrentTwoTabOk: concurrentTwoTab.ok,
+      concurrentTwoTabAgents: concurrentTwoTab.agents.map((agent) => ({
+        agentId: agent.agentId,
+        tabId: agent.tabId,
+        readContainsAgentId: agent.readContainsAgentId,
+        fillVerified: agent.fillVerified,
+        clickVerified: agent.clickVerified,
+        dialogOpened: agent.dialogOpened,
+        dialogClosed: agent.dialogClosed,
+        scrolled: agent.scrolled
+      })),
       basicDomActions,
       highRiskBlocked: highRiskClick.error.code,
       highRiskApprovalReplay: replayedHighRisk.result.action,
