@@ -7,12 +7,13 @@ const path = require('node:path');
 const { SessionManager } = require('../operator-daemon/sessionManager');
 const { ERROR_CODES } = require('../operator-daemon/protocol');
 
-function makeSession() {
+function makeSession(overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-operator-session-tabs-'));
   const session = new SessionManager({
     auditLogPath: path.join(dir, 'audit.jsonl'),
     statePath: path.join(dir, 'state.json'),
-    expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop'
+    expectedExtensionId: 'abcdefghijklmnopabcdefghijklmnop',
+    ...overrides
   });
   session.connectionState = 'EXTENSION_CONNECTED';
   session.connectionId = 'conn_test';
@@ -2304,6 +2305,105 @@ test('runtime tab batch routes through a session-owned tab when the same-origin 
         action: 'click',
         handle: 'el_state_0'
       }]
+    }
+  }]);
+});
+
+test('runtime tab upload routes through a leased session tab and carries raw paths only to the extension command', async () => {
+  const rawPath = 'C:\\Users\\example\\Pictures\\supermemory-qwen-live-screenshot.jpg';
+  const validatedFile = {
+    role: 'screenshot',
+    basename: 'supermemory-qwen-live-screenshot.jpg',
+    extension: '.jpg',
+    mimeType: 'image/jpeg',
+    bytes: 249641,
+    sha256: 'a'.repeat(64),
+    width: 1912,
+    height: 992,
+    hasAlpha: false,
+    ruleset: 'socialMediaDraftAssets.v2026'
+  };
+  const session = makeSession({
+    assetValidator: {
+      validateUploadFiles(files, options) {
+        assert.equal(options.ruleset, 'social-media-draft');
+        assert.equal(options.expectedOrigin, 'https://example.com');
+        assert.equal(options.targetHandle, 'el_upload');
+        assert.equal(files[0].path, rawPath);
+        return {
+          ok: true,
+          ruleset: 'socialMediaDraftAssets.v2026',
+          files: [validatedFile]
+        };
+      }
+    }
+  });
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Claimed Example',
+    url: 'https://example.com/post',
+    ownership: 'agent',
+    active: false,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  session.updateActiveTab({
+    id: 8,
+    title: 'Other Example',
+    url: 'https://example.com/post',
+    status: 'complete'
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    return {
+      ok: true,
+      result: {
+        action: 'uploaded',
+        provider: 'chrome.debugger.DOM.setFileInputFiles',
+        uploadTarget: 'el_upload',
+        previewVerified: true,
+        files: [validatedFile]
+      }
+    };
+  };
+
+  const uploaded = await session.handleRpc({
+    id: 'runtime-tab-upload',
+    method: 'operator.runtime.tab.uploadFile',
+    params: {
+      agentId: 'agent-alpha',
+      tabId: 7,
+      target: { handle: 'el_upload' },
+      ruleset: 'social-media-draft',
+      verifyPreview: true,
+      files: [{
+        role: 'screenshot',
+        path: rawPath
+      }]
+    }
+  });
+
+  assert.equal(uploaded.ok, true);
+  assert.equal(uploaded.result.provider, 'chrome.debugger.DOM.setFileInputFiles');
+  assert.deepEqual(uploaded.result.assetValidation.files, [validatedFile]);
+  assert.deepEqual(calls, [{
+    method: 'operator.runtime.tab.uploadFile',
+    params: {
+      agentId: 'agent-alpha',
+      tabId: 7,
+      origin: 'https://example.com',
+      target: { handle: 'el_upload' },
+      ruleset: 'socialMediaDraftAssets.v2026',
+      verifyPreview: true,
+      files: [validatedFile],
+      filePaths: [rawPath]
     }
   }]);
 });

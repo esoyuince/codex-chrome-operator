@@ -227,6 +227,174 @@
     };
   }
 
+  function uploadInputSummary(input) {
+    if (!input) {
+      return null;
+    }
+    return {
+      id: input.id || null,
+      name: text(input.getAttribute && input.getAttribute('name')) || null,
+      accept: text(input.getAttribute && input.getAttribute('accept')) || null,
+      multiple: Boolean(input.multiple || (input.hasAttribute && input.hasAttribute('multiple')))
+    };
+  }
+
+  function uploadToken() {
+    return `codex_upload_${Date.now().toString(36)}_${Math.random().toString(16).slice(2)}`;
+  }
+
+  function filesFromInput(input) {
+    return Array.from(input && input.files ? input.files : []).map((file) => ({
+      name: file && file.name ? String(file.name) : '',
+      size: Number.isFinite(Number(file && file.size)) ? Number(file.size) : null,
+      type: file && file.type ? String(file.type) : ''
+    }));
+  }
+
+  function prepareNativeFileUpload(message = {}, context = {}) {
+    const documentRef = context.document || root.document;
+    const files = Array.isArray(message.files) ? message.files : [];
+    const summaries = files.map(safeFileSummary);
+    const resolved = resolveHandleResult(message.target, context);
+    if (!resolved.ok) {
+      return { ok: false, error: resolved.error };
+    }
+
+    const input = resolveUploadInput(resolved.element, documentRef);
+    if (!input) {
+      return {
+        ok: false,
+        error: {
+          code: 'UPLOAD_TARGET_INVALID',
+          message: 'Resolved element is not an upload target.',
+          fileSummaries: summaries
+        }
+      };
+    }
+
+    const inputSummary = uploadInputSummary(input);
+    if (files.length > 1 && inputSummary && inputSummary.multiple !== true) {
+      return {
+        ok: false,
+        error: {
+          code: 'UPLOAD_TARGET_INVALID',
+          message: 'Upload target does not accept multiple files.',
+          uploadTarget: message.target.handle,
+          fileSummaries: summaries
+        }
+      };
+    }
+
+    const token = uploadToken();
+    input.setAttribute('data-codex-upload-token', token);
+    return {
+      ok: true,
+      result: {
+        action: 'prepared',
+        uploadTarget: message.target.handle,
+        uploadToken: token,
+        selector: `[data-codex-upload-token="${cssAttributeValue(token)}"]`,
+        ruleset: message.ruleset || null,
+        input: inputSummary,
+        files: summaries
+      }
+    };
+  }
+
+  function completeNativeFileUpload(message = {}, context = {}) {
+    const documentRef = context.document || root.document;
+    const token = text(message.uploadToken);
+    const files = Array.isArray(message.files) ? message.files : [];
+    const summaries = files.map(safeFileSummary);
+    if (!token) {
+      return {
+        ok: false,
+        error: {
+          code: 'UPLOAD_TARGET_INVALID',
+          message: 'Upload token is required.'
+        }
+      };
+    }
+
+    const selector = `[data-codex-upload-token="${cssAttributeValue(token)}"]`;
+    const input = documentRef && typeof documentRef.querySelector === 'function'
+      ? documentRef.querySelector(selector)
+      : null;
+    if (!input || !(typeof input.matches === 'function' && input.matches('input[type="file"]'))) {
+      return {
+        ok: false,
+        error: {
+          code: 'UPLOAD_TARGET_INVALID',
+          message: 'Prepared upload target is no longer available.',
+          uploadTarget: message.target && message.target.handle ? message.target.handle : null,
+          fileSummaries: summaries
+        }
+      };
+    }
+
+    const selectedFiles = filesFromInput(input);
+    const selectedNames = selectedFiles.map((file) => file.name).filter(Boolean);
+    const expectedNames = summaries.map((file) => file.basename).filter(Boolean);
+    const missingNames = expectedNames.filter((name) => !selectedNames.includes(name));
+    dispatchUploadEvents(input, context);
+    if (typeof input.removeAttribute === 'function') {
+      input.removeAttribute('data-codex-upload-token');
+    }
+
+    if (missingNames.length > 0) {
+      return {
+        ok: false,
+        error: {
+          code: 'UPLOAD_VERIFICATION_FAILED',
+          message: 'File input did not contain the expected selected files.',
+          uploadTarget: message.target && message.target.handle ? message.target.handle : null,
+          expectedBasenames: expectedNames,
+          actualBasenames: selectedNames,
+          fileSummaries: summaries
+        }
+      };
+    }
+
+    const previewEvidence = {
+      method: 'file-input-files-snapshot',
+      uploadTarget: message.target && message.target.handle ? message.target.handle : null,
+      expectedBasenames: expectedNames,
+      actualBasenames: selectedNames,
+      fileCount: selectedFiles.length
+    };
+    return {
+      ok: true,
+      result: {
+        action: 'uploaded',
+        provider: 'chrome.debugger.DOM.setFileInputFiles',
+        uploadTarget: message.target && message.target.handle ? message.target.handle : null,
+        ruleset: message.ruleset || null,
+        previewVerified: message.verifyPreview === true ? missingNames.length === 0 : false,
+        previewEvidence: message.verifyPreview === true ? previewEvidence : null,
+        input: {
+          ...uploadInputSummary(input),
+          fileCount: selectedFiles.length,
+          fileNames: selectedNames
+        },
+        files: summaries
+      }
+    };
+  }
+
+  function clearNativeFileUploadMarker(message = {}, context = {}) {
+    const documentRef = context.document || root.document;
+    const token = text(message.uploadToken);
+    if (!token || !documentRef || typeof documentRef.querySelector !== 'function') {
+      return { ok: true, result: { cleared: false } };
+    }
+    const input = documentRef.querySelector(`[data-codex-upload-token="${cssAttributeValue(token)}"]`);
+    if (input && typeof input.removeAttribute === 'function') {
+      input.removeAttribute('data-codex-upload-token');
+      return { ok: true, result: { cleared: true } };
+    }
+    return { ok: true, result: { cleared: false } };
+  }
+
   async function uploadFiles(message = {}, context = {}) {
     const documentRef = context.document || root.document;
     const files = Array.isArray(message.files) ? message.files : [];
@@ -292,6 +460,9 @@
   }
 
   const api = {
+    clearNativeFileUploadMarker,
+    completeNativeFileUpload,
+    prepareNativeFileUpload,
     safeFileSummary,
     previewSnapshot,
     resolveUploadInput,

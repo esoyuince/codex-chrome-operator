@@ -143,6 +143,7 @@ const PAGE_ACTION_KINDS = Object.freeze({
   'operator.runtime.tab.visualObserve': 'screenshot',
   'operator.runtime.tab.visualAnalyze': 'screenshot',
   'operator.runtime.tab.visualInspectTarget': 'screenshot',
+  'operator.runtime.tab.uploadFile': 'upload',
   'page.uploadFile': 'upload',
   'page.prepareCart': 'cart-preparation',
   'page.batch': 'batch',
@@ -2201,6 +2202,7 @@ class SessionManager {
       case 'operator.runtime.tab.visualObserve':
       case 'operator.runtime.tab.visualAnalyze':
       case 'operator.runtime.tab.visualInspectTarget':
+      case 'operator.runtime.tab.uploadFile':
       case 'operator.runtime.tab.locator':
       case 'operator.runtime.tab.batch':
       case 'operator.runtime.tab.showTarget':
@@ -3763,6 +3765,7 @@ class SessionManager {
       'operator.runtime.tab.visualObserve',
       'operator.runtime.tab.visualAnalyze',
       'operator.runtime.tab.visualInspectTarget',
+      'operator.runtime.tab.uploadFile',
       'operator.runtime.tab.locator',
       'operator.runtime.tab.batch',
       'operator.runtime.tab.showTarget',
@@ -3806,6 +3809,7 @@ class SessionManager {
     let commandParams = { ...params, tabId: tabId.tabId };
     let policyMethod = 'page.observe';
     let runtimeBatch = null;
+    let runtimeUpload = null;
 
     if (method === 'operator.runtime.tab.goto') {
       const target = navigationTarget(params.url);
@@ -3826,7 +3830,24 @@ class SessionManager {
           tabId: tabId.tabId
         });
       }
-      if (method === 'operator.runtime.tab.locator') {
+      if (method === 'operator.runtime.tab.uploadFile') {
+        const upload = this.validateUploadCommandParams(params, origin);
+        if (!upload.ok) {
+          return rpcError(id, upload.error);
+        }
+        runtimeUpload = upload;
+        commandParams = {
+          ...(agentId ? { agentId } : {}),
+          tabId: tabId.tabId,
+          origin,
+          target: upload.target,
+          ruleset: upload.ruleset,
+          verifyPreview: upload.verifyPreview,
+          files: upload.files,
+          filePaths: upload.filePaths
+        };
+        policyMethod = 'page.uploadFile';
+      } else if (method === 'operator.runtime.tab.locator') {
         const locator = validateRuntimeLocatorParams(params);
         if (!locator.ok) {
           return rpcError(id, locator.error);
@@ -3963,11 +3984,17 @@ class SessionManager {
       }
     }
 
-    const extensionResponse = runtimeBatch || RUNTIME_LOCATOR_MUTATION_METHODS[commandParams.action]
+    const requiresPolicy = runtimeBatch ||
+      runtimeUpload ||
+      RUNTIME_LOCATOR_MUTATION_METHODS[commandParams.action];
+    const extensionResponse = requiresPolicy
       ? await this.enqueueExtensionCommandWithPolicy(method, commandParams)
       : await this.enqueueExtensionCommand(method, commandParams);
     if (!extensionResponse.ok) {
-      return rpcError(id, this.attachApprovalRequest(method, { ...commandParams, origin }, extensionResponse.error));
+      const approvalParams = runtimeUpload
+        ? Object.fromEntries(Object.entries(commandParams).filter(([key]) => key !== 'filePaths'))
+        : commandParams;
+      return rpcError(id, this.attachApprovalRequest(method, { ...approvalParams, origin }, extensionResponse.error));
     }
     if (runtimeBatch) {
       const childFailureIndex = Array.isArray(extensionResponse.result && extensionResponse.result.results)
@@ -4019,7 +4046,8 @@ class SessionManager {
     return rpcOk(id, {
       tabId: tabId.tabId,
       origin,
-      ...(extensionResponse.result || {})
+      ...(extensionResponse.result || {}),
+      ...(runtimeUpload ? { assetValidation: runtimeUpload.assetValidation } : {})
     });
   }
 
@@ -5504,6 +5532,7 @@ class SessionManager {
       target: { handle: targetHandle },
       ruleset: validation.ruleset || ruleset,
       files: Array.isArray(validation.files) ? validation.files : [],
+      filePaths: files.map((file) => file.path),
       verifyPreview: params.verifyPreview === true,
       assetValidation: validation
     });

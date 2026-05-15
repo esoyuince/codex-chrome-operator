@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const googlePlayPreviewAssets = require('./rulesets/googlePlayPreviewAssets');
+const socialMediaDraftAssets = require('./rulesets/socialMediaDraftAssets');
 
 const ERROR_CODES = {
   fileMissing: 'ASSET_FILE_MISSING',
@@ -17,11 +18,24 @@ const ERROR_CODES = {
 };
 
 const RULESETS = new Map([
-  [googlePlayPreviewAssets.ruleset.id, googlePlayPreviewAssets.ruleset]
+  [googlePlayPreviewAssets.ruleset.id, googlePlayPreviewAssets.ruleset],
+  [socialMediaDraftAssets.ruleset.id, socialMediaDraftAssets.ruleset]
 ]);
 
+const RULESET_ALIASES = new Map([
+  ['play-store-draft', googlePlayPreviewAssets.ruleset.id],
+  ['social-media-draft', socialMediaDraftAssets.ruleset.id]
+]);
+
+function canonicalRulesetId(rulesetId = googlePlayPreviewAssets.ruleset.id) {
+  const rawId = typeof rulesetId === 'string' && rulesetId.trim()
+    ? rulesetId.trim()
+    : googlePlayPreviewAssets.ruleset.id;
+  return RULESET_ALIASES.get(rawId) || rawId;
+}
+
 function getRuleset(rulesetId = googlePlayPreviewAssets.ruleset.id) {
-  return RULESETS.get(rulesetId) || null;
+  return RULESETS.get(canonicalRulesetId(rulesetId)) || null;
 }
 
 function makeError(code, message) {
@@ -47,7 +61,7 @@ function baseResult(file, rulesetId) {
 }
 
 function validateAssetFile(file, options = {}) {
-  const rulesetId = options.ruleset || googlePlayPreviewAssets.ruleset.id;
+  const rulesetId = canonicalRulesetId(options.ruleset);
   const result = baseResult(file, rulesetId);
   const ruleset = getRuleset(rulesetId);
   if (!ruleset) {
@@ -130,7 +144,7 @@ function validateUploadFiles(files, options = {}) {
 
   return {
     ok: results.every((result) => result.ok),
-    ruleset: options.ruleset || googlePlayPreviewAssets.ruleset.id,
+    ruleset: canonicalRulesetId(options.ruleset),
     files: results,
     errors
   };
@@ -253,6 +267,7 @@ function isStartOfFrame(marker) {
 
 module.exports = {
   ERROR_CODES,
+  canonicalRulesetId,
   getRuleset,
   validateAssetFile,
   validateUploadFiles

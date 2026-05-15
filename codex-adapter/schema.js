@@ -1,7 +1,7 @@
 'use strict';
 
 const ADAPTER_PROTOCOL_VERSION = '1.0';
-const TOOL_SCHEMA_VERSION = '2026-05-15.operator-maturity';
+const TOOL_SCHEMA_VERSION = '2026-05-16.tab-upload';
 
 const READ_PAGE_PROPERTIES = {
   origin: { type: 'string' },
@@ -31,6 +31,17 @@ const TAB_READ_PAGE_PROPERTIES = {
 const TAB_ACTION_CONTEXT_PROPERTIES = {
   ...AGENT_CONTEXT_PROPERTIES,
   tabId: { type: 'number', minimum: 0 }
+};
+
+const UPLOAD_FILE_INPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    role: { type: 'string' },
+    path: { type: 'string' },
+    expectedSha256: { type: 'string' }
+  },
+  required: ['role', 'path']
 };
 
 const OBSERVE_OPTION_PROPERTIES = {
@@ -920,6 +931,30 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'codex_chrome_tab_upload_file',
+    description: 'Attach guarded draft-only files to a file input in a session-owned Chrome tab without opening the native file picker.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        ...TAB_ACTION_CONTEXT_PROPERTIES,
+        handle: { type: 'string' },
+        ruleset: { type: 'string' },
+        verifyPreview: { type: 'boolean' },
+        files: {
+          type: 'array',
+          minItems: 1,
+          items: UPLOAD_FILE_INPUT_SCHEMA
+        }
+      },
+      required: ['tabId', 'handle', 'files']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
     name: 'codex_chrome_tab_locator',
     description: 'Resolve or run a narrow guarded action against one visible actionable element in a session-owned tab. Fails closed on zero or multiple matches.',
     inputSchema: {
@@ -1211,16 +1246,7 @@ const TOOL_DEFINITIONS = [
         verifyPreview: { type: 'boolean' },
         files: {
           type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              role: { type: 'string' },
-              path: { type: 'string' },
-              expectedSha256: { type: 'string' }
-            },
-            required: ['role', 'path']
-          }
+          items: UPLOAD_FILE_INPUT_SCHEMA
         }
       },
       required: ['origin', 'handle', 'files']

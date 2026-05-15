@@ -75,6 +75,7 @@ Use the MCP surface by intent, and keep payloads small:
 - Observation: `codex_chrome_tab_observe`, `codex_chrome_tab_read_page`, `codex_chrome_tab_visual_observe`, `codex_chrome_tab_visual_analyze`, and `codex_chrome_tab_visual_inspect_target`. Prefer `tiny` or `medium`, `summaryMaxChars`, `maxActionableHandles`, and targeted `read_page` filters. Use tab-scoped visual tools for session tabs; they use CDP screenshot artifacts instead of active-tab capture. Warm-cache hits are tab-scoped; still re-observe after navigation or mutation.
 - Active-tab visual diagnostics: `codex_chrome_visual_observe`, `codex_chrome_visual_analyze`, and `codex_chrome_visual_inspect_target` are for CLI/internal diagnostics only. They require `expectedActiveTabId` and `diagnosticActiveTab: true`; prefer tab visual tools for all agent work.
 - Narrow actions: prefer `codex_chrome_tab_locator` for handle, selector, or text-based resolve/action in session tabs. Use direct handle tools (`codex_chrome_fill`, `codex_chrome_type`, `codex_chrome_clear`, `codex_chrome_click`, `codex_chrome_focus`, `codex_chrome_check`) with a session-owned `tabId` when a fresh handle is already proven.
+- Uploads: prefer `codex_chrome_tab_upload_file` for session-owned tab uploads. It validates assets in the daemon, supports the `social-media-draft` alias for JPEG/PNG screenshots, and uses a guarded CDP `DOM.setFileInputFiles` backend so native file picker focus is not part of the workflow.
 - Verification: for mutating actions, use `requireVerified`, explicit `verify` conditions such as `valueEquals` or `textAppears`, `postActionSnapshot: "delta"`, and `actionTrace` labels. Report provider, verification evidence, focused element value, gates, and content script version.
 - Discovery: if a needed tool is not callable in the current context, call `tool_search` for the exact `codex_chrome_*` tool before switching to CLI or another browser layer.
 
@@ -113,6 +114,7 @@ For a reload/live smoke after extension edits, prove the whole path:
 - `codex_chrome_status` shows connected, version match, no pending approvals, and the intended session-owned tab.
 - Fresh resolve finds the target without stale handles. On large commerce sites, confirm the target is not falsely `occluded:true`.
 - `clear`, `fill`, and `type` use `requireVerified` and explicit value checks. Include a Unicode/Turkish sample when input fidelity is the question.
+- Upload tests use `codex_chrome_tab_upload_file` with a fresh file-input handle and then re-observe for the site preview; do not use OS SendKeys or native picker handoffs as success proof.
 - If `type` via `chrome.debugger.Input.insertText` returns `TEXT_INSERTION_NOT_OBSERVED`, classify it as debugger/input fidelity. The current operator should attempt a bounded runtime-verified fallback; if fallback also fails, keep the action failed and patch with a regression test.
 - Final cleanup leaves reversible fields empty unless the user wanted otherwise.
 

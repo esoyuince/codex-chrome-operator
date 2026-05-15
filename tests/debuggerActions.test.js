@@ -7,7 +7,8 @@ const {
   detachCdpSession,
   isDebuggerSupportedUrl,
   runCdpCommand,
-  runDebuggerAction
+  runDebuggerAction,
+  runFileInputUpload
 } = require('../extension/debuggerActions');
 
 function makeChrome({ evaluateValue, evaluateValues, commandResults = {} } = {}) {
@@ -244,6 +245,54 @@ test('runCdpCommand maps Page.captureScreenshot bytes into screenshot data URL',
     'Page.captureScreenshot',
     'detach'
   ]);
+});
+
+test('runFileInputUpload sets a marked file input through DOM.setFileInputFiles', async () => {
+  const { chromeApi, calls } = makeChrome({
+    commandResults: {
+      'DOM.getDocument': { root: { nodeId: 1 } },
+      'DOM.querySelector': { nodeId: 42 },
+      'DOM.setFileInputFiles': {}
+    }
+  });
+
+  const result = await runFileInputUpload({
+    chromeApi,
+    tab: { id: 7, url: 'https://x.com/post' },
+    selector: '[data-codex-upload-token="upload_123"]',
+    files: ['C:\\Users\\example\\Pictures\\screenshot.jpg']
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.provider, 'chrome.debugger.DOM.setFileInputFiles');
+  assert.equal(result.result.fileCount, 1);
+  assert.deepEqual(calls.map((call) => call.method), [
+    'attach',
+    'DOM.enable',
+    'DOM.getDocument',
+    'DOM.querySelector',
+    'DOM.setFileInputFiles',
+    'detach'
+  ]);
+  assert.deepEqual(calls.find((call) => call.method === 'DOM.setFileInputFiles').params, {
+    nodeId: 42,
+    files: ['C:\\Users\\example\\Pictures\\screenshot.jpg']
+  });
+});
+
+test('runFileInputUpload rejects relative file paths before attaching', async () => {
+  const { chromeApi, calls } = makeChrome();
+
+  const result = await runFileInputUpload({
+    chromeApi,
+    tab: { id: 7, url: 'https://x.com/post' },
+    selector: '[data-codex-upload-token="upload_123"]',
+    files: ['relative/screenshot.jpg']
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'INVALID_SCHEMA');
+  assert.deepEqual(calls, []);
 });
 
 test('runCdpCommand handles native JavaScript dialogs through the guarded CDP path', async () => {

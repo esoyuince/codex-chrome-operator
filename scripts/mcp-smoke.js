@@ -32,6 +32,7 @@ const REQUIRED_MCP_SMOKE_TOOLS = [
   'codex_chrome_tab_goto',
   'codex_chrome_tab_observe',
   'codex_chrome_tab_read_page',
+  'codex_chrome_tab_upload_file',
   'codex_chrome_tab_locator',
   'codex_chrome_download_wait',
   'codex_chrome_download_show',

@@ -392,6 +392,22 @@ function targetActionParams(target, label, extra = {}) {
   };
 }
 
+function navigationReachedUrl(navigation, expectedUrl) {
+  if (!navigation || !expectedUrl) {
+    return false;
+  }
+  const tab = navigation.tab && typeof navigation.tab === 'object'
+    ? navigation.tab
+    : {};
+  return [
+    navigation.url,
+    navigation.requestedUrl,
+    tab.url,
+    tab.pendingUrl,
+    tab.requestedUrl
+  ].includes(expectedUrl);
+}
+
 function pngBuffer({ width, height, colorType }) {
   const buffer = Buffer.alloc(33);
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buffer, 0);
@@ -761,11 +777,7 @@ async function runCleanSmoke(options = {}) {
       openedObservation.result.origin !== config.origin ||
       openedObservation.result.url !== `${config.origin}/basic-form.html` ||
       !openedObservation.result.navigation ||
-      (
-        openedObservation.result.navigation.url !== `${config.origin}/basic-form.html` &&
-        (!openedObservation.result.navigation.tab ||
-          openedObservation.result.navigation.tab.url !== `${config.origin}/basic-form.html`)
-      ) ||
+      !navigationReachedUrl(openedObservation.result.navigation, `${config.origin}/basic-form.html`) ||
       !openedObservation.result.observation ||
       openedObservation.result.observation.title !== 'Codex Operator Basic Fixture'
     ) {
@@ -1559,6 +1571,7 @@ module.exports = {
   bindSmokeProfile,
   clickElement,
   findChromeForTesting,
+  navigationReachedUrl,
   restoreFileSnapshot,
   parseSmokeArgs,
   resolveSmokeConfig,

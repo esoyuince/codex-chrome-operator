@@ -83,6 +83,8 @@ test('side panel exposes action permissions, purchase approval, and blocked-site
   assert.match(html, /Place order \/ purchase/);
   assert.match(html, /guarded-actions-toggle/);
   assert.match(html, /purchase-approvals-toggle/);
+  assert.match(html, /id="guarded-actions-toggle" type="checkbox" checked disabled/);
+  assert.match(html, /id="purchase-approvals-toggle" type="checkbox" disabled/);
   assert.match(html, /Operational status/);
   assert.match(html, /Token usage/);
   assert.match(html, /Action timeline/);
@@ -99,6 +101,10 @@ test('side panel exposes action permissions, purchase approval, and blocked-site
   assert.match(js, /readAuditTimeline/);
   assert.match(js, /renderAuditTimeline/);
   assert.match(js, /operator\.audit\.timeline/);
+  assert.match(js, /SIDEPANEL_RPC_TIMEOUT_MS/);
+  assert.match(js, /SIDEPANEL_NATIVE_TIMEOUT_MS/);
+  assert.match(js, /withPanelTimeout/);
+  assert.match(js, /Promise\.all/);
   assert.match(html, /pending-approvals/);
   assert.match(js, /operator\.blockedOriginsStatus/);
   assert.match(js, /operator\.daemonStatus/);
@@ -264,6 +270,191 @@ test('side panel auto-refreshes live token metrics while visible', () => {
   assert.match(js, /document\.visibilityState === 'hidden'/);
 });
 
+test('side panel keeps policy toggles disabled while initial refresh is loading', () => {
+  const vm = require('node:vm');
+  const js = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.js'), 'utf8');
+  const elements = new Map();
+
+  function makeElement(id) {
+    return {
+      id,
+      children: [],
+      className: '',
+      dataset: {},
+      disabled: false,
+      checked: true,
+      innerHTML: '',
+      textContent: '',
+      value: '',
+      append(...children) {
+        this.children.push(...children);
+      },
+      addEventListener() {},
+      closest() {
+        return null;
+      },
+      classList: {
+        add: (...classes) => {
+          const current = new Set(String(elements.get(id).className || '').split(/\s+/).filter(Boolean));
+          for (const className of classes) {
+            current.add(className);
+          }
+          elements.get(id).className = Array.from(current).join(' ');
+        }
+      }
+    };
+  }
+
+  const document = {
+    getElementById(id) {
+      if (!elements.has(id)) {
+        elements.set(id, makeElement(id));
+      }
+      return elements.get(id);
+    },
+    createElement(tagName) {
+      return makeElement(tagName);
+    }
+  };
+  const pending = new Promise(() => {});
+  const chrome = {
+    runtime: {
+      sendMessage() {
+        return pending;
+      }
+    },
+    storage: {
+      local: {
+        get() {
+          return pending;
+        }
+      }
+    },
+    tabs: {
+      query() {
+        return pending;
+      }
+    }
+  };
+
+  vm.runInNewContext(js, {
+    chrome,
+    document,
+    URL,
+    setTimeout,
+    clearTimeout
+  });
+
+  assert.equal(elements.get('guarded-actions-toggle').disabled, true);
+  assert.equal(elements.get('purchase-approvals-toggle').disabled, true);
+  assert.match(elements.get('summary').textContent, /Checking Chrome operator status/);
+});
+
+test('side panel fails fast when daemon policy reads hang', async () => {
+  const vm = require('node:vm');
+  const js = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.js'), 'utf8');
+  const elements = new Map();
+
+  function makeElement(id) {
+    return {
+      id,
+      children: [],
+      className: '',
+      dataset: {},
+      disabled: false,
+      checked: true,
+      innerHTML: '',
+      textContent: '',
+      value: '',
+      append(...children) {
+        this.children.push(...children);
+      },
+      addEventListener() {},
+      closest() {
+        return null;
+      },
+      classList: {
+        add: (...classes) => {
+          const current = new Set(String(elements.get(id).className || '').split(/\s+/).filter(Boolean));
+          for (const className of classes) {
+            current.add(className);
+          }
+          elements.get(id).className = Array.from(current).join(' ');
+        }
+      }
+    };
+  }
+
+  const document = {
+    getElementById(id) {
+      if (!elements.has(id)) {
+        elements.set(id, makeElement(id));
+      }
+      return elements.get(id);
+    },
+    createElement(tagName) {
+      return makeElement(tagName);
+    }
+  };
+
+  const activeTab = {
+    id: 1,
+    title: 'Example Domain',
+    url: 'https://example.com/',
+    origin: 'https://example.com',
+    loadingState: 'complete'
+  };
+  const pending = new Promise(() => {});
+  const messages = [];
+  const chrome = {
+    runtime: {
+      async sendMessage(message) {
+        messages.push(message);
+        if (message.type === 'operator.status') {
+          return { ok: true, activeTab, connectionState: 'CONNECTED' };
+        }
+        if (message.type === 'operator.blockedOriginsStatus') {
+          return { blockedOrigins: [], blocked: false, blockedPattern: null };
+        }
+        return pending;
+      }
+    },
+    storage: {
+      local: {
+        async get() {
+          return {};
+        }
+      }
+    },
+    tabs: {
+      async query() {
+        return [];
+      }
+    }
+  };
+
+  vm.runInNewContext(js, {
+    chrome,
+    document,
+    URL,
+    setTimeout: (callback) => {
+      return setTimeout(callback, 5);
+    },
+    clearTimeout
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(elements.get('guarded-actions-toggle').disabled, true);
+  assert.equal(elements.get('purchase-approvals-toggle').disabled, true);
+  assert.equal(elements.get('permission-action').textContent, 'Unavailable');
+  assert.equal(elements.get('permission-critical').textContent, 'Unavailable');
+  assert.doesNotMatch(elements.get('summary').textContent, /Checking Chrome operator status/);
+  assert.match(elements.get('next-step').textContent, /(failed|timed out|disconnected|unavailable)/i);
+  assert.ok(messages.some((message) => message.type === 'operator.policy.status' && message.timeoutMs === 2500));
+});
+
 test('side panel keeps policy toggle failures visible', async () => {
   const vm = require('node:vm');
   const js = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.js'), 'utf8');
@@ -391,6 +582,159 @@ test('side panel keeps policy toggle failures visible', async () => {
   assert.match(elements.get('next-step').textContent, /Policy update failed: Unknown method/);
 });
 
+test('side panel does not reuse a stale in-flight refresh after policy update', async () => {
+  const vm = require('node:vm');
+  const js = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.js'), 'utf8');
+  const elements = new Map();
+  const listeners = new Map();
+
+  function deferred() {
+    let resolve;
+    const promise = new Promise((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  function makeElement(id) {
+    return {
+      id,
+      children: [],
+      className: '',
+      dataset: {},
+      disabled: false,
+      checked: true,
+      innerHTML: '',
+      textContent: '',
+      value: '',
+      append(...children) {
+        this.children.push(...children);
+      },
+      addEventListener(type, handler) {
+        listeners.set(`${id}:${type}`, handler);
+      },
+      closest() {
+        return null;
+      },
+      classList: {
+        add: (...classes) => {
+          const current = new Set(String(elements.get(id).className || '').split(/\s+/).filter(Boolean));
+          for (const className of classes) {
+            current.add(className);
+          }
+          elements.get(id).className = Array.from(current).join(' ');
+        }
+      }
+    };
+  }
+
+  const document = {
+    getElementById(id) {
+      if (!elements.has(id)) {
+        elements.set(id, makeElement(id));
+      }
+      return elements.get(id);
+    },
+    createElement(tagName) {
+      return makeElement(tagName);
+    }
+  };
+
+  const activeTab = {
+    id: 1,
+    title: 'Example Domain',
+    url: 'https://example.com/',
+    origin: 'https://example.com',
+    loadingState: 'complete'
+  };
+  let policy = { guardedActionsEnabled: true, purchaseApprovalsEnabled: false };
+  let holdNextAuditTimeline = false;
+  let heldAuditTimeline = null;
+  const chrome = {
+    runtime: {
+      async sendMessage(message) {
+        if (message.type === 'operator.status') {
+          return { ok: true, activeTab, connectionState: 'CONNECTED' };
+        }
+        if (message.type === 'operator.daemonStatus') {
+          return {
+            ok: true,
+            result: {
+              activeTab,
+              connectionState: 'EXTENSION_CONNECTED',
+              lastError: null,
+              pendingApprovals: [],
+              policy: { ...policy }
+            }
+          };
+        }
+        if (message.type === 'operator.approvals.list') {
+          return { ok: true, result: { approvals: [] } };
+        }
+        if (message.type === 'operator.policy.status') {
+          return { ok: true, result: { policy: { ...policy } } };
+        }
+        if (message.type === 'operator.policy.update') {
+          policy = { ...policy, guardedActionsEnabled: message.guardedActionsEnabled };
+          return { ok: true, result: { policy: { ...policy } } };
+        }
+        if (message.type === 'operator.audit.timeline') {
+          if (holdNextAuditTimeline) {
+            holdNextAuditTimeline = false;
+            heldAuditTimeline = deferred();
+            return heldAuditTimeline.promise;
+          }
+          return { ok: true, result: { timeline: [] } };
+        }
+        if (message.type === 'operator.blockedOriginsStatus') {
+          return { blockedOrigins: [], blocked: false, blockedPattern: null };
+        }
+        return { ok: true };
+      }
+    },
+    storage: {
+      local: {
+        async get() {
+          return {};
+        }
+      }
+    },
+    tabs: {
+      async query() {
+        return [];
+      }
+    }
+  };
+
+  vm.runInNewContext(js, {
+    chrome,
+    document,
+    URL,
+    setTimeout,
+    clearTimeout
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(elements.get('guarded-actions-toggle').checked, true);
+
+  holdNextAuditTimeline = true;
+  const staleRefresh = listeners.get('refresh:click')();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(heldAuditTimeline, 'manual refresh should be held after reading the old policy');
+
+  elements.get('guarded-actions-toggle').checked = false;
+  listeners.get('guarded-actions-toggle:change')();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  heldAuditTimeline.resolve({ ok: true, result: { timeline: [] } });
+  await staleRefresh;
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(elements.get('guarded-actions-toggle').checked, false);
+  assert.equal(elements.get('permission-action').textContent, 'Off');
+});
+
 test('side panel disables policy toggles when policy status is unavailable', async () => {
   const vm = require('node:vm');
   const js = fs.readFileSync(path.join(EXTENSION_DIR, 'sidepanel.js'), 'utf8');
@@ -503,6 +847,9 @@ test('side panel disables policy toggles when policy status is unavailable', asy
 
   assert.equal(elements.get('guarded-actions-toggle').disabled, true);
   assert.equal(elements.get('purchase-approvals-toggle').disabled, true);
+  assert.equal(elements.get('guarded-actions-toggle').checked, true);
+  assert.equal(elements.get('permission-action').textContent, 'Unavailable');
+  assert.equal(elements.get('permission-critical').textContent, 'Unavailable');
   assert.match(elements.get('next-step').textContent, /Policy controls unavailable: Unknown method/);
 });
 
@@ -675,6 +1022,28 @@ test('background rejects active-tab actions when the queued tab lock no longer m
   assert.match(background, /expectedTabId:\s*params\.expectedActiveTabId/);
   assert.match(background, /TAB_MISMATCH/);
   assert.match(background, /Active tab changed before the queued page action could dispatch/);
+});
+
+test('background bounds side panel native RPC timeouts', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+
+  assert.match(background, /function sidePanelNativeTimeout\(message\)/);
+  assert.match(background, /Math\.min\(Math\.max\(Math\.round\(value\),\s*500\),\s*NATIVE_RPC_TIMEOUT_MS\)/);
+  for (const messageType of [
+    'operator.daemonStatus',
+    'operator.approvals.list',
+    'operator.policy.status',
+    'operator.audit.timeline',
+    'operator.policy.update'
+  ]) {
+    const index = background.indexOf(`message.type === '${messageType}'`);
+    assert.notEqual(index, -1, `${messageType} handler should exist`);
+    assert.match(
+      background.slice(index, index + 560),
+      /timeoutMs:\s*sidePanelNativeTimeout\(message\)/,
+      `${messageType} should pass bounded side panel timeout`
+    );
+  }
 });
 
 test('runtime tab navigation does not activate background session tabs', () => {

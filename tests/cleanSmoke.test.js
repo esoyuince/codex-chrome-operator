@@ -9,6 +9,7 @@ const {
   bindSmokeProfile,
   clickElement,
   findChromeForTesting,
+  navigationReachedUrl,
   resolveSmokeConfig,
   restoreFileSnapshot,
   snapshotFile
@@ -140,6 +141,17 @@ test('bindSmokeProfile configures the transient smoke profile without setup', ()
   assert.equal(result.profileBindingId, 'profileless');
   assert.equal(result.profileDirectory, 'Default');
   assert.equal(result.setupUrl, undefined);
+});
+
+test('navigationReachedUrl accepts runtime tab navigation result shapes', () => {
+  const url = 'http://127.0.0.1:18180/basic-form.html';
+
+  assert.equal(navigationReachedUrl({ url }, url), true);
+  assert.equal(navigationReachedUrl({ requestedUrl: url }, url), true);
+  assert.equal(navigationReachedUrl({ tab: { url } }, url), true);
+  assert.equal(navigationReachedUrl({ tab: { pendingUrl: url } }, url), true);
+  assert.equal(navigationReachedUrl({ tab: { requestedUrl: url } }, url), true);
+  assert.equal(navigationReachedUrl({ requestedUrl: 'about:blank' }, url), false);
 });
 
 test('clickElement can fall back to a DOM click for fixture-only controls', async () => {

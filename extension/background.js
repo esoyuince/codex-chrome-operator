@@ -40,7 +40,8 @@ const {
   detachAllCdpSessions,
   detachCdpSession,
   runCdpCommand,
-  runDebuggerAction
+  runDebuggerAction,
+  runFileInputUpload
 } = globalThis.CodexDebuggerActions;
 const {
   runLocatorActionWithRetry
@@ -166,6 +167,14 @@ function requestNativeRpc(method, params = {}, { timeoutMs = NATIVE_RPC_TIMEOUT_
     pendingNativeRpcs.set(id, { resolve, timeout });
     nativePort.postMessage(request);
   });
+}
+
+function sidePanelNativeTimeout(message) {
+  const value = Number(message && message.timeoutMs);
+  if (!Number.isFinite(value)) {
+    return NATIVE_RPC_TIMEOUT_MS;
+  }
+  return Math.min(Math.max(Math.round(value), 500), NATIVE_RPC_TIMEOUT_MS);
 }
 
 function settlePendingNativeRpcs(error) {
@@ -1456,6 +1465,79 @@ async function dispatchRuntimeTabLocatorAction(tab, action, params, locator) {
   });
 }
 
+async function runRuntimeTabUploadFile(tab, params = {}) {
+  const filePaths = Array.isArray(params.filePaths) ? params.filePaths : [];
+  if (filePaths.length === 0) {
+    return {
+      ok: false,
+      error: {
+        code: 'INVALID_SCHEMA',
+        message: 'Runtime tab upload requires validated file paths.'
+      }
+    };
+  }
+
+  const prepare = await chrome.tabs.sendMessage(tab.id, {
+    type: 'content.prepareFileUpload',
+    origin: params.origin,
+    target: params.target,
+    ruleset: params.ruleset,
+    verifyPreview: params.verifyPreview,
+    files: params.files
+  });
+  if (!prepare || !prepare.ok) {
+    return prepare || {
+      ok: false,
+      error: {
+        code: 'UPLOAD_TARGET_INVALID',
+        message: 'Upload target preparation failed.'
+      }
+    };
+  }
+
+  const prepared = prepare.result || {};
+  const cdpUpload = await runFileInputUpload({
+    chromeApi: chrome,
+    tab,
+    selector: prepared.selector,
+    files: filePaths
+  });
+  if (!cdpUpload.ok) {
+    await chrome.tabs.sendMessage(tab.id, {
+      type: 'content.clearFileUploadMarker',
+      uploadToken: prepared.uploadToken
+    }).catch(() => null);
+    return cdpUpload;
+  }
+
+  const completed = await chrome.tabs.sendMessage(tab.id, {
+    type: 'content.completeFileUpload',
+    origin: params.origin,
+    target: params.target,
+    ruleset: params.ruleset,
+    verifyPreview: params.verifyPreview,
+    files: params.files,
+    uploadToken: prepared.uploadToken
+  });
+  if (!completed || !completed.ok) {
+    return completed || {
+      ok: false,
+      error: {
+        code: 'UPLOAD_VERIFICATION_FAILED',
+        message: 'Upload verification failed after debugger file selection.'
+      }
+    };
+  }
+  return {
+    ok: true,
+    result: {
+      ...(completed.result || {}),
+      provider: 'chrome.debugger.DOM.setFileInputFiles',
+      debuggerUpload: cdpUpload.result || null
+    }
+  };
+}
+
 async function handleRuntimeCommand(method, params = {}) {
   const readyTab = await tabForRuntimeCommand(params.tabId);
   if (!readyTab.ok) {
@@ -1536,6 +1618,10 @@ async function handleRuntimeCommand(method, params = {}) {
       resolveLocator: () => resolveRuntimeTabLocator(tab.id, params, { includeTargetContract: true }),
       runAction: ({ locator }) => dispatchRuntimeTabLocatorAction(tab, action, params, locator)
     });
+  }
+
+  if (method === 'operator.runtime.tab.uploadFile') {
+    return runRuntimeTabUploadFile(tab, params);
   }
 
   if (method === 'operator.runtime.tab.batch') {
@@ -2684,7 +2770,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message && message.type === 'operator.daemonStatus') {
       await connectNative();
-      sendResponse(await requestNativeRpc('operator.status'));
+      sendResponse(await requestNativeRpc('operator.status', {}, {
+        timeoutMs: sidePanelNativeTimeout(message)
+      }));
       return;
     }
 
@@ -2692,13 +2780,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await connectNative();
       sendResponse(await requestNativeRpc('operator.approvals.list', {
         ...(message.status ? { status: message.status } : {})
+      }, {
+        timeoutMs: sidePanelNativeTimeout(message)
       }));
       return;
     }
 
     if (message && message.type === 'operator.policy.status') {
       await connectNative();
-      sendResponse(await requestNativeRpc('operator.policy.status'));
+      sendResponse(await requestNativeRpc('operator.policy.status', {}, {
+        timeoutMs: sidePanelNativeTimeout(message)
+      }));
       return;
     }
 
@@ -2706,6 +2798,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await connectNative();
       sendResponse(await requestNativeRpc('operator.audit.timeline', {
         ...(Number.isFinite(Number(message.limit)) ? { limit: Number(message.limit) } : {})
+      }, {
+        timeoutMs: sidePanelNativeTimeout(message)
       }));
       return;
     }
@@ -2719,6 +2813,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         ...(typeof message.purchaseApprovalsEnabled === 'boolean'
           ? { purchaseApprovalsEnabled: message.purchaseApprovalsEnabled }
           : {})
+      }, {
+        timeoutMs: sidePanelNativeTimeout(message)
       }));
       return;
     }

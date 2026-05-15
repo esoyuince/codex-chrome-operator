@@ -628,6 +628,16 @@ class CodexChromeToolAdapter {
           ])
         });
         break;
+      case 'codex_chrome_tab_upload_file':
+        response = await this.sendRpc('operator.runtime.tab.uploadFile', {
+          ...this.agentContext(input),
+          tabId: input.tabId,
+          target: { handle: input.handle },
+          files: input.files,
+          ...(input.ruleset === undefined ? {} : { ruleset: input.ruleset }),
+          ...(input.verifyPreview === undefined ? {} : { verifyPreview: input.verifyPreview })
+        });
+        break;
       case 'codex_chrome_tab_locator':
         response = await this.sendRpc('operator.runtime.tab.locator', {
           ...this.agentContext(input),

@@ -312,6 +312,7 @@ The adapter exposes strict `codex_chrome_*` tools, including:
 - `codex_chrome_tab_goto`
 - `codex_chrome_tab_observe`
 - `codex_chrome_tab_read_page`
+- `codex_chrome_tab_upload_file`
 - `codex_chrome_tab_locator`
 - `codex_chrome_tab_show_target`
 - `codex_chrome_tab_operator_indicator`
@@ -352,11 +353,14 @@ Core MCP read, visual, navigation, and DOM-action tools now require a
 session-owned `tabId` and route through `operator.runtime.tab.*`:
 `codex_chrome_observe`, `codex_chrome_read_page`,
 `codex_chrome_tab_visual_observe`, `codex_chrome_tab_visual_analyze`,
-`codex_chrome_tab_visual_inspect_target`, `codex_chrome_batch`, and the direct
-handle actions such as `codex_chrome_click`, `codex_chrome_fill`, and
-`codex_chrome_type`. Tab navigation updates the owned tab URL without activating
-it. Tab visual tools use a tab-scoped CDP screenshot backend and return
-artifact metadata instead of `captureVisibleTab` bytes. The daemon still retains
+`codex_chrome_tab_visual_inspect_target`, `codex_chrome_tab_upload_file`,
+`codex_chrome_batch`, and the direct handle actions such as
+`codex_chrome_click`, `codex_chrome_fill`, and `codex_chrome_type`. Tab
+navigation updates the owned tab URL without activating it. Tab visual tools use
+a tab-scoped CDP screenshot backend and return artifact metadata instead of
+`captureVisibleTab` bytes. Tab upload uses a session-owned CDP
+`DOM.setFileInputFiles` path so approved draft uploads do not depend on the
+native file picker or active tab focus. The daemon still retains
 guarded active-tab `page.*` commands for CLI/internal diagnostics, but MCP
 visual diagnostic tools must now name `expectedActiveTabId` and set
 `diagnosticActiveTab: true`. Those commands reject expected-tab drift, known

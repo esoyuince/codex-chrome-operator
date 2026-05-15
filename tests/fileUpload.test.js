@@ -1,7 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { uploadFiles } = require('../extension/fileUpload');
+const {
+  completeNativeFileUpload,
+  prepareNativeFileUpload,
+  uploadFiles
+} = require('../extension/fileUpload');
 
 class FakeEvent {
   constructor(type, options = {}) {
@@ -25,6 +29,9 @@ function fakeElement({ tagName = 'div', id = '', attributes = {}, textContent = 
     },
     setAttribute(name, value) {
       attr.set(name, String(value));
+    },
+    removeAttribute(name) {
+      attr.delete(name);
     },
     matches(selector) {
       if (selector === 'input[type="file"]') {
@@ -182,4 +189,86 @@ test('uploadFiles returns manual handoff outside the mock fixture without raw pa
   assert.equal(result.error.fileSummaries[0].basename, 'icon.png');
   assert.equal(Object.hasOwn(result.error.fileSummaries[0], 'path'), false);
   assert.equal(JSON.stringify(result).includes('C:\\Users\\example'), false);
+});
+
+test('prepareNativeFileUpload marks a resolved file input for debugger upload', () => {
+  const input = fakeElement({
+    tagName: 'input',
+    id: 'upload',
+    attributes: { type: 'file', accept: 'image/jpeg,image/png' }
+  });
+
+  const result = prepareNativeFileUpload({
+    target: { handle: 'el_upload' },
+    files: [{
+      role: 'screenshot',
+      basename: 'supermemory-qwen-live-screenshot.jpg',
+      sha256: 'a'.repeat(64)
+    }]
+  }, {
+    document: {
+      querySelector: () => null,
+      getElementById: () => null
+    },
+    resolveHandle: () => ({ ok: true, element: input })
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.uploadTarget, 'el_upload');
+  assert.match(result.result.uploadToken, /^codex_upload_/);
+  assert.match(result.result.selector, /^\[data-codex-upload-token="/);
+  assert.equal(input.getAttribute('data-codex-upload-token'), result.result.uploadToken);
+  assert.equal(result.result.input.accept, 'image/jpeg,image/png');
+  assert.equal(result.result.input.multiple, false);
+  assert.deepEqual(result.result.files[0], {
+    role: 'screenshot',
+    basename: 'supermemory-qwen-live-screenshot.jpg',
+    sha256: 'a'.repeat(64)
+  });
+});
+
+test('completeNativeFileUpload verifies selected files and removes debugger marker', () => {
+  const input = fakeElement({
+    tagName: 'input',
+    id: 'upload',
+    attributes: {
+      type: 'file',
+      'data-codex-upload-token': 'codex_upload_123'
+    }
+  });
+  input.files = [{
+    name: 'supermemory-qwen-live-screenshot.jpg',
+    size: 249641,
+    type: 'image/jpeg'
+  }];
+  const document = {
+    querySelector(selector) {
+      return selector === '[data-codex-upload-token="codex_upload_123"]' ? input : null;
+    },
+    getElementById: () => null
+  };
+
+  const result = completeNativeFileUpload({
+    uploadToken: 'codex_upload_123',
+    target: { handle: 'el_upload' },
+    verifyPreview: true,
+    ruleset: 'socialMediaDraftAssets.v2026',
+    files: [{
+      role: 'screenshot',
+      basename: 'supermemory-qwen-live-screenshot.jpg',
+      sha256: 'a'.repeat(64)
+    }]
+  }, {
+    document,
+    Event: FakeEvent
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.result.provider, 'chrome.debugger.DOM.setFileInputFiles');
+  assert.equal(result.result.uploadTarget, 'el_upload');
+  assert.equal(result.result.previewVerified, true);
+  assert.equal(result.result.previewEvidence.method, 'file-input-files-snapshot');
+  assert.deepEqual(result.result.input.fileNames, ['supermemory-qwen-live-screenshot.jpg']);
+  assert.deepEqual(input.dispatched, ['input', 'change']);
+  assert.equal(input.getAttribute('data-codex-upload-token'), null);
 });

@@ -194,3 +194,23 @@ test('validateUploadFiles validates each file with the selected ruleset', () => 
   assert.equal(results.files.length, 2);
   assert.deepEqual(results.errors, []);
 });
+
+test('social draft screenshot accepts ordinary JPEGs without Play Store dimensions', () => {
+  const dir = tempDir();
+  const screenshotPath = writeTempFile(dir, 'supermemory-qwen-live-screenshot.jpg', jpegBuffer({
+    width: 1912,
+    height: 992
+  }));
+
+  const result = validateUploadFiles([{
+    role: 'screenshot',
+    path: screenshotPath
+  }], { ruleset: 'social-media-draft' });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ruleset, 'socialMediaDraftAssets.v2026');
+  assert.equal(result.files[0].role, 'screenshot');
+  assert.equal(result.files[0].mimeType, 'image/jpeg');
+  assert.equal(result.files[0].width, 1912);
+  assert.equal(result.files[0].height, 992);
+});

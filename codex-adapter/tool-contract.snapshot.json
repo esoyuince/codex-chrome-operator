@@ -1,8 +1,8 @@
 {
   "adapterProtocolVersion": "1.0",
-  "toolSchemaVersion": "2026-05-15.operator-maturity",
-  "toolDefinitionsHash": "1e0fcb138348955ff93bd347c2bed9f5604f751ab8046423ec3530019aad4ab6",
-  "toolCount": 68,
+  "toolSchemaVersion": "2026-05-16.tab-upload",
+  "toolDefinitionsHash": "fd918d04763d4cfd94ba2c4c6fb5719a2f5f18d5d3ffd7ab90676d03156ccf88",
+  "toolCount": 69,
   "toolNames": [
     "codex_chrome_status",
     "codex_chrome_prepare_origin",
@@ -40,6 +40,7 @@
     "codex_chrome_tab_goto",
     "codex_chrome_tab_observe",
     "codex_chrome_tab_read_page",
+    "codex_chrome_tab_upload_file",
     "codex_chrome_tab_locator",
     "codex_chrome_tab_show_target",
     "codex_chrome_tab_operator_indicator",
@@ -1086,6 +1087,63 @@
         },
         "required": [
           "tabId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_upload_file",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "handle": {
+            "type": "string"
+          },
+          "ruleset": {
+            "type": "string"
+          },
+          "verifyPreview": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "role": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "expectedSha256": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "role",
+                "path"
+              ]
+            }
+          }
+        },
+        "required": [
+          "tabId",
+          "handle",
+          "files"
         ]
       },
       "outputContract": {

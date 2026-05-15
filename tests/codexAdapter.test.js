@@ -62,6 +62,7 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   const tabGoto = tools.find((tool) => tool.name === 'codex_chrome_tab_goto');
   const tabObserve = tools.find((tool) => tool.name === 'codex_chrome_tab_observe');
   const tabReadPage = tools.find((tool) => tool.name === 'codex_chrome_tab_read_page');
+  const tabUploadFile = tools.find((tool) => tool.name === 'codex_chrome_tab_upload_file');
   const tabLocator = tools.find((tool) => tool.name === 'codex_chrome_tab_locator');
   const recentTabs = tools.find((tool) => tool.name === 'codex_chrome_recent_tabs');
   const historySearch = tools.find((tool) => tool.name === 'codex_chrome_history_search');
@@ -118,6 +119,13 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.equal(uploadFile.inputSchema.properties.files.type, 'array');
   assert.equal(uploadFile.inputSchema.properties.ruleset.type, 'string');
   assert.equal(uploadFile.inputSchema.properties.verifyPreview.type, 'boolean');
+  assert.ok(tabUploadFile);
+  assert.equal(tabUploadFile.inputSchema.type, 'object');
+  assert.equal(tabUploadFile.inputSchema.additionalProperties, false);
+  assert.deepEqual(tabUploadFile.inputSchema.required, ['tabId', 'handle', 'files']);
+  assert.equal(tabUploadFile.inputSchema.properties.files.type, 'array');
+  assert.equal(tabUploadFile.inputSchema.properties.ruleset.type, 'string');
+  assert.equal(tabUploadFile.inputSchema.properties.verifyPreview.type, 'boolean');
   assert.ok(cartPrepare);
   assert.equal(cartPrepare.inputSchema.type, 'object');
   assert.equal(cartPrepare.inputSchema.additionalProperties, false);
@@ -1428,6 +1436,62 @@ test('CodexChromeToolAdapter routes upload file with normalized origin and optio
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, 'page.uploadFile');
+  assert.deepEqual(calls[0].params.files, files);
+});
+
+test('CodexChromeToolAdapter routes tab-scoped upload file without active-tab origin dispatch', async () => {
+  const calls = [];
+  const files = [{
+    role: 'screenshot',
+    path: 'C:/tmp/supermemory-qwen-live-screenshot.jpg',
+    expectedSha256: 'def456'
+  }];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          method: request.method,
+          params: request.params
+        }
+      };
+    }
+  });
+
+  const response = await adapter.executeTool({
+    toolName: 'codex_chrome_tab_upload_file',
+    input: {
+      agentId: 'agent-alpha',
+      tabId: 7,
+      handle: 'el_file',
+      ruleset: 'social-media-draft',
+      verifyPreview: true,
+      files
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.method, 'operator.runtime.tab.uploadFile');
+  assert.deepEqual(response.result.params, {
+    agentId: 'agent-alpha',
+    tabId: 7,
+    target: { handle: 'el_file' },
+    ruleset: 'social-media-draft',
+    verifyPreview: true,
+    files: [{
+      role: 'screenshot',
+      path: '[REDACTED_PATH]',
+      expectedSha256: 'def456'
+    }]
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'operator.runtime.tab.uploadFile');
   assert.deepEqual(calls[0].params.files, files);
 });
 

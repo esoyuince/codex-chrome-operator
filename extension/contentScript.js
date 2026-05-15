@@ -2839,6 +2839,37 @@ function handleContentMessage(message, sender, sendResponse) {
       return;
     }
 
+    if (message && message.type === 'content.prepareFileUpload') {
+      sendResponse(globalThis.CodexFileUpload.prepareNativeFileUpload(message, {
+        document,
+        location,
+        window,
+        Event,
+        resolveHandle
+      }));
+      return;
+    }
+
+    if (message && message.type === 'content.completeFileUpload') {
+      sendResponse(globalThis.CodexFileUpload.completeNativeFileUpload(message, {
+        document,
+        location,
+        window,
+        Event
+      }));
+      return;
+    }
+
+    if (message && message.type === 'content.clearFileUploadMarker') {
+      sendResponse(globalThis.CodexFileUpload.clearNativeFileUploadMarker(message, {
+        document,
+        location,
+        window,
+        Event
+      }));
+      return;
+    }
+
     if (message && message.type === 'content.prepareCart') {
       sendResponse(await globalThis.CodexCartWorkflow.prepareCart(message, {
         document,

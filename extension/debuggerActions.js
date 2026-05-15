@@ -2193,6 +2193,139 @@
     return withDebuggerOperationLock(() => runCdpCommandLocked(options));
   }
 
+  function isAbsoluteUploadPath(value) {
+    const text = String(value || '');
+    return (
+      /^[A-Za-z]:[\\/]/.test(text) ||
+      /^\\\\[^\\]/.test(text) ||
+      text.startsWith('/')
+    ) && !text.includes('\0');
+  }
+
+  function validateFileInputUpload({ selector, files }) {
+    if (typeof selector !== 'string' || !selector.startsWith('[data-codex-upload-token="') || selector.length > 180) {
+      return {
+        ok: false,
+        error: {
+          code: 'INVALID_SCHEMA',
+          message: 'File upload selector must be a bounded Codex upload marker.'
+        }
+      };
+    }
+    if (!Array.isArray(files) || files.length === 0 || files.length > 10) {
+      return {
+        ok: false,
+        error: {
+          code: 'INVALID_SCHEMA',
+          message: 'File upload requires 1-10 file paths.'
+        }
+      };
+    }
+    for (const filePath of files) {
+      if (typeof filePath !== 'string' || !isAbsoluteUploadPath(filePath)) {
+        return {
+          ok: false,
+          error: {
+            code: 'INVALID_SCHEMA',
+            message: 'File upload paths must be absolute local paths.'
+          }
+        };
+      }
+    }
+    return { ok: true };
+  }
+
+  async function runFileInputUpload(options) {
+    return withDebuggerOperationLock(() => runFileInputUploadLocked(options));
+  }
+
+  async function runFileInputUploadLocked({
+    chromeApi,
+    tab,
+    selector,
+    files,
+    timeoutMs = DEBUGGER_TIMEOUT_MS
+  }) {
+    const upload = validateFileInputUpload({ selector, files });
+    if (!upload.ok) {
+      return upload;
+    }
+    if (!chromeApi || !chromeApi.debugger || !tab || !tab.id) {
+      return { ok: false, error: { code: 'NO_ACTIVE_TAB' } };
+    }
+    if (!isDebuggerSupportedUrl(tab.url)) {
+      return { ok: false, error: unsupportedDebuggerPageError(tab) };
+    }
+
+    const target = { tabId: tab.id };
+    let attached = false;
+    try {
+      await attachDebugger(chromeApi, target, timeoutMs);
+      attached = true;
+      await sendCommand(chromeApi, target, 'DOM.enable', {}, timeoutMs);
+      const documentResponse = await sendCommand(chromeApi, target, 'DOM.getDocument', {}, timeoutMs);
+      const rootNodeId = documentResponse &&
+        documentResponse.root &&
+        Number.isInteger(documentResponse.root.nodeId)
+        ? documentResponse.root.nodeId
+        : null;
+      if (!rootNodeId) {
+        return {
+          ok: false,
+          error: {
+            code: 'CDP_COMMAND_FAILED',
+            message: 'DOM.getDocument did not return a root node.'
+          }
+        };
+      }
+      const queryResponse = await sendCommand(chromeApi, target, 'DOM.querySelector', {
+        nodeId: rootNodeId,
+        selector
+      }, timeoutMs);
+      const nodeId = queryResponse && Number.isInteger(queryResponse.nodeId)
+        ? queryResponse.nodeId
+        : 0;
+      if (!nodeId) {
+        return {
+          ok: false,
+          error: {
+            code: 'UPLOAD_TARGET_INVALID',
+            message: 'Prepared file input marker was not found in the tab DOM.'
+          }
+        };
+      }
+      await sendCommand(chromeApi, target, 'DOM.setFileInputFiles', {
+        nodeId,
+        files
+      }, timeoutMs);
+      return {
+        ok: true,
+        result: {
+          provider: 'chrome.debugger.DOM.setFileInputFiles',
+          method: 'DOM.setFileInputFiles',
+          fileCount: files.length
+        }
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: 'CDP_COMMAND_FAILED',
+          message: error.message || String(error),
+          method: 'DOM.setFileInputFiles'
+        }
+      };
+    } finally {
+      if (attached) {
+        try {
+          await detachDebugger(chromeApi, target, timeoutMs);
+        } catch {
+          // Detach failures should not hide the upload result.
+        }
+      }
+    }
+  }
+
   async function runCdpCommandLocked({
     chromeApi,
     tab,
@@ -2581,7 +2714,8 @@
     detachCdpSession,
     isDebuggerSupportedUrl,
     runCdpCommand,
-    runDebuggerAction
+    runDebuggerAction,
+    runFileInputUpload
   };
 
   if (typeof module !== 'undefined' && module.exports) {

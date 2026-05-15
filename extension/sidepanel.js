@@ -37,7 +37,10 @@ let currentOrigin = null;
 let transientNextStep = null;
 let refreshInFlight = null;
 let lastRefreshStartedAt = 0;
+let policyUpdateInFlight = false;
 const AUTO_REFRESH_INTERVAL_MS = 2000;
+const SIDEPANEL_RPC_TIMEOUT_MS = 2500;
+const SIDEPANEL_NATIVE_TIMEOUT_MS = 2500;
 const APPROVAL_MESSAGE_TYPES = {
   approve: 'operator.approvals.approve',
   reject: 'operator.approvals.reject',
@@ -78,6 +81,45 @@ function setTransientNextStep(message) {
   transientNextStep = message || null;
 }
 
+function timeoutResult(label) {
+  return {
+    ok: false,
+    statusError: `${label} timed out`
+  };
+}
+
+function withPanelTimeout(label, promise, fallback = timeoutResult(label)) {
+  let timeoutId = null;
+  let settled = false;
+  return new Promise((resolve) => {
+    timeoutId = setTimeout(() => {
+      settled = true;
+      resolve(fallback);
+    }, SIDEPANEL_RPC_TIMEOUT_MS);
+
+    Promise.resolve(promise)
+      .then((value) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve(value);
+      })
+      .catch((error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve({
+          ok: false,
+          statusError: formatError(error) || `${label} failed`
+        });
+      });
+  });
+}
+
 async function readStorage() {
   try {
     return await chrome.storage.local.get([
@@ -102,7 +144,10 @@ async function readStatus() {
 
 async function readDaemonStatus() {
   try {
-    return await chrome.runtime.sendMessage({ type: 'operator.daemonStatus' });
+    return await chrome.runtime.sendMessage({
+      type: 'operator.daemonStatus',
+      timeoutMs: SIDEPANEL_NATIVE_TIMEOUT_MS
+    });
   } catch (error) {
     return {
       ok: false,
@@ -113,7 +158,10 @@ async function readDaemonStatus() {
 
 async function readApprovals() {
   try {
-    return await chrome.runtime.sendMessage({ type: 'operator.approvals.list' });
+    return await chrome.runtime.sendMessage({
+      type: 'operator.approvals.list',
+      timeoutMs: SIDEPANEL_NATIVE_TIMEOUT_MS
+    });
   } catch (error) {
     return {
       ok: false,
@@ -124,7 +172,10 @@ async function readApprovals() {
 
 async function readPolicyStatus() {
   try {
-    return await chrome.runtime.sendMessage({ type: 'operator.policy.status' });
+    return await chrome.runtime.sendMessage({
+      type: 'operator.policy.status',
+      timeoutMs: SIDEPANEL_NATIVE_TIMEOUT_MS
+    });
   } catch (error) {
     return {
       ok: false,
@@ -137,7 +188,8 @@ async function readAuditTimeline() {
   try {
     return await chrome.runtime.sendMessage({
       type: 'operator.audit.timeline',
-      limit: 8
+      limit: 8,
+      timeoutMs: SIDEPANEL_NATIVE_TIMEOUT_MS
     });
   } catch (error) {
     return {
@@ -254,8 +306,16 @@ function renderPermissions({ connectionState, tab, blockedStatus, policy, policy
   const guardedOn = policy.guardedActionsEnabled !== false;
   const purchaseOn = policy.purchaseApprovalsEnabled === true;
   setMiniBadge(els.permissionSafe, ready ? 'ok' : 'warn', ready ? 'Ready' : 'Blocked');
-  setMiniBadge(els.permissionAction, policyReady && guardedOn ? 'warn' : 'disabled', policyReady && guardedOn ? 'Guarded' : 'Off');
-  setMiniBadge(els.permissionCritical, policyReady && purchaseOn ? 'danger' : 'disabled', policyReady && purchaseOn ? 'Approval' : 'Off');
+  setMiniBadge(
+    els.permissionAction,
+    policyReady && guardedOn ? 'warn' : 'disabled',
+    policyReady ? (guardedOn ? 'Guarded' : 'Off') : 'Unavailable'
+  );
+  setMiniBadge(
+    els.permissionCritical,
+    policyReady && purchaseOn ? 'danger' : 'disabled',
+    policyReady ? (purchaseOn ? 'Approval' : 'Off') : 'Unavailable'
+  );
   els.guardedActionsToggle.checked = guardedOn;
   els.purchaseApprovalsToggle.checked = purchaseOn;
   els.guardedActionsToggle.disabled = !policyReady;
@@ -405,9 +465,22 @@ function renderAuditTimeline(response) {
   }
 }
 
-async function refresh() {
+async function refresh(options = {}) {
+  const force = options && options.force === true;
   const now = Date.now();
   if (refreshInFlight) {
+    if (force) {
+      try {
+        await refreshInFlight;
+      } catch {
+        // A forced refresh is used after a policy mutation; keep going so the
+        // side panel reads a fresh post-update policy snapshot.
+      }
+    } else {
+      return refreshInFlight;
+    }
+  }
+  if (refreshInFlight && !force) {
     return refreshInFlight;
   }
   lastRefreshStartedAt = now;
@@ -422,14 +495,27 @@ async function refreshNow() {
   els.connect.disabled = true;
   els.refresh.disabled = true;
   els.saveBlockedSites.disabled = true;
+  els.guardedActionsToggle.disabled = true;
+  els.purchaseApprovalsToggle.disabled = true;
 
-  const storage = await readStorage();
-  const status = await readStatus();
-  const daemonStatus = await readDaemonStatus();
-  const approvalsStatus = await readApprovals();
-  const policyStatus = await readPolicyStatus();
-  const auditTimeline = await readAuditTimeline();
-  const fallbackTab = status.ok ? null : await readActiveTabFallback();
+  const [
+    storage,
+    status,
+    daemonStatus,
+    approvalsStatus,
+    policyStatus,
+    auditTimeline
+  ] = await Promise.all([
+    withPanelTimeout('Storage', readStorage(), { storageError: 'Storage timed out' }),
+    withPanelTimeout('Background status', readStatus()),
+    withPanelTimeout('Daemon status', readDaemonStatus()),
+    withPanelTimeout('Approvals status', readApprovals()),
+    withPanelTimeout('Policy status', readPolicyStatus()),
+    withPanelTimeout('Audit timeline', readAuditTimeline())
+  ]);
+  const fallbackTab = status.ok
+    ? null
+    : await withPanelTimeout('Active tab fallback', readActiveTabFallback(), null);
   const daemonResult = daemonStatus && daemonStatus.ok ? daemonStatus.result : null;
   const tab = (status && status.activeTab) || (daemonResult && daemonResult.activeTab) || fallbackTab;
   const connectionState = (daemonResult && daemonResult.connectionState) ||
@@ -454,7 +540,16 @@ async function refreshNow() {
   const policyError = policyStatus && !policyStatus.ok
     ? formatError(policyStatus.error) || policyStatus.statusError || 'unknown policy error'
     : policyStatus.statusError || null;
-  const blockedStatus = await readBlockedOriginsStatus(tab && tab.origin);
+  const blockedStatus = await withPanelTimeout(
+    'Blocked-site status',
+    readBlockedOriginsStatus(tab && tab.origin),
+    {
+      blockedOrigins: [],
+      blocked: false,
+      blockedPattern: null,
+      error: 'Blocked-site status timed out'
+    }
+  );
 
   currentOrigin = tab && tab.origin && tab.origin !== 'null' ? tab.origin : null;
 
@@ -515,6 +610,9 @@ function refreshIfVisible() {
   if (document.visibilityState === 'hidden') {
     return;
   }
+  if (policyUpdateInFlight) {
+    return;
+  }
   const elapsed = Date.now() - lastRefreshStartedAt;
   if (elapsed < AUTO_REFRESH_INTERVAL_MS / 2) {
     return;
@@ -545,11 +643,16 @@ if (typeof document.addEventListener === 'function') {
 }
 
 async function updatePolicyToggle(update) {
+  if (policyUpdateInFlight) {
+    return;
+  }
+  policyUpdateInFlight = true;
   els.guardedActionsToggle.disabled = true;
   els.purchaseApprovalsToggle.disabled = true;
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'operator.policy.update',
+      timeoutMs: SIDEPANEL_NATIVE_TIMEOUT_MS,
       ...update
     });
     if (!response || !response.ok) {
@@ -560,7 +663,8 @@ async function updatePolicyToggle(update) {
   } catch (error) {
     setTransientNextStep(`Policy update failed: ${formatError(error) || 'unknown error'}`);
   } finally {
-    await refresh();
+    policyUpdateInFlight = false;
+    await refresh({ force: true });
   }
 }
 

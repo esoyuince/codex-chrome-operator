@@ -120,6 +120,7 @@ The adapter currently exposes 68 strict tools:
 - `codex_chrome_tab_goto`
 - `codex_chrome_tab_observe`
 - `codex_chrome_tab_read_page`
+- `codex_chrome_tab_upload_file`
 - `codex_chrome_tab_locator`
 - `codex_chrome_tab_show_target`
 - `codex_chrome_tab_operator_indicator`
@@ -206,6 +207,11 @@ against the fresh observation before storing a cropped region artifact.
 `codex_chrome_tab_handle_dialog` accepts or dismisses native JavaScript/browser
 dialogs such as `beforeunload` prompts on a session-owned tab through the same
 guarded CDP path.
+`codex_chrome_tab_upload_file` attaches validated draft-only files to a
+session-owned tab's file input handle through a guarded CDP
+`DOM.setFileInputFiles` backend. It requires `tabId`, target `handle`, and a
+non-empty `files` array, validates assets in the daemon, redacts raw paths from
+results and audit views, and avoids the native Windows file picker entirely.
 `codex_chrome_tab_goto`, `codex_chrome_tab_observe`, and
 `codex_chrome_tab_read_page` are the safe browser runtime wrappers for
 session-owned tabs, so an agent can navigate, observe, and read a selected tab
@@ -322,12 +328,15 @@ then execute those fill steps and return invalid fields. Sensitive field values
 are redacted, and submit/payment/publish actions remain outside this form-fill
 surface.
 
-`codex_chrome_upload_file` routes to `page.uploadFile` with `origin`, target
-`handle`, optional `ruleset`, optional `verifyPreview`, and a `files` array. The
-upload surface remains guarded/draft-only: daemon policy, domain approval,
-blocked-site settings, host access, and approval prompts still decide whether a
-file interaction can run. Results return redacted file references; raw `path`
-fields are redacted while safe file basenames and hashes may remain visible.
+`codex_chrome_upload_file` routes to the legacy active-tab `page.uploadFile`
+diagnostic path with `origin`, target `handle`, optional `ruleset`, optional
+`verifyPreview`, and a `files` array. Prefer `codex_chrome_tab_upload_file` for
+MCP agent work. The upload surface remains guarded/draft-only: daemon policy,
+domain approval, blocked-site settings, host access, and approval prompts still
+decide whether a file interaction can run. Results return redacted file references;
+raw `path` fields are redacted while safe file basenames and hashes may remain
+visible. The social draft ruleset alias `social-media-draft` accepts ordinary
+JPEG/PNG screenshots using roles such as `screenshot` or `socialImage`.
 
 `codex_chrome_cart_prepare` routes to `page.prepareCart` with `origin`, `query`,
 optional `profileId`, optional cart `criteria`, and explicit
