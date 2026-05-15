@@ -297,7 +297,7 @@ test('runReleaseCheck attaches compact MCP contract evidence when the MCP smoke 
     serverName: 'codex-chrome-operator',
     toolDefinitionsHash: 'b'.repeat(64),
     toolCount: 14,
-    toolSchemaVersion: '2026-05-15.session-tabs',
+    toolSchemaVersion: '2026-05-15.tab-visual-backends',
     strictSchemaToolCount: 14,
     contractPinned: true,
     requiredTools: ['codex_chrome_status'],
@@ -321,7 +321,7 @@ test('runReleaseCheck attaches compact MCP contract evidence when the MCP smoke 
   assert.deepEqual(mcpSmoke.evidence, {
     toolDefinitionsHash: 'b'.repeat(64),
     toolCount: 14,
-    toolSchemaVersion: '2026-05-15.session-tabs',
+    toolSchemaVersion: '2026-05-15.tab-visual-backends',
     strictSchemaToolCount: 14,
     contractPinned: true
   });

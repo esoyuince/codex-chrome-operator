@@ -56,6 +56,9 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   const nameSession = tools.find((tool) => tool.name === 'codex_chrome_name_session');
   const finalizeTabs = tools.find((tool) => tool.name === 'codex_chrome_finalize_tabs');
   const tabScreenshot = tools.find((tool) => tool.name === 'codex_chrome_tab_screenshot');
+  const tabVisualObserve = tools.find((tool) => tool.name === 'codex_chrome_tab_visual_observe');
+  const tabVisualAnalyze = tools.find((tool) => tool.name === 'codex_chrome_tab_visual_analyze');
+  const tabVisualInspectTarget = tools.find((tool) => tool.name === 'codex_chrome_tab_visual_inspect_target');
   const tabGoto = tools.find((tool) => tool.name === 'codex_chrome_tab_goto');
   const tabObserve = tools.find((tool) => tool.name === 'codex_chrome_tab_observe');
   const tabReadPage = tools.find((tool) => tool.name === 'codex_chrome_tab_read_page');
@@ -188,6 +191,18 @@ test('listTools exposes strict versioned Codex browser tool definitions', () => 
   assert.deepEqual(tabScreenshot.inputSchema.properties.format.enum, ['png', 'jpeg', 'webp']);
   assert.equal(tabScreenshot.inputSchema.properties.quality.minimum, 1);
   assert.equal(tabScreenshot.outputContract.rawScreenshotBytes, false);
+  assert.ok(tabVisualObserve);
+  assert.deepEqual(tabVisualObserve.inputSchema.required, ['tabId']);
+  assert.equal(tabVisualObserve.inputSchema.properties.tabId.minimum, 0);
+  assert.equal(tabVisualObserve.inputSchema.properties.maxBytes.minimum, 1);
+  assert.deepEqual(tabVisualObserve.inputSchema.properties.mode.enum, ['tiny', 'medium', 'full']);
+  assert.ok(tabVisualAnalyze);
+  assert.deepEqual(tabVisualAnalyze.inputSchema.required, ['tabId']);
+  assert.equal(tabVisualAnalyze.inputSchema.properties.provider.type, 'string');
+  assert.equal(tabVisualAnalyze.inputSchema.properties.allowSensitive.type, 'boolean');
+  assert.ok(tabVisualInspectTarget);
+  assert.deepEqual(tabVisualInspectTarget.inputSchema.required, ['tabId', 'handle']);
+  assert.equal(tabVisualInspectTarget.inputSchema.properties.maxBytes.minimum, 1);
   assert.ok(tabHandleDialog);
   assert.deepEqual(tabHandleDialog.inputSchema.required, ['tabId', 'accept']);
   assert.equal(tabHandleDialog.inputSchema.properties.tabId.minimum, 0);
@@ -335,6 +350,30 @@ test('validateToolInput rejects unknown tools, missing fields, and extra fields'
   assert.equal(validateToolInput('codex_chrome_tab_screenshot', {
     tabId: 7,
     format: 'gif'
+  }).error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(validateToolInput('codex_chrome_tab_visual_observe', {
+    agentId: 'agent-alpha',
+    tabId: 7,
+    mode: 'medium',
+    maxBytes: 120000,
+    reason: 'visual check'
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_visual_observe', {
+    tabId: 7,
+    origin: 'https://example.com'
+  }).error.code, 'INVALID_TOOL_INPUT');
+  assert.equal(validateToolInput('codex_chrome_tab_visual_analyze', {
+    tabId: 7,
+    provider: 'local-basic',
+    allowSensitive: false
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_visual_inspect_target', {
+    tabId: 7,
+    handle: 'el_state_0',
+    maxBytes: 120000
+  }).ok, true);
+  assert.equal(validateToolInput('codex_chrome_tab_visual_inspect_target', {
+    tabId: 7
   }).error.code, 'INVALID_TOOL_INPUT');
   assert.equal(validateToolInput('codex_chrome_tab_handle_dialog', {
     tabId: 7,
@@ -931,6 +970,101 @@ test('CodexChromeToolAdapter routes tab screenshot helper through guarded CDP', 
   assert.equal(response.result.screenshot.artifactId, 'shot_1');
   assert.equal(response.result.screenshot.dataUrl, undefined);
   assert.equal(response.result.screenshot.rawDataRedacted, true);
+});
+
+test('CodexChromeToolAdapter routes tab-scoped visual tools through runtime tabs', async () => {
+  const calls = [];
+  const adapter = new CodexChromeToolAdapter({
+    settings: {
+      baseUrl: 'http://127.0.0.1:19091',
+      token: 'adapter-token',
+      installDir: 'C:/Operator'
+    },
+    sendRpcFn: async ({ request }) => {
+      calls.push(request);
+      return {
+        ok: true,
+        result: {
+          method: request.method,
+          params: request.params,
+          screenshot: {
+            artifactId: 'shot_tab_visual',
+            dataUrl: 'data:image/png;base64,rawbytes'
+          }
+        }
+      };
+    }
+  });
+
+  await adapter.executeTool({
+    toolName: 'codex_chrome_tab_visual_observe',
+    input: {
+      agentId: 'agent-alpha',
+      tabId: 7,
+      mode: 'medium',
+      maxBytes: 120000,
+      reason: 'visual check'
+    }
+  });
+  await adapter.executeTool({
+    toolName: 'codex_chrome_tab_visual_analyze',
+    input: {
+      agentId: 'agent-alpha',
+      tabId: 7,
+      provider: 'local-basic',
+      maxBytes: 120000,
+      allowSensitive: false
+    }
+  });
+  const inspectResponse = await adapter.executeTool({
+    toolName: 'codex_chrome_tab_visual_inspect_target',
+    input: {
+      agentId: 'agent-alpha',
+      tabId: 7,
+      handle: 'el_state_0',
+      maxBytes: 120000,
+      reason: 'target check'
+    }
+  });
+
+  assert.deepEqual(calls.map((call) => ({
+    method: call.method,
+    params: call.params
+  })), [
+    {
+      method: 'operator.runtime.tab.visualObserve',
+      params: {
+        agentId: 'agent-alpha',
+        tabId: 7,
+        mode: 'medium',
+        maxBytes: 120000,
+        reason: 'visual check'
+      }
+    },
+    {
+      method: 'operator.runtime.tab.visualAnalyze',
+      params: {
+        agentId: 'agent-alpha',
+        tabId: 7,
+        provider: 'local-basic',
+        maxBytes: 120000,
+        allowSensitive: false
+      }
+    },
+    {
+      method: 'operator.runtime.tab.visualInspectTarget',
+      params: {
+        agentId: 'agent-alpha',
+        tabId: 7,
+        handle: 'el_state_0',
+        maxBytes: 120000,
+        reason: 'target check'
+      }
+    }
+  ]);
+  assert.equal(inspectResponse.ok, true);
+  assert.equal(inspectResponse.result.screenshot.dataUrl, undefined);
+  assert.equal(inspectResponse.result.screenshot.rawDataRedacted, true);
 });
 
 test('CodexChromeToolAdapter routes native dialog handling through guarded CDP', async () => {

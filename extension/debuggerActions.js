@@ -248,12 +248,81 @@
     ) {
       return null;
     }
-    return callbackApi(
+    let previousActiveTab = null;
+    if (typeof chromeApi.tabs.query === 'function' && Number.isInteger(tab.windowId)) {
+      try {
+        const activeTabs = await callbackApi(
+          chromeApi,
+          'chrome.tabs.query(active)',
+          (done) => chromeApi.tabs.query({ active: true, windowId: tab.windowId }, done),
+          Math.min(timeoutMs || DEBUGGER_TIMEOUT_MS, 3000)
+        );
+        previousActiveTab = Array.isArray(activeTabs) && activeTabs.length > 0 ? activeTabs[0] : null;
+      } catch {
+        previousActiveTab = null;
+      }
+    }
+    await callbackApi(
       chromeApi,
       'chrome.tabs.update(active)',
       (done) => chromeApi.tabs.update(tab.id, { active: true }, done),
       Math.min(timeoutMs || DEBUGGER_TIMEOUT_MS, 3000)
     );
+    const previousActiveTabId = previousActiveTab && Number.isInteger(previousActiveTab.id)
+      ? previousActiveTab.id
+      : null;
+    const telemetry = {
+      changed: previousActiveTabId !== null && previousActiveTabId !== tab.id,
+      reason: 'cdp-input-requires-active-tab',
+      targetTabId: tab.id,
+      previousActiveTabId,
+      restored: previousActiveTabId === null || previousActiveTabId === tab.id
+    };
+    return {
+      previousActiveTab,
+      targetTabId: tab.id,
+      telemetry
+    };
+  }
+
+  async function releaseCdpInputFocus(chromeApi, lease, timeoutMs) {
+    if (
+      !lease ||
+      !lease.telemetry ||
+      lease.telemetry.changed !== true ||
+      !lease.previousActiveTab ||
+      !Number.isInteger(lease.previousActiveTab.id) ||
+      !chromeApi ||
+      !chromeApi.tabs ||
+      typeof chromeApi.tabs.update !== 'function'
+    ) {
+      return;
+    }
+    try {
+      await callbackApi(
+        chromeApi,
+        'chrome.tabs.update(restore-active)',
+        (done) => chromeApi.tabs.update(lease.previousActiveTab.id, { active: true }, done),
+        Math.min(timeoutMs || DEBUGGER_TIMEOUT_MS, 3000)
+      );
+      lease.telemetry.restored = true;
+    } catch (error) {
+      lease.telemetry.restored = false;
+      lease.telemetry.restoreError = error && error.message ? error.message : String(error);
+    }
+  }
+
+  function attachFocusDisturbance(response, lease) {
+    if (!lease || !lease.telemetry || !response || response.ok !== true || !response.result) {
+      return response;
+    }
+    return {
+      ...response,
+      result: {
+        ...response.result,
+        focusDisturbance: lease.telemetry
+      }
+    };
   }
 
   function runtimeActionExecutor(payload) {
@@ -2247,9 +2316,11 @@
 
     const target = { tabId: tab.id };
     let attached = false;
+    let focusLease = null;
+    const finish = (response) => attachFocusDisturbance(response, focusLease);
     try {
       if (actionUsesCdpInput(action)) {
-        await activateTabForCdpInput(chromeApi, tab, timeoutMs);
+        focusLease = await activateTabForCdpInput(chromeApi, tab, timeoutMs);
       }
       await attachDebugger(chromeApi, target, timeoutMs);
       attached = true;
@@ -2262,7 +2333,7 @@
         }, timeoutMs);
         const value = normalizeRuntimeActionValue(response && response.result && response.result.value);
         if (!value.ok) {
-          return value;
+          return finish(value);
         }
         if (
           value.result &&
@@ -2280,9 +2351,9 @@
             runtimeClickResponse.result.value
           );
           if (!runtimeClickValue.ok) {
-            return runtimeClickValue;
+            return finish(runtimeClickValue);
           }
-          return {
+          return finish({
             ok: true,
             result: {
               provider: DEBUGGER_ACTION_PROVIDER,
@@ -2290,18 +2361,18 @@
               actionability: value.result.actionability,
               pointer: false
             }
-          };
+          });
         }
         const x = Number(value.result && value.result.x);
         const y = Number(value.result && value.result.y);
         if (!Number.isFinite(x) || !Number.isFinite(y)) {
-          return {
+          return finish({
             ok: false,
             error: {
               code: 'DEBUGGER_ACTION_FAILED',
               message: 'Debugger runtime did not return a pointer target.'
             }
-          };
+          });
         }
         await sendCommand(chromeApi, target, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved',
@@ -2322,7 +2393,7 @@
           button: 'left',
           clickCount: 1
         }, timeoutMs);
-        return {
+        return finish({
           ok: true,
           result: {
             provider: DEBUGGER_POINTER_PROVIDER,
@@ -2330,7 +2401,7 @@
             action: 'clicked',
             pointer: true
           }
-        };
+        });
       }
       if (action === 'type') {
         const text = String(params.text ?? params.value ?? '');
@@ -2343,7 +2414,7 @@
         }, timeoutMs);
         const value = normalizeRuntimeActionValue(response && response.result && response.result.value);
         if (!value.ok) {
-          return value;
+          return finish(value);
         }
         if (preferredRuntime) {
           const runtimeResponse = await sendCommand(chromeApi, target, 'Runtime.evaluate', {
@@ -2356,7 +2427,7 @@
           );
           if (!runtimeValue.ok) {
             forgetRuntimeTextPreference(preferenceKey);
-            return {
+            return finish({
               ok: false,
               error: {
                 ...(runtimeValue.error || {
@@ -2368,10 +2439,10 @@
                   reason: `previous ${preferredRuntime.reason}`
                 }
               }
-            };
+            });
           }
           const runtimeResult = runtimeValue.result || {};
-          return {
+          return finish({
             ok: true,
             result: {
               provider: DEBUGGER_ACTION_PROVIDER,
@@ -2386,7 +2457,7 @@
               },
               verification: runtimeResult.verification || null
             }
-          };
+          });
         }
         await sendCommand(chromeApi, target, 'Input.insertText', {
           text
@@ -2414,7 +2485,7 @@
               fallbackResponse && fallbackResponse.result && fallbackResponse.result.value
             );
             if (!fallback.ok) {
-              return {
+              return finish({
                 ok: false,
                 error: {
                   ...(fallback.error || {
@@ -2425,11 +2496,11 @@
                   cdpExpected: verified.error.expected ?? null,
                   cdpActual: verified.error.actual ?? null
                 }
-              };
+              });
             }
             rememberRuntimeTextPreference(preferenceKey, verified.error.reason);
             const fallbackResult = fallback.result || {};
-            return {
+            return finish({
               ok: true,
               result: {
                 provider: `${DEBUGGER_TEXT_PROVIDER}+Runtime.evaluate`,
@@ -2444,12 +2515,12 @@
                 },
                 verification: fallbackResult.verification || null
               }
-            };
+            });
           }
-          return verified;
+          return finish(verified);
         }
         forgetRuntimeTextPreference(preferenceKey);
-        return {
+        return finish({
           ok: true,
           result: {
             provider: DEBUGGER_TEXT_PROVIDER,
@@ -2461,7 +2532,7 @@
               ? verified.result.verification
               : null
           }
-        };
+        });
       }
       const response = await sendCommand(chromeApi, target, 'Runtime.evaluate', {
         expression: buildRuntimeActionExpression({ action, ...params }),
@@ -2494,6 +2565,9 @@
         } catch {
           // Detach failures should not hide the action result.
         }
+      }
+      if (focusLease) {
+        await releaseCdpInputFocus(chromeApi, focusLease, timeoutMs);
       }
     }
   }

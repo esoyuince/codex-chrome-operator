@@ -671,7 +671,7 @@ test('runDebuggerAction falls back to runtime click when viewport hit testing is
   ]);
 });
 
-test('runDebuggerAction activates the target tab before CDP pointer input', async () => {
+test('runDebuggerAction restores the previous active tab after CDP pointer input', async () => {
   const { chromeApi, calls } = makeChrome({
     evaluateValue: {
       ok: true,
@@ -684,6 +684,10 @@ test('runDebuggerAction activates the target tab before CDP pointer input', asyn
     }
   });
   chromeApi.tabs = {
+    query(query, callback) {
+      calls.push({ method: 'tabs.query', query });
+      callback([{ id: 5, windowId: 3, active: true, url: 'https://example.com/user-tab' }]);
+    },
     update(tabId, params, callback) {
       calls.push({ method: 'tabs.update', tabId, params });
       callback({ id: tabId, active: true, url: 'https://example.com/products' });
@@ -692,7 +696,7 @@ test('runDebuggerAction activates the target tab before CDP pointer input', asyn
 
   const result = await runDebuggerAction({
     chromeApi,
-    tab: { id: 7, url: 'https://example.com/products', active: true },
+    tab: { id: 7, windowId: 3, url: 'https://example.com/products', active: false },
     action: 'click',
     params: {
       handle: 'el_state_2',
@@ -706,7 +710,15 @@ test('runDebuggerAction activates the target tab before CDP pointer input', asyn
   });
 
   assert.equal(result.ok, true);
+  assert.deepEqual(result.result.focusDisturbance, {
+    changed: true,
+    reason: 'cdp-input-requires-active-tab',
+    targetTabId: 7,
+    previousActiveTabId: 5,
+    restored: true
+  });
   assert.deepEqual(calls.map((call) => call.method), [
+    'tabs.query',
     'tabs.update',
     'attach',
     'Runtime.enable',
@@ -714,11 +726,21 @@ test('runDebuggerAction activates the target tab before CDP pointer input', asyn
     'Input.dispatchMouseEvent',
     'Input.dispatchMouseEvent',
     'Input.dispatchMouseEvent',
-    'detach'
+    'detach',
+    'tabs.update'
   ]);
   assert.deepEqual(calls[0], {
+    method: 'tabs.query',
+    query: { active: true, windowId: 3 }
+  });
+  assert.deepEqual(calls[1], {
     method: 'tabs.update',
     tabId: 7,
+    params: { active: true }
+  });
+  assert.deepEqual(calls.at(-1), {
+    method: 'tabs.update',
+    tabId: 5,
     params: { active: true }
   });
 });

@@ -43,6 +43,9 @@ test('buildMcpSmokeReport summarizes required adapter tool availability', () => 
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_name_session'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_finalize_tabs'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_screenshot'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_visual_observe'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_visual_analyze'));
+  assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_visual_inspect_target'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_handle_dialog'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_goto'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_tab_observe'));
@@ -57,7 +60,7 @@ test('buildMcpSmokeReport summarizes required adapter tool availability', () => 
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_policy_status'));
   assert.ok(REQUIRED_MCP_SMOKE_TOOLS.includes('codex_chrome_policy_update'));
 
-  const toolSchemaVersion = '2026-05-15.session-tabs';
+  const toolSchemaVersion = '2026-05-15.tab-visual-backends';
   const responses = [
     {
       jsonrpc: '2.0',

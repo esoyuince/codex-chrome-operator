@@ -20,6 +20,7 @@ const {
 const {
   analyzeVisualObservation,
   createVisualAnalyzerRegistry,
+  isSensitiveVisualObservation,
   visualPolicyBlockIfNeeded
 } = require('./visualAnalyzer');
 const defaultAssetValidator = require('./assetValidator');
@@ -139,6 +140,9 @@ const PAGE_ACTION_KINDS = Object.freeze({
   'page.visualObserve': 'screenshot',
   'page.visualAnalyze': 'screenshot',
   'page.visualInspectTarget': 'screenshot',
+  'operator.runtime.tab.visualObserve': 'screenshot',
+  'operator.runtime.tab.visualAnalyze': 'screenshot',
+  'operator.runtime.tab.visualInspectTarget': 'screenshot',
   'page.uploadFile': 'upload',
   'page.prepareCart': 'cart-preparation',
   'page.batch': 'batch',
@@ -998,6 +1002,32 @@ function safeCdpAuditParams(params = {}) {
   };
 }
 
+function focusDisturbanceSummary(response = {}) {
+  const focusDisturbance = response &&
+    response.ok === true &&
+    response.result &&
+    isPlainObject(response.result.focusDisturbance)
+    ? response.result.focusDisturbance
+    : null;
+  if (!focusDisturbance) {
+    return null;
+  }
+  return {
+    changed: focusDisturbance.changed === true,
+    reason: typeof focusDisturbance.reason === 'string' ? focusDisturbance.reason : null,
+    targetTabId: Number.isInteger(focusDisturbance.targetTabId)
+      ? focusDisturbance.targetTabId
+      : null,
+    previousActiveTabId: Number.isInteger(focusDisturbance.previousActiveTabId)
+      ? focusDisturbance.previousActiveTabId
+      : null,
+    restored: focusDisturbance.restored === true,
+    ...(typeof focusDisturbance.restoreError === 'string'
+      ? { restoreError: focusDisturbance.restoreError }
+      : {})
+  };
+}
+
 function cdpParamError(message, extra = {}) {
   return guardError(ERROR_CODES.INVALID_SCHEMA, message, extra);
 }
@@ -1647,6 +1677,18 @@ function pickRuntimeObservationParams(params = {}) {
   ]);
 }
 
+function pickRuntimeVisualObserveParams(params = {}) {
+  return pickDefinedLocal(params, [
+    'mode',
+    'maxActionableHandles',
+    'summaryMaxChars',
+    'sincePageStateId',
+    'includeAx',
+    'includeFormValues',
+    'maxFieldValueChars'
+  ]);
+}
+
 function pickRuntimeReadPageParams(params = {}) {
   return pickDefinedLocal(params, [
     'filter',
@@ -2111,6 +2153,9 @@ class SessionManager {
       case 'operator.runtime.tab.goto':
       case 'operator.runtime.tab.observe':
       case 'operator.runtime.tab.readPage':
+      case 'operator.runtime.tab.visualObserve':
+      case 'operator.runtime.tab.visualAnalyze':
+      case 'operator.runtime.tab.visualInspectTarget':
       case 'operator.runtime.tab.locator':
       case 'operator.runtime.tab.batch':
       case 'operator.runtime.tab.showTarget':
@@ -2505,6 +2550,10 @@ class SessionManager {
     const boundedFullAuto = this.auditBoundedFullAutoSummary(method, response);
     if (boundedFullAuto) {
       entry.boundedFullAuto = boundedFullAuto;
+    }
+    const focusDisturbance = focusDisturbanceSummary(response);
+    if (focusDisturbance) {
+      entry.focusDisturbance = focusDisturbance;
     }
 
     return entry;
@@ -3439,6 +3488,165 @@ class SessionManager {
     });
   }
 
+  runtimeVisualPolicyError(observation, params = {}) {
+    const allowSensitive = params.allowSensitive === true;
+    if (
+      !allowSensitive &&
+      observation &&
+      observation.visualPolicy &&
+      observation.visualPolicy.explicitBlock === true
+    ) {
+      return {
+        code: ERROR_CODES.VISUAL_PROVIDER_POLICY_BLOCKED,
+        message: 'Screenshot capture is blocked because sensitive page content was detected.',
+        reason: 'SENSITIVE_VISUAL_CONTENT',
+        resumePolicy: 'manual-sensitive-review',
+        freshObservationRequired: true
+      };
+    }
+    const gates = observation && Array.isArray(observation.detectedGates)
+      ? observation.detectedGates
+      : [];
+    if (gates.length > 0) {
+      const gate = gates[0];
+      return {
+        code: ERROR_CODES.VISUAL_PROVIDER_POLICY_BLOCKED,
+        message: 'Screenshot capture is blocked while an authentication or anti-abuse gate is visible.',
+        gateType: gate.type || gate.code,
+        resumePolicy: 'wait-and-reobserve',
+        freshObservationRequired: true
+      };
+    }
+    if (!allowSensitive && isSensitiveVisualObservation(observation)) {
+      return {
+        code: ERROR_CODES.VISUAL_PROVIDER_POLICY_BLOCKED,
+        message: 'Screenshot capture is blocked because sensitive page content was detected.',
+        reason: 'SENSITIVE_VISUAL_CONTENT',
+        resumePolicy: 'manual-sensitive-review',
+        freshObservationRequired: true
+      };
+    }
+    return null;
+  }
+
+  async routeRuntimeVisualCommand(id, method, { agentId, tabId, origin, params = {} }) {
+    const observeResponse = await this.enqueueExtensionCommand('operator.runtime.tab.observe', {
+      ...(agentId ? { agentId } : {}),
+      tabId,
+      ...pickRuntimeVisualObserveParams(params)
+    });
+    if (!observeResponse.ok) {
+      return rpcError(id, this.attachApprovalRequest(method, { ...params, tabId, origin }, observeResponse.error));
+    }
+    const observation = observeResponse.result || {};
+    const policyError = this.runtimeVisualPolicyError(observation, params);
+    if (policyError) {
+      return rpcError(id, policyError);
+    }
+
+    let visualTarget = null;
+    if (method === 'operator.runtime.tab.visualInspectTarget') {
+      const handle = typeof params.handle === 'string' ? params.handle.trim() : '';
+      if (!handle) {
+        return rpcError(id, {
+          code: ERROR_CODES.INVALID_SCHEMA,
+          message: 'visualInspectTarget requires handle.'
+        });
+      }
+      visualTarget = (Array.isArray(observation.elements) ? observation.elements : [])
+        .find((element) => element && element.handle === handle);
+      if (!visualTarget) {
+        return rpcError(id, {
+          code: 'TARGET_NOT_FOUND',
+          message: 'Target handle was not found in the current visual observation.',
+          handle
+        });
+      }
+    }
+
+    const cdpResponse = await this.enqueueExtensionCommand('operator.cdp.execute', {
+      ...(agentId ? { agentId } : {}),
+      tabId,
+      method: 'Page.captureScreenshot',
+      params: {}
+    });
+    if (!cdpResponse.ok) {
+      return rpcError(id, cdpResponse.error);
+    }
+    const cdpResult = cdpResponse.result || {};
+    const materialized = this.materializeVisualObservation({
+      ...observation,
+      visual: {
+        ...(observation.visual || {}),
+        provider: cdpResult.provider || 'chrome.debugger.Page.captureScreenshot',
+        screenshotBacked: true
+      },
+      screenshot: cdpResult.screenshot
+    }, origin, {
+      policy: {
+        ...(params.maxBytes === undefined ? {} : { maxBytes: params.maxBytes }),
+        ...(params.allowSensitive === undefined ? {} : { allowSensitive: params.allowSensitive })
+      },
+      allowSensitive: params.allowSensitive,
+      reason: params.reason || (
+        method === 'operator.runtime.tab.visualInspectTarget'
+          ? 'tab.visualInspectTarget'
+          : method === 'operator.runtime.tab.visualAnalyze'
+            ? 'tab.visualAnalyze'
+            : 'tab.visualObserve'
+      )
+    });
+    if (!materialized.ok) {
+      return rpcError(id, materialized.error);
+    }
+
+    const baseResult = {
+      tabId,
+      origin,
+      ...materialized.result
+    };
+
+    if (method === 'operator.runtime.tab.visualInspectTarget') {
+      return rpcOk(id, this.materializeVisualTargetRegion({
+        ...baseResult,
+        visual: {
+          ...(baseResult.visual || {}),
+          targetRegionBacked: true
+        },
+        visualTarget: {
+          handle: params.handle,
+          label: visualTarget.label || null,
+          tag: visualTarget.tag || null,
+          bbox: visualTarget.bbox || null
+        }
+      }));
+    }
+
+    if (method === 'operator.runtime.tab.visualAnalyze') {
+      const analysis = analyzeVisualObservation({
+        provider: params.provider,
+        observation: baseResult,
+        screenshot: baseResult.screenshot,
+        policy: {
+          ...(params.maxBytes === undefined ? {} : { maxBytes: params.maxBytes }),
+          ...(params.allowSensitive === undefined ? {} : { allowSensitive: params.allowSensitive })
+        }
+      }, this.visualAnalyzerRegistry);
+      if (!analysis.ok) {
+        return rpcError(id, analysis.error);
+      }
+      return rpcOk(id, {
+        ...baseResult,
+        visual: {
+          ...(baseResult.visual || {}),
+          analysis
+        }
+      });
+    }
+
+    return rpcOk(id, baseResult);
+  }
+
   async routeRuntimeCommand(id, method, params = {}) {
     const disconnected = this.ensureExtensionConnected(id);
     if (disconnected) {
@@ -3448,6 +3656,9 @@ class SessionManager {
       'operator.runtime.tab.goto',
       'operator.runtime.tab.observe',
       'operator.runtime.tab.readPage',
+      'operator.runtime.tab.visualObserve',
+      'operator.runtime.tab.visualAnalyze',
+      'operator.runtime.tab.visualInspectTarget',
       'operator.runtime.tab.locator',
       'operator.runtime.tab.batch',
       'operator.runtime.tab.showTarget',
@@ -3573,6 +3784,22 @@ class SessionManager {
           tabId: tabId.tabId,
           ...pickRuntimeReadPageParams(params)
         };
+      } else if (
+        method === 'operator.runtime.tab.visualObserve' ||
+        method === 'operator.runtime.tab.visualAnalyze' ||
+        method === 'operator.runtime.tab.visualInspectTarget'
+      ) {
+        policyMethod = method === 'operator.runtime.tab.visualAnalyze'
+          ? 'page.visualAnalyze'
+          : method === 'operator.runtime.tab.visualInspectTarget'
+            ? 'page.visualInspectTarget'
+            : 'page.visualObserve';
+        commandParams = {
+          ...(agentId ? { agentId } : {}),
+          tabId: tabId.tabId,
+          ...pickRuntimeVisualObserveParams(params),
+          ...pickDefinedLocal(params, ['handle', 'provider', 'maxBytes', 'allowSensitive', 'reason'])
+        };
       } else {
         commandParams = {
           ...(agentId ? { agentId } : {}),
@@ -3591,6 +3818,19 @@ class SessionManager {
       : this.enforceBoundedFullAuto(policyMethod, origin);
     if (!boundedFullAuto.ok) {
       return rpcError(id, boundedFullAuto.error);
+    }
+
+    if (
+      method === 'operator.runtime.tab.visualObserve' ||
+      method === 'operator.runtime.tab.visualAnalyze' ||
+      method === 'operator.runtime.tab.visualInspectTarget'
+    ) {
+      return this.routeRuntimeVisualCommand(id, method, {
+        agentId,
+        tabId: tabId.tabId,
+        origin,
+        params: commandParams
+      });
     }
 
     const runtimeWarmContext = {

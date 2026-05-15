@@ -561,6 +561,29 @@ class CodexChromeToolAdapter {
           params: pickDefined(input, ['format', 'quality'])
         });
         break;
+      case 'codex_chrome_tab_visual_observe':
+        response = await this.sendRpc('operator.runtime.tab.visualObserve', {
+          ...this.agentContext(input),
+          tabId: input.tabId,
+          ...visualObserveOptions(input)
+        });
+        break;
+      case 'codex_chrome_tab_visual_analyze':
+        response = await this.sendRpc('operator.runtime.tab.visualAnalyze', {
+          ...this.agentContext(input),
+          tabId: input.tabId,
+          ...visualObserveOptions(input),
+          ...pickDefined(input, ['provider', 'allowSensitive'])
+        });
+        break;
+      case 'codex_chrome_tab_visual_inspect_target':
+        response = await this.sendRpc('operator.runtime.tab.visualInspectTarget', {
+          ...this.agentContext(input),
+          tabId: input.tabId,
+          handle: input.handle,
+          ...visualObserveOptions(input)
+        });
+        break;
       case 'codex_chrome_tab_handle_dialog':
         response = await this.sendRpc('operator.cdp.execute', {
           ...this.agentContext(input),

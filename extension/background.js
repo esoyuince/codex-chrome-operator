@@ -1459,7 +1459,6 @@ async function handleRuntimeCommand(method, params = {}) {
 
   if (method === 'operator.runtime.tab.goto') {
     const targetTab = await chrome.tabs.update(tab.id, {
-      active: true,
       url: params.url
     });
     const nextTab = {

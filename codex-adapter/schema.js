@@ -1,7 +1,7 @@
 'use strict';
 
 const ADAPTER_PROTOCOL_VERSION = '1.0';
-const TOOL_SCHEMA_VERSION = '2026-05-15.session-tabs';
+const TOOL_SCHEMA_VERSION = '2026-05-15.tab-visual-backends';
 
 const READ_PAGE_PROPERTIES = {
   origin: { type: 'string' },
@@ -232,6 +232,24 @@ const VISUAL_OBSERVE_PROPERTIES = {
   ...OBSERVE_OPTION_PROPERTIES,
   maxBytes: { type: 'number', minimum: 1 },
   reason: { type: 'string' }
+};
+
+const TAB_VISUAL_OBSERVE_PROPERTIES = {
+  ...TAB_ACTION_CONTEXT_PROPERTIES,
+  ...OBSERVE_OPTION_PROPERTIES,
+  maxBytes: { type: 'number', minimum: 1 },
+  reason: { type: 'string' }
+};
+
+const TAB_VISUAL_ANALYZE_PROPERTIES = {
+  ...TAB_VISUAL_OBSERVE_PROPERTIES,
+  provider: { type: 'string' },
+  allowSensitive: { type: 'boolean' }
+};
+
+const TAB_VISUAL_INSPECT_TARGET_PROPERTIES = {
+  ...TAB_VISUAL_OBSERVE_PROPERTIES,
+  handle: { type: 'string' }
 };
 
 const BATCH_ACTION_SCHEMA = {
@@ -756,6 +774,48 @@ const TOOL_DEFINITIONS = [
         quality: { type: 'number', minimum: 1 }
       },
       required: ['tabId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_visual_observe',
+    description: 'Return a visual observation for a session-owned Chrome tab using a tab-scoped CDP screenshot backend instead of the active tab.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: TAB_VISUAL_OBSERVE_PROPERTIES,
+      required: ['tabId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_visual_analyze',
+    description: 'Analyze a session-owned Chrome tab visually using a tab-scoped CDP screenshot backend and local visual analysis.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: TAB_VISUAL_ANALYZE_PROPERTIES,
+      required: ['tabId']
+    },
+    outputContract: {
+      untrusted: true,
+      rawScreenshotBytes: false
+    }
+  },
+  {
+    name: 'codex_chrome_tab_visual_inspect_target',
+    description: 'Capture visual evidence for a target handle in a session-owned Chrome tab without relying on the active tab.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: TAB_VISUAL_INSPECT_TARGET_PROPERTIES,
+      required: ['tabId', 'handle']
     },
     outputContract: {
       untrusted: true,

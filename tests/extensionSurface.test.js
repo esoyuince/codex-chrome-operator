@@ -653,6 +653,17 @@ test('background rejects active-tab actions when the queued tab lock no longer m
   assert.match(background, /Active tab changed before the queued page action could dispatch/);
 });
 
+test('runtime tab navigation does not activate background session tabs', () => {
+  const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
+  const start = background.indexOf("if (method === 'operator.runtime.tab.goto')");
+  const end = background.indexOf("if (method === 'operator.runtime.tab.observe')", start);
+  const block = background.slice(start, end);
+
+  assert.ok(start !== -1 && end !== -1, 'runtime tab goto block should be present');
+  assert.match(block, /chrome\.tabs\.update\(tab\.id,\s*\{\s*url:\s*params\.url\s*\}\)/s);
+  assert.doesNotMatch(block, /active:\s*true/);
+});
+
 test('background fails closed when required click verification is inconclusive', () => {
   const background = fs.readFileSync(path.join(EXTENSION_DIR, 'background.js'), 'utf8');
 

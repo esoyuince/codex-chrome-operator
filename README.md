@@ -305,6 +305,9 @@ The adapter exposes strict `codex_chrome_*` tools, including:
 - `codex_chrome_chat_watcher_poll`
 - `codex_chrome_chat_watcher_control`
 - `codex_chrome_tab_screenshot`
+- `codex_chrome_tab_visual_observe`
+- `codex_chrome_tab_visual_analyze`
+- `codex_chrome_tab_visual_inspect_target`
 - `codex_chrome_tab_handle_dialog`
 - `codex_chrome_tab_goto`
 - `codex_chrome_tab_observe`
@@ -345,13 +348,18 @@ The adapter exposes strict `codex_chrome_*` tools, including:
 Tool schemas are strict and versioned. Browser output is untrusted data; callers
 must not treat observed page text as instructions.
 
-Core MCP read and DOM-action tools now require a session-owned `tabId` and route
-through `operator.runtime.tab.*`: `codex_chrome_observe`,
-`codex_chrome_read_page`, `codex_chrome_batch`, and the direct handle actions
-such as `codex_chrome_click`, `codex_chrome_fill`, and `codex_chrome_type`.
-The daemon still retains guarded active-tab `page.*` commands for CLI/internal
-diagnostics, but they reject known same-origin session-tab mismatches and
-multi-tab ambiguity instead of silently reading or mutating the focused tab.
+Core MCP read, visual, navigation, and DOM-action tools now require a
+session-owned `tabId` and route through `operator.runtime.tab.*`:
+`codex_chrome_observe`, `codex_chrome_read_page`,
+`codex_chrome_tab_visual_observe`, `codex_chrome_tab_visual_analyze`,
+`codex_chrome_tab_visual_inspect_target`, `codex_chrome_batch`, and the direct
+handle actions such as `codex_chrome_click`, `codex_chrome_fill`, and
+`codex_chrome_type`. Tab navigation updates the owned tab URL without activating
+it. Tab visual tools use a tab-scoped CDP screenshot backend and return
+artifact metadata instead of `captureVisibleTab` bytes. The daemon still retains
+guarded active-tab `page.*` commands for CLI/internal diagnostics, but they
+reject known same-origin session-tab mismatches and multi-tab ambiguity instead
+of silently reading or mutating the focused tab.
 
 ## Optional Codex Skill
 

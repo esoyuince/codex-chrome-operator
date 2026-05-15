@@ -1438,6 +1438,231 @@ test('guarded CDP screenshot stores artifact without returning raw image data', 
   assert.deepEqual(auditEntry.params.paramKeys, ['format']);
 });
 
+test('runtime tab visual tools use session-owned CDP screenshots without active-tab capture', async () => {
+  const session = makeSession();
+  let shotIndex = 0;
+  session.screenshotStore.idGenerator = () => `shot_tab_visual_${shotIndex += 1}`;
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Example',
+    url: 'https://example.com/app',
+    ownership: 'agent',
+    ownerAgentId: 'agent-alpha',
+    active: false,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    if (method === 'operator.runtime.tab.observe') {
+      return {
+        ok: true,
+        result: {
+          title: 'Visual Fixture',
+          url: 'https://example.com/app',
+          pageStateId: 'state_visual_1',
+          viewport: { width: 1280, height: 720 },
+          elements: [{
+            handle: 'el_state_0',
+            tag: 'button',
+            role: 'button',
+            label: 'Save settings',
+            bbox: { x: 10, y: 20, width: 120, height: 32 },
+            data: { visualRole: 'product-card' }
+          }]
+        }
+      };
+    }
+    if (method === 'operator.cdp.execute') {
+      return {
+        ok: true,
+        result: {
+          provider: 'chrome.debugger.Page.captureScreenshot',
+          method: params.method,
+          screenshot: {
+            mimeType: 'image/png',
+            dataUrl: 'data:image/png;base64,aGVsbG8=',
+            bytesApprox: 5,
+            width: 1280,
+            height: 720
+          }
+        }
+      };
+    }
+    throw new Error(`Unexpected method ${method}`);
+  };
+
+  const observed = await session.handleRpc({
+    id: 'tab-visual-observe',
+    method: 'operator.runtime.tab.visualObserve',
+    params: {
+      agentId: 'agent-alpha',
+      tabId: 7,
+      mode: 'medium',
+      maxBytes: 120000,
+      reason: 'session visual check'
+    }
+  });
+  const analyzed = await session.handleRpc({
+    id: 'tab-visual-analyze',
+    method: 'operator.runtime.tab.visualAnalyze',
+    params: {
+      agentId: 'agent-alpha',
+      tabId: 7,
+      provider: 'local-basic',
+      maxBytes: 120000,
+      allowSensitive: false
+    }
+  });
+  const inspected = await session.handleRpc({
+    id: 'tab-visual-inspect',
+    method: 'operator.runtime.tab.visualInspectTarget',
+    params: {
+      agentId: 'agent-alpha',
+      tabId: 7,
+      handle: 'el_state_0',
+      maxBytes: 120000,
+      reason: 'target visual check'
+    }
+  });
+
+  assert.equal(observed.ok, true);
+  assert.equal(observed.result.screenshot.artifactId, 'shot_tab_visual_1');
+  assert.equal(observed.result.screenshot.dataUrl, undefined);
+  assert.equal(observed.result.visual.provider, 'chrome.debugger.Page.captureScreenshot');
+  assert.equal(analyzed.ok, true);
+  assert.equal(analyzed.result.visual.analysis.status, 'analyzed');
+  assert.equal(analyzed.result.visual.analysis.artifactId, 'shot_tab_visual_2');
+  assert.equal(inspected.ok, true);
+  assert.equal(inspected.result.visualTarget.sourceArtifactId, 'shot_tab_visual_3');
+  assert.match(inspected.result.visualTarget.regionArtifactId, /^region_/);
+  assert.deepEqual(calls.map((call) => call.method), [
+    'operator.runtime.tab.observe',
+    'operator.cdp.execute',
+    'operator.runtime.tab.observe',
+    'operator.cdp.execute',
+    'operator.runtime.tab.observe',
+    'operator.cdp.execute'
+  ]);
+  assert.equal(calls[1].params.tabId, 7);
+  assert.equal(calls[1].params.method, 'Page.captureScreenshot');
+  assert.equal(calls[1].params.params.format, undefined);
+  assert.equal(calls[1].params.expectedActiveTabId, undefined);
+});
+
+test('runtime tab visual policy reports visible gates before generic sensitive content', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Gate',
+    url: 'https://example.com/gate',
+    ownership: 'agent',
+    active: false,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+
+  const calls = [];
+  session.enqueueExtensionCommand = async (method, params) => {
+    calls.push({ method, params });
+    assert.equal(method, 'operator.runtime.tab.observe');
+    return {
+      ok: true,
+      result: {
+        title: 'Password gate',
+        url: 'https://example.com/gate',
+        pageStateId: 'state_gate',
+        visibleTextSummary: 'Password required',
+        detectedGates: [{ type: 'PASSWORD_REQUIRED' }],
+        elements: [{
+          handle: 'el_gate_0',
+          tag: 'input',
+          role: 'textbox',
+          label: 'Password',
+          bbox: { x: 10, y: 20, width: 120, height: 32 }
+        }]
+      }
+    };
+  };
+
+  const blocked = await session.handleRpc({
+    id: 'tab-visual-gate',
+    method: 'operator.runtime.tab.visualObserve',
+    params: {
+      tabId: 7,
+      maxBytes: 120000,
+      reason: 'gate visual policy'
+    }
+  });
+
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error.code, ERROR_CODES.VISUAL_PROVIDER_POLICY_BLOCKED);
+  assert.equal(blocked.error.gateType, 'PASSWORD_REQUIRED');
+  assert.equal(blocked.error.reason, undefined);
+  assert.deepEqual(calls.map((call) => call.method), ['operator.runtime.tab.observe']);
+});
+
+test('runtime tab visual policy preserves explicit sensitive visual blocks before gates', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Sensitive',
+    url: 'https://example.com/sensitive',
+    ownership: 'agent',
+    active: false,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+
+  session.enqueueExtensionCommand = async (method) => {
+    assert.equal(method, 'operator.runtime.tab.observe');
+    return {
+      ok: true,
+      result: {
+        title: 'Sensitive policy page',
+        url: 'https://example.com/sensitive',
+        pageStateId: 'state_sensitive',
+        visualPolicy: { explicitBlock: true },
+        detectedGates: [{ type: 'ACCOUNT_SECURITY_REAUTH_REQUIRED' }],
+        elements: []
+      }
+    };
+  };
+
+  const blocked = await session.handleRpc({
+    id: 'tab-visual-sensitive-block',
+    method: 'operator.runtime.tab.visualAnalyze',
+    params: {
+      tabId: 7,
+      provider: 'local-basic',
+      maxBytes: 120000,
+      reason: 'explicit visual policy'
+    }
+  });
+
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error.code, ERROR_CODES.VISUAL_PROVIDER_POLICY_BLOCKED);
+  assert.equal(blocked.error.reason, 'SENSITIVE_VISUAL_CONTENT');
+  assert.equal(blocked.error.gateType, undefined);
+});
+
 test('runtime tab commands route through session-owned tabs and fail closed for ambiguous locators', async () => {
   const session = makeSession();
   session.sessionTabs.set(7, {
@@ -1534,6 +1759,66 @@ test('runtime tab commands route through session-owned tabs and fail closed for 
     'operator.runtime.tab.locator'
   ]);
   assert.equal(calls[2].params.postActionVerifyDelayMs, 3000);
+});
+
+test('runtime tab debugger focus disturbance is preserved in audit timeline', async () => {
+  const session = makeSession();
+  session.sessionTabs.set(7, {
+    id: 7,
+    title: 'Example',
+    url: 'https://example.com/app',
+    ownership: 'agent',
+    ownerAgentId: 'agent-alpha',
+    active: false,
+    finalizedStatus: null,
+    updatedAt: new Date().toISOString()
+  });
+  await session.handleRpc({
+    id: 'approve-example',
+    method: 'operator.approveDomain',
+    params: { origin: 'https://example.com' }
+  });
+
+  session.enqueueExtensionCommand = async (method) => {
+    assert.equal(method, 'operator.runtime.tab.locator');
+    return {
+      ok: true,
+      result: {
+        action: 'clicked',
+        origin: 'https://example.com',
+        focusDisturbance: {
+          changed: true,
+          reason: 'cdp-input-requires-active-tab',
+          targetTabId: 7,
+          previousActiveTabId: 5,
+          restored: true
+        }
+      }
+    };
+  };
+
+  const clicked = await session.handleRpc({
+    id: 'runtime-locator-focus',
+    method: 'operator.runtime.tab.locator',
+    params: {
+      agentId: 'agent-alpha',
+      tabId: 7,
+      selector: 'button.save',
+      action: 'click'
+    }
+  });
+
+  assert.equal(clicked.ok, true);
+  const auditEntry = session.audit.tail({ limit: 1 })[0];
+  assert.deepEqual(auditEntry.focusDisturbance, {
+    changed: true,
+    reason: 'cdp-input-requires-active-tab',
+    targetTabId: 7,
+    previousActiveTabId: 5,
+    restored: true
+  });
+  const timelineEntry = session.audit.timeline({ limit: 1 })[0];
+  assert.deepEqual(timelineEntry.focusDisturbance, auditEntry.focusDisturbance);
 });
 
 test('runtime tab reads use per-tab warm cache without same-origin bleed', async () => {

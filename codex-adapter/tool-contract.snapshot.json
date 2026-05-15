@@ -1,8 +1,8 @@
 {
   "adapterProtocolVersion": "1.0",
-  "toolSchemaVersion": "2026-05-15.session-tabs",
-  "toolDefinitionsHash": "39c66dcf7ef5d6efb35b47c97a94dee3450f60355dc3acf83125f824f827bf3e",
-  "toolCount": 65,
+  "toolSchemaVersion": "2026-05-15.tab-visual-backends",
+  "toolDefinitionsHash": "c79b747149ac27f5f46431c21da3d9cd061ba8c1e03a4b64d7fd4aa9a4cad2d9",
+  "toolCount": 68,
   "toolNames": [
     "codex_chrome_status",
     "codex_chrome_prepare_origin",
@@ -33,6 +33,9 @@
     "codex_chrome_chat_watcher_poll",
     "codex_chrome_chat_watcher_control",
     "codex_chrome_tab_screenshot",
+    "codex_chrome_tab_visual_observe",
+    "codex_chrome_tab_visual_analyze",
+    "codex_chrome_tab_visual_inspect_target",
     "codex_chrome_tab_handle_dialog",
     "codex_chrome_tab_goto",
     "codex_chrome_tab_observe",
@@ -742,6 +745,193 @@
         },
         "required": [
           "tabId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_visual_observe",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "includeAx": {
+            "type": "boolean"
+          },
+          "includeFormValues": {
+            "type": "boolean"
+          },
+          "maxFieldValueChars": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxBytes": {
+            "type": "number",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tabId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_visual_analyze",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "includeAx": {
+            "type": "boolean"
+          },
+          "includeFormValues": {
+            "type": "boolean"
+          },
+          "maxFieldValueChars": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxBytes": {
+            "type": "number",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "allowSensitive": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tabId"
+        ]
+      },
+      "outputContract": {
+        "untrusted": true,
+        "rawScreenshotBytes": false
+      }
+    },
+    {
+      "name": "codex_chrome_tab_visual_inspect_target",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "agentId": {
+            "type": "string"
+          },
+          "tabId": {
+            "type": "number",
+            "minimum": 0
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "tiny",
+              "medium",
+              "full"
+            ]
+          },
+          "maxActionableHandles": {
+            "type": "number",
+            "minimum": 1
+          },
+          "summaryMaxChars": {
+            "type": "number",
+            "minimum": 1
+          },
+          "sincePageStateId": {
+            "type": "string"
+          },
+          "includeAx": {
+            "type": "boolean"
+          },
+          "includeFormValues": {
+            "type": "boolean"
+          },
+          "maxFieldValueChars": {
+            "type": "number",
+            "minimum": 0
+          },
+          "maxBytes": {
+            "type": "number",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string"
+          },
+          "handle": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tabId",
+          "handle"
         ]
       },
       "outputContract": {

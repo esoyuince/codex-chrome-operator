@@ -771,7 +771,8 @@ async function runCleanSmoke(options = {}) {
     ) {
       throw new Error(`open-observe did not navigate and observe the fixture: ${JSON.stringify(openedObservation)}`);
     }
-    await keepOnlySessionTab(settings, openedObservation.result.sessionTab.tab.id);
+    const visualTabId = openedObservation.result.sessionTab.tab.id;
+    await keepOnlySessionTab(settings, visualTabId);
 
     await withCdp(await pageTarget(config), async (send) => {
       await send('Page.navigate', { url: `${config.origin}/gate-form.html` });
@@ -790,7 +791,11 @@ async function runCleanSmoke(options = {}) {
       (element) => element.id === 'completeGate',
       'complete gate button'
     );
-    const gatedVisualObserve = runCliJson(['visual-observe', config.origin], settings);
+    const gatedVisualObserve = await postRpcJson('operator.runtime.tab.visualObserve', {
+      tabId: visualTabId,
+      maxBytes: 2000000,
+      reason: 'clean-smoke-gated-visual'
+    }, settings);
     if (
       gatedVisualObserve.ok ||
       gatedVisualObserve.error.code !== 'VISUAL_PROVIDER_POLICY_BLOCKED' ||
@@ -879,7 +884,11 @@ async function runCleanSmoke(options = {}) {
     if (!observation.ok) {
       throw new Error(`Observe failed after permission grant: ${JSON.stringify(observation)}`);
     }
-    const visualObservation = runCliJson(['visual-observe', config.origin], settings);
+    const visualObservation = await postRpcJson('operator.runtime.tab.visualObserve', {
+      tabId: visualTabId,
+      maxBytes: 2000000,
+      reason: 'clean-smoke-visual-observe'
+    }, settings);
     if (!visualObservation.ok) {
       throw new Error(`Visual observe failed after permission grant: ${JSON.stringify(visualObservation)}`);
     }
@@ -898,7 +907,12 @@ async function runCleanSmoke(options = {}) {
       await send('Page.navigate', { url: `${config.origin}/visual-cards.html` });
       await new Promise((resolve) => setTimeout(resolve, 1000));
     });
-    const visualAnalysis = runCliJson(['visual-analyze', config.origin, 'local-basic'], settings);
+    const visualAnalysis = await postRpcJson('operator.runtime.tab.visualAnalyze', {
+      tabId: visualTabId,
+      provider: 'local-basic',
+      maxBytes: 2000000,
+      reason: 'clean-smoke-visual-analysis'
+    }, settings);
     const analysis = visualAnalysis.result &&
       visualAnalysis.result.visual &&
       visualAnalysis.result.visual.analysis;
@@ -925,7 +939,12 @@ async function runCleanSmoke(options = {}) {
       await send('Page.navigate', { url: `${config.origin}/sensitive-page.html` });
       await new Promise((resolve) => setTimeout(resolve, 1000));
     });
-    const sensitiveVisualAnalyze = runCliJson(['visual-analyze', config.origin, 'local-basic'], settings);
+    const sensitiveVisualAnalyze = await postRpcJson('operator.runtime.tab.visualAnalyze', {
+      tabId: visualTabId,
+      provider: 'local-basic',
+      maxBytes: 2000000,
+      reason: 'clean-smoke-sensitive-visual'
+    }, settings);
     if (
       sensitiveVisualAnalyze.ok ||
       sensitiveVisualAnalyze.error.code !== 'VISUAL_PROVIDER_POLICY_BLOCKED' ||

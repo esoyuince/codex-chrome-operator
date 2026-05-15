@@ -82,7 +82,7 @@ wrong active tab, target mismatch, expired records, domain revoke, tab close,
 extension disconnect, or emergency stop fail closed with
 `APPROVAL_CONTEXT_MISMATCH` or an invalidated approval status.
 
-The adapter currently exposes 60 strict tools:
+The adapter currently exposes 68 strict tools:
 
 - `codex_chrome_status`
 - `codex_chrome_prepare_origin`
@@ -113,6 +113,9 @@ The adapter currently exposes 60 strict tools:
 - `codex_chrome_chat_watcher_poll`
 - `codex_chrome_chat_watcher_control`
 - `codex_chrome_tab_screenshot`
+- `codex_chrome_tab_visual_observe`
+- `codex_chrome_tab_visual_analyze`
+- `codex_chrome_tab_visual_inspect_target`
 - `codex_chrome_tab_handle_dialog`
 - `codex_chrome_tab_goto`
 - `codex_chrome_tab_observe`
@@ -190,18 +193,29 @@ approval toggle and terminal policy stops.
 `codex_chrome_tab_screenshot` captures an artifact-backed screenshot for a
 session-owned tab through the guarded CDP path. It returns screenshot metadata
 only; raw image bytes and `dataUrl` fields are redacted before reaching Codex.
+`codex_chrome_tab_visual_observe`, `codex_chrome_tab_visual_analyze`, and
+`codex_chrome_tab_visual_inspect_target` provide the session-tab equivalents of
+the visual tools. They first observe the named tab, then capture a tab-scoped
+CDP `Page.captureScreenshot` artifact, so they do not depend on Chrome's active
+tab or `captureVisibleTab`. Target inspection validates the current handle
+against the fresh observation before storing a cropped region artifact.
 `codex_chrome_tab_handle_dialog` accepts or dismisses native JavaScript/browser
 dialogs such as `beforeunload` prompts on a session-owned tab through the same
 guarded CDP path.
 `codex_chrome_tab_goto`, `codex_chrome_tab_observe`, and
 `codex_chrome_tab_read_page` are the safe browser runtime wrappers for
 session-owned tabs, so an agent can navigate, observe, and read a selected tab
-without depending on whichever tab is currently focused. `codex_chrome_tab_locator`
-resolves a limited handle, selector, or text locator against visible actionable
-elements and fails closed when it matches zero or multiple targets; optional
-`click`, `type`, `fill`, `focus`, `clear`, `select`, `check`, `scroll`, and
-`pressKey` actions still pass through the same action policy and post-action
-verification path. `codex_chrome_tab_show_target` draws a
+without depending on whichever tab is currently focused. Runtime tab navigation
+updates the owned tab's URL without activating it; use `codex_chrome_tab_focus`
+only when visible focus is intentional. `codex_chrome_tab_locator` resolves a
+limited handle, selector, or text locator against visible actionable elements
+and fails closed when it matches zero or multiple targets; optional `click`,
+`type`, `fill`, `focus`, `clear`, `select`, `check`, `scroll`, and `pressKey`
+actions still pass through the same action policy and post-action verification
+path. CDP input actions that Chrome requires to run in the active tab use a
+short focus lease, restore the previously active tab when possible, and record
+`focusDisturbance` in the action result and audit timeline.
+`codex_chrome_tab_show_target` draws a
 temporary cue around a resolved session-tab target before an action.
 `codex_chrome_tab_operator_indicator` shows or hides the in-page active
 operator indicator on a session-owned tab. The indicator includes a page-local
@@ -268,9 +282,11 @@ emergency stop. Host permission hints describe reload/reinstall recovery because
 the packaged extension uses broad required host access.
 
 Visual tools return screenshot artifact references, metadata, or structured
-analysis. `codex_chrome_visual_observe` stays explicit and accepts optional
-observe scope, `maxBytes`, and `reason` inputs so callers can avoid screenshots
-unless DOM confidence is low or visual proof is required.
+analysis. Prefer the `codex_chrome_tab_visual_*` variants for session-owned MCP
+work because they are tab-scoped and CDP-backed. `codex_chrome_visual_observe`
+stays available for explicit active-tab diagnostics and accepts optional observe
+scope, `maxBytes`, and `reason` inputs so callers can avoid screenshots unless
+DOM confidence is low or visual proof is required.
 `codex_chrome_visual_analyze` routes to `page.visualAnalyze` with a
 required `origin` plus optional `provider`, `maxBytes`, and `allowSensitive`
 arguments; the adapter normalizes URL-like origin inputs to an origin before the

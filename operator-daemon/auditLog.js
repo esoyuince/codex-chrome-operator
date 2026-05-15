@@ -162,6 +162,9 @@ class AuditLog {
       if (entry.boundedFullAuto) {
         timelineEntry.boundedFullAuto = entry.boundedFullAuto;
       }
+      if (entry.focusDisturbance) {
+        timelineEntry.focusDisturbance = entry.focusDisturbance;
+      }
       return timelineEntry;
     });
   }
